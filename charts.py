@@ -32,7 +32,7 @@ def main_trend_data(df_combo, metric, unit, show_yoy=True, current_year=None,
     yoy_info = None
 
     if show_yoy and not series.empty:
-        if unit == "월별":
+        if unit == "월마감":
             prev_dates = series.index - pd.DateOffset(years=1)
         else:
             prev_dates = series.index - pd.Timedelta(days=364)
