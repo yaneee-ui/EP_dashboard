@@ -27,7 +27,7 @@ def build_comparison_table(df_all, metric, match_status, lowest_status, unit):
             _d = pd.Timestamp(latest_date_label).strftime("%Y-%m-%d")
             if unit == "주별":
                 value_col = f"{_d} 주 값"
-            elif unit == "월별":
+            elif unit in ("월별", "월마감"):
                 value_col = f"{pd.Timestamp(latest_date_label).strftime('%Y-%m')} 값"
             else:
                 value_col = f"{_d} 값"
