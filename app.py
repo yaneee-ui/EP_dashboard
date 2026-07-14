@@ -100,7 +100,7 @@ if side["page"].startswith("01"):
     _year_series = resample_series(df_combo, metric_main, unit).dropna()
     _this_year = _year_series[_year_series.index.year == latest_year]
 
-    # 기간: 항상 2026-01-01 ~ 최신 데이터로 고정
+    # 기간 설정
     import datetime as _dt
     _fixed_start = _dt.date(latest_year, 1, 1)
     if not _this_year.empty:
@@ -109,12 +109,27 @@ if side["page"].startswith("01"):
     else:
         _max_d = df_combo[COL_DATE].max().date()
         _data_min = df_combo[COL_DATE].min().date()
-    # 데이터가 2026-01-01보다 늦게 시작하면 데이터 시작일 사용
     _min_d = max(_fixed_start, _data_min) if _data_min > _fixed_start else _fixed_start
 
-    show_yoy = st.checkbox("전년 비교선 표시", value=True, key="show_yoy")
-
-    d_start, d_end = _min_d, _max_d
+    if unit == "일별":
+        # 일별: 기본 최근 1달, 기간 조정 가능
+        _default_start = max(_min_d, _max_d - _dt.timedelta(days=30))
+        col_date, col_yoy = st.columns([3, 2])
+        with col_date:
+            date_range = st.date_input(
+                "기간 설정", value=(_default_start, _max_d),
+                min_value=_min_d, max_value=_max_d, key="trend_range",
+            )
+        with col_yoy:
+            show_yoy = st.checkbox("전년 비교선 표시", value=True, key="show_yoy")
+        if isinstance(date_range, tuple) and len(date_range) == 2:
+            d_start, d_end = date_range
+        else:
+            d_start, d_end = _default_start, _max_d
+    else:
+        # 주별/월별/월마감: 올해 전체 고정
+        show_yoy = st.checkbox("전년 비교선 표시", value=True, key="show_yoy")
+        d_start, d_end = _min_d, _max_d
 
     _trend_df, _yoy_info = main_trend_data(df_combo, metric_main, unit, show_yoy,
                                 current_year=latest_year, date_start=d_start, date_end=d_end)
