@@ -118,15 +118,46 @@ if side["page"].startswith("01"):
     _trend_df, _yoy_info = main_trend_data(df_combo, metric_main, unit, show_yoy,
                                 current_year=latest_year, date_start=d_start, date_end=d_end)
     st.line_chart(_trend_df, height=380)
-    _unit_desc = {"일별": "일별", "주별": "주평균", "월별": "월평균"}[unit]
-    _caption = (
-        f"<div class='chart-caption'>"
-        f"올해: {d_start.strftime('%Y-%m-%d')} ~ {d_end.strftime('%Y-%m-%d')} · {_unit_desc} 기준"
-    )
+    _unit_desc = {"일별": "일별", "주별": "주평균", "월별": "월평균", "월마감": "월평균(마감)"}[unit]
+    _is_monthly = unit in ("월별", "월마감")
+
+    # 월 단위면 "2026년 1월 ~ 7월(~12일)" 식으로, 일별/주별은 날짜 그대로
+    if _is_monthly:
+        _last_month_end = last_date + pd.offsets.MonthEnd(0)
+        if unit == "월별" and last_date < _last_month_end:
+            # 월별(진행중): 미완성 달 표시
+            _end_label = f"{last_date.month}월(~{last_date.day}일)"
+        elif unit == "월마감":
+            # 월마감: 마감 완료된 마지막 달 표시
+            _series_last = _trend_df.index[-1] if not _trend_df.empty else last_date
+            _end_label = f"{pd.Timestamp(_series_last).month}월"
+        else:
+            _end_label = f"{last_date.month}월"
+        _cur_range = f"{d_start.strftime('%Y')}년 {d_start.month}월 ~ {_end_label}"
+    else:
+        _cur_range = f"{d_start.strftime('%Y-%m-%d')} ~ {d_end.strftime('%Y-%m-%d')}"
+
+    _caption = f"<div class='chart-caption'>올해: {_cur_range} · {_unit_desc} 기준"
     if _yoy_info and show_yoy:
-        _ys = _yoy_info['yoy_start'].strftime('%Y-%m-%d')
-        _ye = _yoy_info['yoy_end'].strftime('%Y-%m-%d')
-        _caption += f"<br/>전년 비교: {_ys} ~ {_ye} (동요일 기준, 364일 전)"
+        ys = _yoy_info['yoy_start']
+        ye = _yoy_info['yoy_end']
+        if unit == "월별":
+            # 월별: 동요일(364일) 비교 — 미완성 달 기간까지 표시
+            _last_month_end = last_date + pd.offsets.MonthEnd(0)
+            if last_date < _last_month_end:
+                _yoy_last = last_date - pd.Timedelta(days=364)
+                _yoy_end_label = f"{_yoy_last.month}월(~{_yoy_last.day}일)"
+            else:
+                _yoy_end_label = f"{ye.month}월"
+            _yoy_range = f"{ys.strftime('%Y')}년 {ys.month}월 ~ {_yoy_end_label}"
+            _caption += f"<br/>전년 비교: {_yoy_range} (동요일 기준, 364일 전)"
+        elif unit == "월마감":
+            # 월마감: 동월(1년 전) 비교
+            _yoy_range = f"{ys.strftime('%Y')}년 {ys.month}월 ~ {ye.month}월"
+            _caption += f"<br/>전년 비교: {_yoy_range} (전년 동월)"
+        else:
+            _yoy_range = f"{ys.strftime('%Y-%m-%d')} ~ {ye.strftime('%Y-%m-%d')}"
+            _caption += f"<br/>전년 비교: {_yoy_range} (동요일 기준, 364일 전)"
     _caption += "</div>"
     st.markdown(_caption, unsafe_allow_html=True)
 
