@@ -4,6 +4,7 @@
 본문: 선택한 메뉴에 따라 페이지 렌더링
 """
 import streamlit as st
+import pandas as pd
 
 from data_loader import load_data
 from sidebar import render_sidebar, render_combo_filter
