@@ -28,7 +28,8 @@ PERCENT_LIKE = {"원부매칭율(%)", "최저가율(%)", "첫구매거래액(%)"
 UNIT_CONFIG = {
     "일별": dict(rule="D", prev_label="전일비", avg_label="전주평균비", avg_window=7, yoy_label="전년동요일비"),
     "주별": dict(rule="W-SUN", prev_label="전주비", avg_label="전4주평균비", avg_window=4, yoy_label="전년동주비"),
-    "월별": dict(rule="ME", prev_label="전월비", avg_label="전분기평균비", avg_window=3, yoy_label="전년동월비"),
+    "월별": dict(rule="ME", prev_label="전월비", avg_label="전분기평균비", avg_window=3, yoy_label="전년동요일비"),
+    "월마감": dict(rule="ME", prev_label="전월비", avg_label="전분기평균비", avg_window=3, yoy_label="전년동월비"),
 }
 
 
@@ -36,39 +37,42 @@ def resample_series(df: pd.DataFrame, metric: str, unit: str) -> pd.Series:
     """단일 조합으로 필터링된 df를 기간단위로 리샘플링한 시계열.
 
     주별: 월~일요일로 묶고(W-SUN), 라벨은 그 주의 '월요일'로 표시한다.
-          아직 일요일까지 안 찬 마지막 주도 있는 날의 평균으로 표시한다.
-    월별: 아직 월말까지 안 찬 마지막 달도 있는 날의 평균으로 표시한다.
+    월별: 진행 중인 달 포함 (있는 날의 평균으로 표시).
+    월마감: 완료된 달만 (미완성 마지막 달 제외).
     """
     s = df.set_index(COL_DATE)[metric].sort_index()
     if s.empty:
         return s
+    last_date = s.index.max()
     rule = UNIT_CONFIG[unit]["rule"]
     resampled = s.resample(rule).mean()
 
     if unit == "주별":
-        # W-SUN은 그 주 일요일을 라벨로 함 -> 월요일(일요일-6일)로 이동
         resampled.index = resampled.index - pd.Timedelta(days=6)
-        # 마지막 주가 일요일까지 안 찼어도, 있는 날(월~토 등)의 평균으로 표시한다.
-    # 월별: 미완성 마지막 달도 있는 날의 평균으로 그대로 표시한다.
+    elif unit == "월마감":
+        # 마지막 달이 월말까지 안 찼으면 제외 (마감된 달만)
+        last_period_end = resampled.index[-1]
+        if last_date < last_period_end:
+            resampled = resampled.iloc[:-1]
 
     return resampled
 
 
 def build_yoy_series(series: pd.Series, unit: str) -> pd.Series:
-    """각 시점의 '전년 동요일' 값을 매칭한 시계열.
+    """각 시점의 전년 비교 값을 매칭한 시계열.
 
-    - 일별/주별: 정확히 364일(=52주) 전 값을 사용해 요일을 맞춘다.
-    - 월별: 전년 같은 달(1년 전) 값을 사용한다.
+    - 일별/주별/월별: 364일(=52주) 전 → 동요일 비교.
+    - 월마감: 전년 같은 달(1년 전) → 동월 비교.
     데이터에 해당 날짜가 없으면 가장 가까운 이전 값으로 근사한다.
     """
     if series.empty:
         return series
     idx = series.index
 
-    if unit == "월별":
+    if unit == "월마감":
         prev_dates = idx - pd.DateOffset(years=1)
     else:
-        # 일별/주별: 364일 전 = 52주 전, 요일이 정확히 일치
+        # 일별/주별/월별: 364일 전 = 52주 전, 요일이 정확히 일치
         prev_dates = idx - pd.Timedelta(days=364)
 
     yoy_vals = []
@@ -151,6 +155,8 @@ def make_period_label(last_date, unit: str) -> str:
     elif unit == "주별":
         wom = week_of_month(d)
         return f"{yy}년 {d.month}월 {wom}주차"
+    elif unit == "월마감":
+        return f"{yy}년 {d.month}월 (마감)"
     else:  # 월별
         return f"{yy}년 {d.month}월"
 
