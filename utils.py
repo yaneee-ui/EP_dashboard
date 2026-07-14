@@ -107,9 +107,9 @@ def compute_kpi_deltas(series: pd.Series, unit: str):
 
     return {
         "current": current,
-        "prev_label": cfg["prev_label"], "prev_delta": prev_delta,
-        "avg_label": cfg["avg_label"], "avg_delta": avg_delta,
-        "yoy_label": cfg["yoy_label"], "yoy_delta": yoy_delta,
+        "prev_label": cfg["prev_label"], "prev_delta": prev_delta, "prev_value": prev,
+        "avg_label": cfg["avg_label"], "avg_delta": avg_delta, "avg_value": avg_ref,
+        "yoy_label": cfg["yoy_label"], "yoy_delta": yoy_delta, "yoy_value": yoy_ref,
     }
 
 
