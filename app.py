@@ -1,20 +1,22 @@
-"""마케팅 실적 현황 대시보드 - 메인 엔트리포인트.
+"""마케팅 실적 현황 대시보드
 
-좌측 사이드바: 조회 단위(일/주/월/월마감) + 메뉴(Total + BPU별) + 데이터 업로드
-본문: 선택한 메뉴(BPU)에 따라 KPI + 차트 + 표 렌더링
+위: EP 실적 (트래픽/거래액/구매객수/CR/객단가) — EP실적 데이터
+아래: EP 채널 지표 (원부매칭율/최저가율 등) — 기존 EP 데이터, 원부매칭/최저가 필터 적용
 """
 import streamlit as st
 import pandas as pd
+import datetime as _dt
 
-from data_loader import load_data
-from sidebar import render_sidebar, render_combo_filter
+from data_loader import load_data, load_traffic_data
+from sidebar import render_sidebar
 from filters import filter_by_combo
 from kpi import render_kpi_cards
-from charts import main_trend_data, bpu_comparison_data
+from charts import main_trend_data
 from comparison_table import render_summary_table_html
 from utils import (
-    COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS,
-    resample_series, make_period_label,
+    COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
+    resample_series, make_period_label, compute_kpi_deltas,
+    format_value, format_delta_html,
 )
 from styles import CUSTOM_CSS
 
@@ -25,149 +27,254 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 side = render_sidebar()
 if side["refresh"]:
     load_data.clear()
+    load_traffic_data.clear()
 
 # --- 데이터 로드 ---
-df_raw = load_data()
+df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
+df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
+
 if side["uploaded_file"] is not None:
     _uf = side["uploaded_file"]
-    df_raw = load_data(uploaded_file=_uf, file_name=getattr(_uf, "name", None))
-    _min = df_raw[COL_DATE].min().strftime("%Y-%m-%d")
-    _max = df_raw[COL_DATE].max().strftime("%Y-%m-%d")
-    st.sidebar.success(f"업로드 완료: {_min} ~ {_max}")
-    _csv = df_raw.sort_values([COL_BPU, COL_MATCH, COL_LOWEST, COL_DATE]).to_csv(index=False, encoding="utf-8-sig")
-    st.sidebar.download_button(
-        "⬇️ 전체 데이터 CSV 다운로드", _csv.encode("utf-8-sig"),
-        file_name="ep_data_long.csv", mime="text/csv", use_container_width=True,
-    )
+    df_ep = load_data(uploaded_file=_uf, file_name=getattr(_uf, "name", None))
+    st.sidebar.success("EP 데이터 업로드 완료")
 
 unit = side["view_unit"]
-bpu = side["bpu"]  # 메뉴에서 자동 결정된 BPU
+bpu = side["bpu"]
 
 # 데이터 반영 현황
-last_date = df_raw[COL_DATE].max()
-_weekday_kr = ["월", "화", "수", "목", "금", "토", "일"][last_date.weekday()]
-data_status = f"데이터 반영: {last_date.strftime('%Y-%m-%d')}({_weekday_kr})까지"
-st.sidebar.info(f"🗓️ {data_status}")
+last_date_ep = df_ep[COL_DATE].max()
+last_date_tr = df_traffic["날짜"].max()
+_weekday_kr = ["월", "화", "수", "목", "금", "토", "일"]
+st.sidebar.info(
+    f"🗓️ EP실적: ~{last_date_tr.strftime('%m/%d')}({_weekday_kr[last_date_tr.weekday()]})\n\n"
+    f"EP채널: ~{last_date_ep.strftime('%m/%d')}({_weekday_kr[last_date_ep.weekday()]})"
+)
 
 # 기준 라벨
-_total = df_raw[(df_raw[COL_BPU] == "Total") & (df_raw[COL_MATCH] == "Total") & (df_raw[COL_LOWEST] == "Total")]
-_series = resample_series(_total, "평균 EP 거래액(총결제)", unit).dropna()
-period_last = _series.index[-1] if not _series.empty else last_date
+_total_ep = df_ep[(df_ep[COL_BPU]=="Total") & (df_ep[COL_MATCH]=="Total") & (df_ep[COL_LOWEST]=="Total")]
+_s = resample_series(_total_ep, "평균 EP 거래액(총결제)", unit).dropna()
+period_last = _s.index[-1] if not _s.empty else last_date_ep
 period_label = make_period_label(period_last, unit)
 
-# ============================================================
-# 공통 페이지 렌더링 (모든 메뉴가 같은 레이아웃, BPU만 다름)
-# ============================================================
+# --- 페이지 헤더 ---
 _page_title = side["page"].split(". ", 1)[-1] if ". " in side["page"] else side["page"]
 st.markdown(f"<div class='dash-header-title'>📊 {_page_title}</div>", unsafe_allow_html=True)
 st.markdown(
-    f"<div class='dash-header-sub'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b> · {data_status}</div>",
+    f"<div class='dash-header-sub'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
     unsafe_allow_html=True,
 )
 
-# 원부매칭/최저가 필터 (BPU는 메뉴에서 이미 결정)
-flt = render_combo_filter(df_raw, bpu, key_prefix="main")
-df_combo = filter_by_combo(df_raw, flt["bpu"], flt["match_status"], flt["lowest_status"])
+# ============================================================
+# 상단: EP 실적 (트래픽/거래액/구매객수/CR/객단가)
+# ============================================================
+st.markdown("---")
+st.markdown("### 📈 EP 실적")
 
-if df_combo.empty:
-    st.warning("선택한 조합에 데이터가 없습니다.")
-    st.stop()
+# 트래픽 데이터에서 해당 BPU + 회원구분=전체 필터
+tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")].copy()
 
-st.markdown(
-    f"<div class='chart-caption'>아래 KPI는 <b>{flt['bpu']} / {flt['match_status']} / {flt['lowest_status']}</b> 기준, "
-    f"<b>{period_label}</b>의 값입니다.</div>",
-    unsafe_allow_html=True,
-)
-
-# --- KPI 카드 ---
-render_kpi_cards(df_combo, unit)
-st.markdown("<br/>", unsafe_allow_html=True)
-
-# --- 지표 추이 차트 ---
-h1, h2 = st.columns([2, 3])
-h1.markdown("**지표 추이**")
-metric_main = h2.selectbox("지표 선택", METRIC_COLS,
-                           index=METRIC_COLS.index("평균 EP 거래액(총결제)"),
-                           key="metric_main", label_visibility="collapsed")
-
-latest_year = int(df_combo[COL_DATE].max().year)
-_year_series = resample_series(df_combo, metric_main, unit).dropna()
-_this_year = _year_series[_year_series.index.year == latest_year]
-
-import datetime as _dt
-_fixed_start = _dt.date(latest_year, 1, 1)
-if not _this_year.empty:
-    _max_d = _this_year.index.max().date()
-    _data_min = _this_year.index.min().date()
+if tr_combo.empty:
+    st.warning(f"{bpu}의 EP실적 데이터가 없습니다.")
 else:
-    _max_d = df_combo[COL_DATE].max().date()
-    _data_min = df_combo[COL_DATE].min().date()
-_min_d = max(_fixed_start, _data_min) if _data_min > _fixed_start else _fixed_start
+    # KPI 카드 (트래픽 지표 6개)
+    TRAFFIC_METRICS = [
+        ("트래픽", "EP UV"),
+        ("거래액", "거래액(순결제)"),
+        ("구매객수", "구매객수"),
+        ("CR", "구매전환율(%)"),
+        ("객단가", "객단가"),
+    ]
+    # 회원UV 계산
+    tr_member = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "회원")].copy()
+    tr_nonmember = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "비회원")].copy()
 
-if unit == "일별":
-    _default_start = max(_min_d, _max_d - _dt.timedelta(days=30))
-    col_date, col_yoy = st.columns([3, 2])
-    with col_date:
-        date_range = st.date_input(
-            "기간 설정", value=(_default_start, _max_d),
-            min_value=_min_d, max_value=_max_d, key="trend_range",
-        )
-    with col_yoy:
-        show_yoy = st.checkbox("전년 비교선 표시", value=True, key="show_yoy")
-    if isinstance(date_range, tuple) and len(date_range) == 2:
-        d_start, d_end = date_range
-    else:
-        d_start, d_end = _default_start, _max_d
-else:
-    show_yoy = st.checkbox("전년 비교선 표시", value=True, key="show_yoy")
-    d_start, d_end = _min_d, _max_d
+    kpi_cols = st.columns(6)
+    all_items = TRAFFIC_METRICS + [("_회원UV", "회원UV")]
 
-_trend_df, _yoy_info = main_trend_data(df_combo, metric_main, unit, show_yoy,
-                            current_year=latest_year, date_start=d_start, date_end=d_end)
-st.line_chart(_trend_df, height=380)
+    for i, (col_name, display_name) in enumerate(all_items):
+        with kpi_cols[i]:
+            if col_name == "_회원UV":
+                s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
+                series = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                if unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif unit == "월마감":
+                    if not series.empty and s_mem.index.max() < series.index[-1]:
+                        series = series.iloc[:-1]
+            else:
+                s = tr_combo.set_index("날짜")[col_name].sort_index()
+                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                if unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif unit == "월마감":
+                    if not series.empty and s.index.max() < series.index[-1]:
+                        series = series.iloc[:-1]
 
-# --- 캡션 ---
-_unit_desc = {"일별": "일별", "주별": "주평균", "월별": "월평균", "월마감": "월평균(마감)"}[unit]
-_is_monthly = unit in ("월별", "월마감")
+            stats = compute_kpi_deltas(series, unit)
+            if stats:
+                is_pct = col_name == "CR"
+                if is_pct:
+                    val_str = f"{stats['current']:.1f}%"
+                elif col_name == "객단가":
+                    val_str = f"{stats['current']:,.0f}"
+                else:
+                    val_str = f"{stats['current']:,.0f}"
 
-if _is_monthly:
-    _last_month_end = last_date + pd.offsets.MonthEnd(0)
-    if unit == "월별" and last_date < _last_month_end:
-        _end_label = f"{last_date.month}월(~{last_date.day}일)"
-    elif unit == "월마감":
-        _series_last = _trend_df.index[-1] if not _trend_df.empty else last_date
-        _end_label = f"{pd.Timestamp(_series_last).month}월"
-    else:
-        _end_label = f"{last_date.month}월"
-    _cur_range = f"{d_start.strftime('%Y')}년 {d_start.month}월 ~ {_end_label}"
-else:
-    _cur_range = f"{d_start.strftime('%Y-%m-%d')} ~ {d_end.strftime('%Y-%m-%d')}"
+                cfg = UNIT_CONFIG[unit]
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
+                    f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                    f"<div style='font-size:0.78rem;margin-top:6px;'>"
+                    f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}<br/>"
+                    f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}<br/>"
+                    f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
 
-_caption = f"<div class='chart-caption'>올해: {_cur_range} · {_unit_desc} 기준"
-if _yoy_info and show_yoy:
-    ys = _yoy_info['yoy_start']
-    ye = _yoy_info['yoy_end']
-    if unit == "월별":
-        _last_month_end = last_date + pd.offsets.MonthEnd(0)
-        if last_date < _last_month_end:
-            _yoy_last = last_date - pd.Timedelta(days=364)
-            _yoy_end_label = f"{_yoy_last.month}월(~{_yoy_last.day}일)"
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # 지표 추이 차트 (트래픽 지표)
+    h1, h2 = st.columns([2, 3])
+    h1.markdown("**EP 실적 추이**")
+    tr_metric_options = ["트래픽", "거래액", "구매객수", "CR", "객단가"]
+    tr_metric = h2.selectbox("지표 선택", tr_metric_options, index=0, key="tr_metric", label_visibility="collapsed")
+
+    # 리샘플
+    s_raw = tr_combo.set_index("날짜")[tr_metric].sort_index()
+    tr_series = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
+    if unit == "주별":
+        tr_series.index = tr_series.index - pd.Timedelta(days=6)
+    elif unit == "월마감" and not tr_series.empty and s_raw.index.max() < tr_series.index[-1]:
+        tr_series = tr_series.iloc[:-1]
+
+    # 일별이면 최근 30일
+    if unit == "일별":
+        _default_start = max(tr_series.index.min().date(), tr_series.index.max().date() - _dt.timedelta(days=30))
+        col_d, col_y = st.columns([3, 2])
+        with col_d:
+            dr = st.date_input("기간", value=(_default_start, tr_series.index.max().date()),
+                               min_value=tr_series.index.min().date(), max_value=tr_series.index.max().date(),
+                               key="tr_range")
+        with col_y:
+            pass  # 전년 비교선은 2025 데이터 없어서 생략
+        if isinstance(dr, tuple) and len(dr) == 2:
+            tr_series = tr_series[(tr_series.index >= pd.Timestamp(dr[0])) & (tr_series.index <= pd.Timestamp(dr[1]))]
+
+    chart_df = pd.DataFrame({tr_metric: tr_series})
+    st.line_chart(chart_df, height=350)
+    st.markdown(
+        f"<div class='chart-caption'>EP실적 데이터 기준 · {tr_series.index.min().strftime('%Y-%m-%d')} ~ {tr_series.index.max().strftime('%Y-%m-%d')}</div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # 실적 요약 표 (트래픽 지표)
+    st.markdown(f"**EP 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu}</span>", unsafe_allow_html=True)
+    body_rows = []
+    prev_label = yoy_label = None
+    for col_name, display_name in all_items:
+        if col_name == "_회원UV":
+            s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
+            series = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            if unit == "주별":
+                series.index = series.index - pd.Timedelta(days=6)
+            elif unit == "월마감" and not series.empty and s_mem.index.max() < series.index[-1]:
+                series = series.iloc[:-1]
         else:
-            _yoy_end_label = f"{ye.month}월"
-        _yoy_range = f"{ys.strftime('%Y')}년 {ys.month}월 ~ {_yoy_end_label}"
-        _caption += f"<br/>전년 비교: {_yoy_range} (동요일 기준, 364일 전)"
-    elif unit == "월마감":
-        _yoy_range = f"{ys.strftime('%Y')}년 {ys.month}월 ~ {ye.month}월"
-        _caption += f"<br/>전년 비교: {_yoy_range} (전년 동월)"
-    else:
-        _yoy_range = f"{ys.strftime('%Y-%m-%d')} ~ {ye.strftime('%Y-%m-%d')}"
-        _caption += f"<br/>전년 비교: {_yoy_range} (동요일 기준, 364일 전)"
-_caption += "</div>"
-st.markdown(_caption, unsafe_allow_html=True)
+            s = tr_combo.set_index("날짜")[col_name].sort_index()
+            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            if unit == "주별":
+                series.index = series.index - pd.Timedelta(days=6)
+            elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                series = series.iloc[:-1]
+        stats = compute_kpi_deltas(series, unit)
+        if stats is None:
+            body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
+            continue
+        prev_label = stats["prev_label"]
+        yoy_label = stats["yoy_label"]
+        is_pct = col_name == "CR"
+        val = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
+        body_rows.append(
+            f"<tr><td class='m'>{display_name}</td><td class='v'>{val}</td>"
+            f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>"
+            f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td></tr>"
+        )
+    html = (
+        "<table class='summary-table'>"
+        f"<thead><tr><th>지표</th><th>값</th><th>{prev_label or '-'}</th><th>{yoy_label or '-'}</th></tr></thead>"
+        f"<tbody>{''.join(body_rows)}</tbody></table>"
+    )
+    st.markdown(html, unsafe_allow_html=True)
 
-st.markdown("<br/>", unsafe_allow_html=True)
 
-# --- 하단 실적 요약 표 ---
-st.markdown(f"**실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>기준: {period_label}</span>", unsafe_allow_html=True)
-summary_html = render_summary_table_html(df_combo, unit)
-st.markdown(summary_html, unsafe_allow_html=True)
+# ============================================================
+# 하단: EP 채널 지표 (원부매칭율/최저가율 등)
+# ============================================================
+st.markdown("---")
+st.markdown("### 🏷️ EP 채널 지표")
+
+# 원부매칭/최저가 필터
+from utils import COL_MATCH, COL_LOWEST
+c1, c2 = st.columns(2)
+match_options = [v for v in ["Total", "매칭"] if v in df_ep[COL_MATCH].unique()]
+lowest_options = [v for v in ["Total", "최저가"] if v in df_ep[COL_LOWEST].unique()]
+match_status = c1.selectbox("원부매칭여부", match_options, index=0, key="ep_match")
+lowest_status = c2.selectbox("최저가여부", lowest_options, index=0, key="ep_lowest")
+
+df_ep_combo = filter_by_combo(df_ep, bpu, match_status, lowest_status)
+
+if df_ep_combo.empty:
+    st.warning("선택한 조합에 데이터가 없습니다.")
+else:
+    # EP 채널 지표 KPI
+    EP_CHANNEL_METRICS = [
+        ("원부매칭율(%)", "원부매칭율(%)"),
+        ("최저가율(%)", "최저가율(%)"),
+        ("평균 EP 전시 상품수", "전시상품수"),
+        ("평균 원부매칭 상품수", "원부매칭상품수"),
+        ("평균 최저가 상품수", "최저가상품수"),
+    ]
+
+    ep_cols = st.columns(len(EP_CHANNEL_METRICS))
+    for i, (metric_key, display_name) in enumerate(EP_CHANNEL_METRICS):
+        with ep_cols[i]:
+            series = resample_series(df_ep_combo, metric_key, unit).dropna()
+            stats = compute_kpi_deltas(series, unit)
+            if stats:
+                is_pct = "%" in metric_key or metric_key == "신규가입율"
+                val_str = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
+                cfg = UNIT_CONFIG[unit]
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
+                    f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                    f"<div style='font-size:0.78rem;margin-top:6px;'>"
+                    f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}<br/>"
+                    f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}<br/>"
+                    f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}"
+                    f"</div></div>",
+                    unsafe_allow_html=True,
+                )
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # EP 채널 지표 추이
+    h1, h2 = st.columns([2, 3])
+    h1.markdown("**EP 채널 추이**")
+    ep_metrics_list = [m for m, _ in EP_CHANNEL_METRICS]
+    ep_metric = h2.selectbox("지표", ep_metrics_list, index=0, key="ep_metric", label_visibility="collapsed")
+
+    ep_trend, ep_yoy = main_trend_data(df_ep_combo, ep_metric, unit, show_yoy=True,
+                                       current_year=int(last_date_ep.year),
+                                       date_start=_dt.date(int(last_date_ep.year), 1, 1),
+                                       date_end=last_date_ep.date())
+    st.line_chart(ep_trend, height=350)
+
+    st.markdown(
+        f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준 · 전년 비교선(동요일) 포함</div>",
+        unsafe_allow_html=True,
+    )
