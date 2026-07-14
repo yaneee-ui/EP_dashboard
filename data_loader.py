@@ -40,3 +40,14 @@ def load_data(uploaded_file=None, file_name=None) -> pd.DataFrame:
 
     return _finalize(df)
 
+
+
+TRAFFIC_DATA_PATH = "ep_traffic.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner="트래픽 데이터를 불러오는 중...")
+def load_traffic_data() -> pd.DataFrame:
+    """EP실적 데이터 (트래픽/거래액/구매객수/CR/객단가) 로드."""
+    df = pd.read_csv(TRAFFIC_DATA_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    return df.sort_values("날짜").reset_index(drop=True)
