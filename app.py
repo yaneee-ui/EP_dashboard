@@ -141,15 +141,20 @@ else:
     tr_metric_options = ["트래픽", "거래액", "구매객수", "CR", "객단가"]
     tr_metric = h2.selectbox("지표 선택", tr_metric_options, index=0, key="tr_metric", label_visibility="collapsed")
 
-    # 리샘플
+    # 리샘플 (전체 기간 — 전년 비교선용)
     s_raw = tr_combo.set_index("날짜")[tr_metric].sort_index()
-    tr_series = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
+    tr_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
     if unit == "주별":
-        tr_series.index = tr_series.index - pd.Timedelta(days=6)
-    elif unit == "월마감" and not tr_series.empty and s_raw.index.max() < tr_series.index[-1]:
-        tr_series = tr_series.iloc[:-1]
+        tr_full.index = tr_full.index - pd.Timedelta(days=6)
+    elif unit == "월마감" and not tr_full.empty and s_raw.index.max() < tr_full.index[-1]:
+        tr_full = tr_full.iloc[:-1]
 
-    # 일별이면 최근 30일
+    # 올해만 추출
+    latest_year = int(tr_full.index.max().year)
+    tr_series = tr_full[tr_full.index.year == latest_year]
+
+    # 일별이면 최근 30일 + 기간 조정
+    show_tr_yoy = True
     if unit == "일별":
         _default_start = max(tr_series.index.min().date(), tr_series.index.max().date() - _dt.timedelta(days=30))
         col_d, col_y = st.columns([3, 2])
@@ -158,14 +163,41 @@ else:
                                min_value=tr_series.index.min().date(), max_value=tr_series.index.max().date(),
                                key="tr_range")
         with col_y:
-            pass  # 전년 비교선은 2025 데이터 없어서 생략
+            show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
         if isinstance(dr, tuple) and len(dr) == 2:
             tr_series = tr_series[(tr_series.index >= pd.Timestamp(dr[0])) & (tr_series.index <= pd.Timestamp(dr[1]))]
+    else:
+        show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
 
     chart_df = pd.DataFrame({tr_metric: tr_series})
+
+    # 전년 비교선 (동요일 364일 / 월마감은 1년)
+    if show_tr_yoy and not tr_series.empty:
+        if unit == "월마감":
+            prev_dates = tr_series.index - pd.DateOffset(years=1)
+        else:
+            prev_dates = tr_series.index - pd.Timedelta(days=364)
+        yoy_vals = []
+        for pd_date in prev_dates:
+            if pd_date in tr_full.index:
+                yoy_vals.append(tr_full.loc[pd_date])
+            else:
+                cand = tr_full.index[tr_full.index <= pd_date]
+                yoy_vals.append(tr_full.loc[cand[-1]] if len(cand) else None)
+        yoy_label = UNIT_CONFIG[unit]["yoy_label"]
+        chart_df[f"{yoy_label}(전년)"] = yoy_vals
+
     st.line_chart(chart_df, height=350)
+
+    _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
+    _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
+    _yoy_note = ""
+    if show_tr_yoy and not tr_series.empty:
+        _yoy_s = prev_dates[0].strftime('%Y-%m-%d')
+        _yoy_e = prev_dates[-1].strftime('%Y-%m-%d')
+        _yoy_note = f"<br/>전년 비교: {_yoy_s} ~ {_yoy_e} (동요일 기준)"
     st.markdown(
-        f"<div class='chart-caption'>EP실적 데이터 기준 · {tr_series.index.min().strftime('%Y-%m-%d')} ~ {tr_series.index.max().strftime('%Y-%m-%d')}</div>",
+        f"<div class='chart-caption'>올해: {_tr_start} ~ {_tr_end}{_yoy_note}</div>",
         unsafe_allow_html=True,
     )
 
