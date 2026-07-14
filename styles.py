@@ -89,5 +89,13 @@ CUSTOM_CSS = """
 .summary-table td.m { font-weight: 500; }
 .summary-table td.v { font-weight: 600; }
 .summary-table td.d { text-align: left; }
+
+/* KPI 카드 높이 통일 */
+div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
+    height: 100%;
+}
+div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] > div {
+    height: 100%;
+}
 </style>
 """
