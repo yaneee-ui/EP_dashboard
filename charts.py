@@ -13,7 +13,11 @@ from utils import (
 
 def main_trend_data(df_combo, metric, unit, show_yoy=True, current_year=None,
                     date_start=None, date_end=None):
-    """지표 추이용 DataFrame. 컬럼: [올해, 전년(옵션)]."""
+    """지표 추이용 DataFrame + 전년 비교 기간 정보.
+
+    Returns: (DataFrame, dict or None)
+        dict keys: yoy_start, yoy_end (전년 비교 기간의 시작/끝 실제 날짜)
+    """
     full = resample_series(df_combo, metric, unit)
     if current_year is not None:
         series = full[full.index.year == current_year]
@@ -25,6 +29,7 @@ def main_trend_data(df_combo, metric, unit, show_yoy=True, current_year=None,
         series = series[series.index <= pd.Timestamp(date_end)]
 
     data = pd.DataFrame({metric: series})
+    yoy_info = None
 
     if show_yoy and not series.empty:
         if unit == "월별":
@@ -41,7 +46,13 @@ def main_trend_data(df_combo, metric, unit, show_yoy=True, current_year=None,
         cfg = UNIT_CONFIG[unit]
         data[f"{cfg['yoy_label']}(전년)"] = yoy_vals
 
-    return data
+        # 전년 비교 기간 정보
+        yoy_info = {
+            "yoy_start": prev_dates[0],
+            "yoy_end": prev_dates[-1],
+        }
+
+    return data, yoy_info
 
 
 def bpu_comparison_data(df_all, metric, match_status, lowest_status, unit,
