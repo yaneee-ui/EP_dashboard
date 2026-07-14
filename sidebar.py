@@ -9,8 +9,9 @@ def render_sidebar():
     # --- 보기 단위 ---
     st.sidebar.markdown("**조회 단위**")
     view_unit = st.sidebar.radio(
-        "조회 단위", ["일별", "주별", "월별"], index=1,
+        "조회 단위", ["일별", "주별", "월별", "월마감"], index=1,
         horizontal=True, label_visibility="collapsed",
+        help="월별: 진행 중인 달 포함(전년 동요일 비교) / 월마감: 완료된 달만(전년 동월 비교)",
     )
 
     st.sidebar.divider()
