@@ -115,15 +115,20 @@ if side["page"].startswith("01"):
 
     d_start, d_end = _min_d, _max_d
 
-    _trend_df = main_trend_data(df_combo, metric_main, unit, show_yoy,
+    _trend_df, _yoy_info = main_trend_data(df_combo, metric_main, unit, show_yoy,
                                 current_year=latest_year, date_start=d_start, date_end=d_end)
     st.line_chart(_trend_df, height=380)
     _unit_desc = {"일별": "일별", "주별": "주평균", "월별": "월평균"}[unit]
-    st.markdown(
-        f"<div class='chart-caption'>기간: {d_start.strftime('%Y-%m-%d')} ~ {d_end.strftime('%Y-%m-%d')} · "
-        f"{_unit_desc} 기준 · 두 선 = 올해 / 전년 같은 시점(동요일 기준).</div>",
-        unsafe_allow_html=True,
+    _caption = (
+        f"<div class='chart-caption'>"
+        f"올해: {d_start.strftime('%Y-%m-%d')} ~ {d_end.strftime('%Y-%m-%d')} · {_unit_desc} 기준"
     )
+    if _yoy_info and show_yoy:
+        _ys = _yoy_info['yoy_start'].strftime('%Y-%m-%d')
+        _ye = _yoy_info['yoy_end'].strftime('%Y-%m-%d')
+        _caption += f"<br/>전년 비교: {_ys} ~ {_ye} (동요일 기준, 364일 전)"
+    _caption += "</div>"
+    st.markdown(_caption, unsafe_allow_html=True)
 
     st.markdown("<br/>", unsafe_allow_html=True)
 
