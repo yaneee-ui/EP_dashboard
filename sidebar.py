@@ -41,9 +41,14 @@ def render_sidebar():
 
     # --- 데이터 업로드 ---
     st.sidebar.markdown("**데이터 업로드**")
-    st.sidebar.caption("사내에서 받은 **Data.xlsx**(전체 기간)를 그대로 올리면 자동 변환됩니다.")
-    uploaded_file = st.sidebar.file_uploader(
-        "Data.xlsx 업로드", type=["xlsx", "xls", "csv"], label_visibility="collapsed",
+    st.sidebar.caption("변환기에서 만든 CSV를 올리면 바로 반영됩니다.")
+    ep_channel_file = st.sidebar.file_uploader(
+        "EP채널 (ep_data_long.csv)", type=["csv", "xlsx", "xls"],
+        key="ep_channel_upload",
+    )
+    ep_traffic_file = st.sidebar.file_uploader(
+        "EP실적 (ep_traffic.csv)", type=["csv"],
+        key="ep_traffic_upload",
     )
     refresh = st.sidebar.button("🔄 새로고침 (다시 읽기)", use_container_width=True)
 
@@ -60,7 +65,8 @@ def render_sidebar():
         "view_unit": view_unit,
         "page": page,
         "bpu": page_bpu_map.get(page, "Total"),
-        "uploaded_file": uploaded_file,
+        "ep_channel_file": ep_channel_file,
+        "ep_traffic_file": ep_traffic_file,
         "refresh": refresh,
     }
 
