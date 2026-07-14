@@ -1,312 +1,263 @@
-"""마케팅 실적 현황 대시보드
+"""EP 데이터 변환기 — 사내 원본 파일을 대시보드용 CSV로 변환합니다.
 
-위: EP 실적 (트래픽/거래액/구매객수/CR/객단가) — EP실적 데이터
-아래: EP 채널 지표 (원부매칭율/최저가율 등) — 기존 EP 데이터, 원부매칭/최저가 필터 적용
+지원 파일:
+1. EP채널 데이터 (Data.xlsx / Data.csv) → ep_data_long.csv
+2. EP실적 데이터 (1_EP실적.csv) → ep_traffic.csv
 """
+import datetime
+import io
 import streamlit as st
 import pandas as pd
-import datetime as _dt
 
-from data_loader import load_data, load_traffic_data
-from sidebar import render_sidebar
-from filters import filter_by_combo
-from kpi import render_kpi_cards
-from charts import main_trend_data
-from comparison_table import render_summary_table_html
-from utils import (
-    COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
-    resample_series, make_period_label, compute_kpi_deltas,
-    format_value, format_delta_html,
-)
-from styles import CUSTOM_CSS
+st.set_page_config(page_title="EP 데이터 변환기", page_icon="🔄", layout="centered")
 
-st.set_page_config(page_title="마케팅 실적 현황 대시보드", layout="wide", page_icon="📊")
-st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
+# ─── 공통 상수 ───
+METRIC_ORDER = [
+    "평균 EP 전시 상품수", "평균 원부매칭 상품수", "원부매칭율(%)",
+    "평균 최저가 상품수", "최저가율(%)", "평균 EP 거래액(순결제)",
+    "평균 EP 거래액(총결제)", "평균 EP 고객수(총결제)",
+    "평균 EP 첫구매 거래액(총결제)", "평균 EP 첫구매 고객수(총결제)",
+    "첫구매거래액(%)", "평균 EP UV", "평균 EP 비회원UV",
+    "EP 전시 상품당 유입수", "평균 EP 신규가입수", "신규가입율",
+    "구매전환율(%)", "첫구매 전환율(%)",
+]
+PERCENT_COLS = {"원부매칭율(%)", "최저가율(%)", "첫구매거래액(%)",
+                "신규가입율", "구매전환율(%)", "첫구매 전환율(%)"}
+KEEP_BPU = {"Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"}
+KEEP_MATCH = {"Total", "매칭"}
+KEEP_LOWEST = {"Total", "최저가"}
 
-# --- 사이드바 ---
-side = render_sidebar()
-if side["refresh"]:
-    load_data.clear()
-    load_traffic_data.clear()
 
-# --- 데이터 로드 ---
-df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
-df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
+def _parse_date(year_val, md_val):
+    try:
+        y = int(str(year_val).strip())
+        m, d = str(md_val).strip().split("/")
+        return datetime.date(y, int(m), int(d))
+    except (ValueError, AttributeError):
+        return None
 
-if side["uploaded_file"] is not None:
-    _uf = side["uploaded_file"]
-    df_ep = load_data(uploaded_file=_uf, file_name=getattr(_uf, "name", None))
-    st.sidebar.success("EP 데이터 업로드 완료")
 
-unit = side["view_unit"]
-bpu = side["bpu"]
+# ─── 파일 타입 자동 판별 ───
+def detect_file_type(uploaded_file):
+    """파일 내용을 보고 EP채널 / EP실적 자동 판별."""
+    name = uploaded_file.name.lower()
 
-# 데이터 반영 현황
-last_date_ep = df_ep[COL_DATE].max()
-last_date_tr = df_traffic["날짜"].max()
-_weekday_kr = ["월", "화", "수", "목", "금", "토", "일"]
-st.sidebar.info(
-    f"🗓️ EP실적: ~{last_date_tr.strftime('%m/%d')}({_weekday_kr[last_date_tr.weekday()]})\n\n"
-    f"EP채널: ~{last_date_ep.strftime('%m/%d')}({_weekday_kr[last_date_ep.weekday()]})"
-)
+    # 엑셀이면 무조건 EP채널
+    if name.endswith(".xlsx") or name.endswith(".xls"):
+        return "ep_channel"
 
-# 기준 라벨
-_total_ep = df_ep[(df_ep[COL_BPU]=="Total") & (df_ep[COL_MATCH]=="Total") & (df_ep[COL_LOWEST]=="Total")]
-_s = resample_series(_total_ep, "평균 EP 거래액(총결제)", unit).dropna()
-period_last = _s.index[-1] if not _s.empty else last_date_ep
-period_label = make_period_label(period_last, unit)
+    # CSV: 내용으로 판별
+    raw = uploaded_file.read(2000)
+    uploaded_file.seek(0)
 
-# --- 페이지 헤더 ---
-_page_title = side["page"].split(". ", 1)[-1] if ". " in side["page"] else side["page"]
-st.markdown(f"<div class='dash-header-title'>📊 {_page_title}</div>", unsafe_allow_html=True)
+    if raw[:2] == b"\xff\xfe":
+        text = raw.decode("utf-16-le", errors="ignore")
+    else:
+        text = raw.decode("utf-8", errors="ignore")
+
+    # EP실적 파일 특징: "트래픽", "거래액", "구매객수", "CR", "객단가" 가 들어있음
+    if "트래픽" in text and "객단가" in text:
+        return "ep_traffic"
+    # EP채널 파일 특징: "평균 EP" 또는 "원부매칭" 이 들어있음
+    if "평균 EP" in text or "원부매칭" in text:
+        return "ep_channel"
+    # BPU가 첫 컬럼이면 EP실적 (상세)
+    if text.strip().startswith("BPU") or "e-영업" in text[:200]:
+        return "ep_traffic"
+
+    return "unknown"
+
+
+# ─── EP채널 변환 ───
+def convert_ep_channel(uploaded_file, file_name):
+    ext = file_name.lower().split(".")[-1]
+    if ext in ("xlsx", "xls"):
+        df = pd.read_excel(uploaded_file, sheet_name=0, header=None)
+        pct_is_fraction = True
+    else:
+        raw = uploaded_file.read()
+        uploaded_file.seek(0)
+        if raw[:2] == b"\xff\xfe":
+            text = raw.decode("utf-16-le")
+            df = pd.read_csv(io.StringIO(text), sep="\t", header=None, low_memory=False)
+        else:
+            df = pd.read_csv(uploaded_file, encoding="utf-8-sig", sep=None,
+                             engine="python", header=None, low_memory=False)
+        pct_is_fraction = False
+
+    metric_row = df.iloc[0].ffill()
+    year_row = df.iloc[1].ffill()
+    monthday_row = df.iloc[2]
+    label_cols = df.iloc[4:, 0:3].ffill()
+
+    metric_col_dates = {}
+    for metric in METRIC_ORDER:
+        cols = [c for c in df.columns if c >= 3 and metric_row[c] == metric]
+        cd = []
+        for c in cols:
+            dt = _parse_date(year_row[c], monthday_row[c])
+            if dt is not None:
+                cd.append((c, dt))
+        metric_col_dates[metric] = cd
+
+    rows = []
+    for r in range(4, len(df)):
+        bpu = label_cols.loc[r, 0]
+        match = label_cols.loc[r, 1]
+        lowest = label_cols.loc[r, 2]
+        if pd.isna(bpu) or pd.isna(match) or pd.isna(lowest):
+            continue
+        if bpu not in KEEP_BPU or match not in KEEP_MATCH or lowest not in KEEP_LOWEST:
+            continue
+        by_date = {}
+        for metric in METRIC_ORDER:
+            for c, dt in metric_col_dates[metric]:
+                raw_val = df.iloc[r, c]
+                if isinstance(raw_val, str):
+                    raw_val = raw_val.replace(",", "").replace("%", "")
+                val = float(raw_val) if pd.notna(raw_val) and raw_val != "" else None
+                if val is not None and metric in PERCENT_COLS and pct_is_fraction:
+                    val = val * 100
+                by_date.setdefault(dt, {})[metric] = val
+        for dt, metrics in by_date.items():
+            row = {"날짜": dt, "BPU": bpu, "원부매칭여부": match, "최저가여부": lowest}
+            for metric in METRIC_ORDER:
+                row[metric] = metrics.get(metric)
+            rows.append(row)
+
+    out = pd.DataFrame(rows).sort_values(["BPU", "원부매칭여부", "최저가여부", "날짜"])
+    out["날짜"] = pd.to_datetime(out["날짜"]).dt.strftime("%Y-%m-%d")
+    return out.reset_index(drop=True)
+
+
+# ─── EP실적 변환 ───
+def convert_ep_traffic(uploaded_file):
+    raw = uploaded_file.read()
+    uploaded_file.seek(0)
+    if raw[:2] == b"\xff\xfe":
+        text = raw.decode("utf-16-le")
+        df = pd.read_csv(io.StringIO(text), sep="\t", header=None, low_memory=False)
+    else:
+        df = pd.read_csv(uploaded_file, encoding="utf-8-sig", sep=None,
+                         engine="python", header=None, low_memory=False)
+
+    col0 = df.iloc[:, 0].ffill()
+
+    # 날짜 열 인덱스
+    date_cols = {}
+    for c in range(6, df.shape[1]):
+        v = str(df.iloc[0, c])
+        if v.startswith("20"):
+            date_cols[v] = c
+
+    # 추출 대상: Total=구분전체/BPU전체, BPU별=구분기본
+    targets = [
+        ("Total", "전체", "전체"),
+        ("e-영업1", "기본", "e-영업1"),
+        ("e-영업2", "기본", "e-영업2"),
+        ("e-영업3", "기본", "e-영업3"),
+        ("e-영업4", "기본", "e-영업4"),
+    ]
+
+    rows = []
+    for bpu_label, gubun, bpu_val in targets:
+        for metric in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
+            for member in ["전체", "회원", "비회원"]:
+                mask = ((col0 == metric) & (df.iloc[:, 1] == member) &
+                        (df.iloc[:, 2] == "전체") & (df.iloc[:, 3] == "전체") &
+                        (df.iloc[:, 4] == gubun) & (df.iloc[:, 5] == bpu_val))
+                matched = df[mask]
+                if matched.empty:
+                    continue
+                row_data = matched.iloc[0]
+                for date_str, col_idx in date_cols.items():
+                    val = str(row_data.iloc[col_idx]).replace(",", "").replace("%", "")
+                    try:
+                        val = float(val)
+                    except:
+                        val = None
+                    rows.append({"날짜": date_str, "BPU": bpu_label,
+                                 "회원구분": member, "지표": metric, "값": val})
+
+    long = pd.DataFrame(rows)
+    pivot = long.pivot_table(index=["날짜", "BPU", "회원구분"],
+                             columns="지표", values="값", aggfunc="first").reset_index()
+    pivot.columns.name = None
+    pivot = pivot.sort_values(["BPU", "회원구분", "날짜"]).reset_index(drop=True)
+    return pivot
+
+
+# ─── UI ───
+st.markdown("## 🔄 EP 데이터 변환기")
+st.markdown("사내에서 받은 원본 파일을 대시보드용 CSV로 변환합니다.")
+
 st.markdown(
-    f"<div class='dash-header-sub'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
+    "<div style='background:#f0f4ff;border-radius:8px;padding:12px 16px;margin:8px 0 16px;font-size:0.88rem;'>"
+    "📁 <b>EP채널 데이터</b> (Data.xlsx / Data.csv) → <code>ep_data_long.csv</code><br/>"
+    "📁 <b>EP실적 데이터</b> (1_EP실적.csv) → <code>ep_traffic.csv</code><br/>"
+    "파일을 올리면 자동으로 종류를 판별합니다."
+    "</div>",
     unsafe_allow_html=True,
 )
 
-# ============================================================
-# 상단: EP 실적 (트래픽/거래액/구매객수/CR/객단가)
-# ============================================================
-st.markdown("---")
-st.markdown("### 📈 EP 실적")
+uploaded = st.file_uploader("사내 원본 파일을 올려주세요", type=["csv", "xlsx", "xls"])
 
-# 트래픽 데이터에서 해당 BPU + 회원구분=전체 필터
-tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")].copy()
+if uploaded is not None:
+    file_type = detect_file_type(uploaded)
 
-if tr_combo.empty:
-    st.warning(f"{bpu}의 EP실적 데이터가 없습니다.")
-else:
-    # KPI 카드 (트래픽 지표 6개)
-    TRAFFIC_METRICS = [
-        ("트래픽", "EP UV"),
-        ("거래액", "거래액(순결제)"),
-        ("구매객수", "구매객수"),
-        ("CR", "구매전환율(%)"),
-        ("객단가", "객단가"),
-    ]
-    # 회원UV 계산
-    tr_member = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "회원")].copy()
-    tr_nonmember = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "비회원")].copy()
+    if file_type == "unknown":
+        st.error("파일 종류를 판별할 수 없습니다. EP채널 또는 EP실적 파일인지 확인해주세요.")
+        st.stop()
 
-    kpi_cols = st.columns(6)
-    all_items = TRAFFIC_METRICS + [("_회원UV", "회원UV")]
+    type_label = {"ep_channel": "EP채널 데이터", "ep_traffic": "EP실적 데이터"}[file_type]
+    out_name = {"ep_channel": "ep_data_long.csv", "ep_traffic": "ep_traffic.csv"}[file_type]
 
-    for i, (col_name, display_name) in enumerate(all_items):
-        with kpi_cols[i]:
-            if col_name == "_회원UV":
-                s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
-                series = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감":
-                    if not series.empty and s_mem.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
+    st.info(f"🔍 **{type_label}**로 판별됨 → `{out_name}` 생성")
+
+    with st.spinner("변환 중... (보통 10~30초)"):
+        try:
+            if file_type == "ep_channel":
+                result = convert_ep_channel(uploaded, uploaded.name)
             else:
-                s = tr_combo.set_index("날짜")[col_name].sort_index()
-                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감":
-                    if not series.empty and s.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
+                result = convert_ep_traffic(uploaded)
+        except Exception as e:
+            st.error(f"변환 실패: {e}")
+            st.stop()
 
-            stats = compute_kpi_deltas(series, unit)
-            if stats:
-                is_pct = col_name == "CR"
-                if is_pct:
-                    val_str = f"{stats['current']:.1f}%"
-                elif col_name == "객단가":
-                    val_str = f"{stats['current']:,.0f}"
-                else:
-                    val_str = f"{stats['current']:,.0f}"
+    date_min = result["날짜"].min()
+    date_max = result["날짜"].max()
+    n_days = result["날짜"].nunique()
 
-                cfg = UNIT_CONFIG[unit]
-                st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                    f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
-                    f"<div style='font-size:0.78rem;margin-top:6px;'>"
-                    f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}<br/>"
-                    f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}<br/>"
-                    f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}"
-                    f"</div></div>",
-                    unsafe_allow_html=True,
-                )
+    st.success("변환 완료!")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("기간", f"{date_min} ~ {date_max}")
+    c2.metric("일수", f"{n_days}일")
+    c3.metric("행수", f"{len(result):,}")
 
-    st.markdown("<br/>", unsafe_allow_html=True)
-
-    # 지표 추이 차트 (트래픽 지표)
-    h1, h2 = st.columns([2, 3])
-    h1.markdown("**EP 실적 추이**")
-    tr_metric_options = ["트래픽", "거래액", "구매객수", "CR", "객단가"]
-    tr_metric = h2.selectbox("지표 선택", tr_metric_options, index=0, key="tr_metric", label_visibility="collapsed")
-
-    # 리샘플 (전체 기간 — 전년 비교선용)
-    s_raw = tr_combo.set_index("날짜")[tr_metric].sort_index()
-    tr_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
-    if unit == "주별":
-        tr_full.index = tr_full.index - pd.Timedelta(days=6)
-    elif unit == "월마감" and not tr_full.empty and s_raw.index.max() < tr_full.index[-1]:
-        tr_full = tr_full.iloc[:-1]
-
-    # 올해만 추출
-    latest_year = int(tr_full.index.max().year)
-    tr_series = tr_full[tr_full.index.year == latest_year]
-
-    # 일별이면 최근 30일 + 기간 조정
-    show_tr_yoy = True
-    if unit == "일별":
-        _default_start = max(tr_series.index.min().date(), tr_series.index.max().date() - _dt.timedelta(days=30))
-        col_d, col_y = st.columns([3, 2])
-        with col_d:
-            dr = st.date_input("기간", value=(_default_start, tr_series.index.max().date()),
-                               min_value=tr_series.index.min().date(), max_value=tr_series.index.max().date(),
-                               key="tr_range")
-        with col_y:
-            show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
-        if isinstance(dr, tuple) and len(dr) == 2:
-            tr_series = tr_series[(tr_series.index >= pd.Timestamp(dr[0])) & (tr_series.index <= pd.Timestamp(dr[1]))]
+    # 검증
+    if file_type == "ep_channel":
+        total = result[(result["BPU"] == "Total") & (result["원부매칭여부"] == "Total") & (result["최저가여부"] == "Total")]
+        if not total.empty:
+            pct_val = total["원부매칭율(%)"].iloc[-1]
+            if pct_val > 200:
+                st.warning(f"⚠️ 원부매칭율이 {pct_val:.0f}%로 비정상적입니다.")
+            else:
+                st.caption(f"✅ 원부매칭율 {pct_val:.1f}% — 정상")
     else:
-        show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
+        total = result[(result["BPU"] == "Total") & (result["회원구분"] == "전체")]
+        if not total.empty:
+            last_uv = total["트래픽"].iloc[-1]
+            last_gmv = total["거래액"].iloc[-1]
+            st.caption(f"✅ 최신 Total — UV: {last_uv:,.0f} / 거래액: {last_gmv:,.0f}")
 
-    chart_df = pd.DataFrame({tr_metric: tr_series})
-
-    # 전년 비교선 (동요일 364일 / 월마감은 1년)
-    if show_tr_yoy and not tr_series.empty:
-        if unit == "월마감":
-            prev_dates = tr_series.index - pd.DateOffset(years=1)
-        else:
-            prev_dates = tr_series.index - pd.Timedelta(days=364)
-        yoy_vals = []
-        for pd_date in prev_dates:
-            if pd_date in tr_full.index:
-                yoy_vals.append(tr_full.loc[pd_date])
-            else:
-                cand = tr_full.index[tr_full.index <= pd_date]
-                yoy_vals.append(tr_full.loc[cand[-1]] if len(cand) else None)
-        yoy_label = UNIT_CONFIG[unit]["yoy_label"]
-        chart_df[f"{yoy_label}(전년)"] = yoy_vals
-
-    st.line_chart(chart_df, height=350)
-
-    _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
-    _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
-    _yoy_note = ""
-    if show_tr_yoy and not tr_series.empty:
-        _yoy_s = prev_dates[0].strftime('%Y-%m-%d')
-        _yoy_e = prev_dates[-1].strftime('%Y-%m-%d')
-        _yoy_note = f"<br/>전년 비교: {_yoy_s} ~ {_yoy_e} (동요일 기준)"
-    st.markdown(
-        f"<div class='chart-caption'>올해: {_tr_start} ~ {_tr_end}{_yoy_note}</div>",
-        unsafe_allow_html=True,
+    csv_data = result.to_csv(index=False, encoding="utf-8-sig").encode("utf-8-sig")
+    st.download_button(
+        f"⬇️ {out_name} 다운로드",
+        csv_data, file_name=out_name, mime="text/csv",
+        use_container_width=True, type="primary",
     )
 
-    st.markdown("<br/>", unsafe_allow_html=True)
-
-    # 실적 요약 표 (트래픽 지표)
-    st.markdown(f"**EP 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu}</span>", unsafe_allow_html=True)
-    body_rows = []
-    prev_label = yoy_label = None
-    for col_name, display_name in all_items:
-        if col_name == "_회원UV":
-            s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
-            series = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
-            if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not series.empty and s_mem.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
-        else:
-            s = tr_combo.set_index("날짜")[col_name].sort_index()
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
-            if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
-        stats = compute_kpi_deltas(series, unit)
-        if stats is None:
-            body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
-            continue
-        prev_label = stats["prev_label"]
-        yoy_label = stats["yoy_label"]
-        is_pct = col_name == "CR"
-        val = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
-        body_rows.append(
-            f"<tr><td class='m'>{display_name}</td><td class='v'>{val}</td>"
-            f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>"
-            f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td></tr>"
-        )
-    html = (
-        "<table class='summary-table'>"
-        f"<thead><tr><th>지표</th><th>값</th><th>{prev_label or '-'}</th><th>{yoy_label or '-'}</th></tr></thead>"
-        f"<tbody>{''.join(body_rows)}</tbody></table>"
-    )
-    st.markdown(html, unsafe_allow_html=True)
-
-
-# ============================================================
-# 하단: EP 채널 지표 (원부매칭율/최저가율 등)
-# ============================================================
-st.markdown("---")
-st.markdown("### 🏷️ EP 채널 지표")
-
-# 원부매칭/최저가 필터
-from utils import COL_MATCH, COL_LOWEST
-c1, c2 = st.columns(2)
-match_options = [v for v in ["Total", "매칭"] if v in df_ep[COL_MATCH].unique()]
-lowest_options = [v for v in ["Total", "최저가"] if v in df_ep[COL_LOWEST].unique()]
-match_status = c1.selectbox("원부매칭여부", match_options, index=0, key="ep_match")
-lowest_status = c2.selectbox("최저가여부", lowest_options, index=0, key="ep_lowest")
-
-df_ep_combo = filter_by_combo(df_ep, bpu, match_status, lowest_status)
-
-if df_ep_combo.empty:
-    st.warning("선택한 조합에 데이터가 없습니다.")
-else:
-    # EP 채널 지표 KPI
-    EP_CHANNEL_METRICS = [
-        ("원부매칭율(%)", "원부매칭율(%)"),
-        ("최저가율(%)", "최저가율(%)"),
-        ("평균 EP 전시 상품수", "전시상품수"),
-        ("평균 원부매칭 상품수", "원부매칭상품수"),
-        ("평균 최저가 상품수", "최저가상품수"),
-    ]
-
-    ep_cols = st.columns(len(EP_CHANNEL_METRICS))
-    for i, (metric_key, display_name) in enumerate(EP_CHANNEL_METRICS):
-        with ep_cols[i]:
-            series = resample_series(df_ep_combo, metric_key, unit).dropna()
-            stats = compute_kpi_deltas(series, unit)
-            if stats:
-                is_pct = "%" in metric_key or metric_key == "신규가입율"
-                val_str = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
-                cfg = UNIT_CONFIG[unit]
-                st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                    f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
-                    f"<div style='font-size:0.78rem;margin-top:6px;'>"
-                    f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}<br/>"
-                    f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}<br/>"
-                    f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}"
-                    f"</div></div>",
-                    unsafe_allow_html=True,
-                )
-
-    st.markdown("<br/>", unsafe_allow_html=True)
-
-    # EP 채널 지표 추이
-    h1, h2 = st.columns([2, 3])
-    h1.markdown("**EP 채널 추이**")
-    ep_metrics_list = [m for m, _ in EP_CHANNEL_METRICS]
-    ep_metric = h2.selectbox("지표", ep_metrics_list, index=0, key="ep_metric", label_visibility="collapsed")
-
-    ep_trend, ep_yoy = main_trend_data(df_ep_combo, ep_metric, unit, show_yoy=True,
-                                       current_year=int(last_date_ep.year),
-                                       date_start=_dt.date(int(last_date_ep.year), 1, 1),
-                                       date_end=last_date_ep.date())
-    st.line_chart(ep_trend, height=350)
-
-    st.markdown(
-        f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준 · 전년 비교선(동요일) 포함</div>",
-        unsafe_allow_html=True,
-    )
+    st.divider()
+    st.markdown(f"**다운로드한 `{out_name}`을 GitHub에 덮어쓰면 대시보드가 갱신됩니다.**")
+    with st.expander("미리보기 (처음 10행)"):
+        st.dataframe(result.head(10), use_container_width=True, hide_index=True)
