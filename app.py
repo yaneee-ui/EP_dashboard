@@ -42,10 +42,20 @@ if side["refresh"]:
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
 df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 
-if side["uploaded_file"] is not None:
-    _uf = side["uploaded_file"]
+# EP채널 업로드
+if side["ep_channel_file"] is not None:
+    _uf = side["ep_channel_file"]
     df_ep = load_data(uploaded_file=_uf, file_name=getattr(_uf, "name", None))
-    st.sidebar.success("EP 데이터 업로드 완료")
+    st.sidebar.success("EP채널 데이터 업로드 완료")
+
+# EP실적 업로드
+if side["ep_traffic_file"] is not None:
+    _tf = side["ep_traffic_file"]
+    df_traffic = pd.read_csv(_tf)
+    df_traffic["날짜"] = pd.to_datetime(df_traffic["날짜"])
+    _tr_min = df_traffic["날짜"].min().strftime("%Y-%m-%d")
+    _tr_max = df_traffic["날짜"].max().strftime("%Y-%m-%d")
+    st.sidebar.success(f"EP실적 데이터 업로드 완료: {_tr_min} ~ {_tr_max}")
 
 unit = side["view_unit"]
 bpu = side["bpu"]
