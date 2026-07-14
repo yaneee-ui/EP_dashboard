@@ -180,7 +180,6 @@ else:
             show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
 
     chart_df = pd.DataFrame({tr_metric: tr_series})
-    chart_df.index.name = "날짜"
 
     # 전년 비교선 (동요일 364일 / 월마감은 1년)
     yoy_col_name = None
@@ -200,45 +199,11 @@ else:
         yoy_col_name = f"{yoy_label}(전년)"
         chart_df[yoy_col_name] = yoy_vals
 
-    # Altair 차트 (금년=진하고 굵게+마커, 전년=연하고 가늘게)
-    import altair as alt
-    chart_df_reset = chart_df.reset_index()
-    chart_df_long = chart_df_reset.melt("날짜", var_name="구분", value_name="값")
-
+    # 금년=진한 파랑, 전년=하늘색
     if yoy_col_name and show_tr_yoy:
-        color_domain = [tr_metric, yoy_col_name]
-        color_range = ["#2563eb", "#7dd3fc"]
-        size_condition = alt.condition(
-            alt.datum["구분"] == tr_metric,
-            alt.value(2.5), alt.value(1.2)
-        )
-        dash_condition = alt.condition(
-            alt.datum["구분"] == tr_metric,
-            alt.value([0]), alt.value([6, 4])
-        )
+        st.line_chart(chart_df, height=350, color=["#2563eb", "#7dd3fc"])
     else:
-        color_domain = [tr_metric]
-        color_range = ["#2563eb"]
-        size_condition = alt.value(2.5)
-        dash_condition = alt.value([0])
-
-    line = alt.Chart(chart_df_long).mark_line().encode(
-        x=alt.X("날짜:T", title=None),
-        y=alt.Y("값:Q", title=None),
-        color=alt.Color("구분:N", scale=alt.Scale(domain=color_domain, range=color_range),
-                        legend=alt.Legend(orient="bottom", title=None)),
-        strokeWidth=size_condition,
-        strokeDash=dash_condition,
-    )
-
-    # 금년에만 마커 표시
-    points_df = chart_df_long[chart_df_long["구분"] == tr_metric]
-    points = alt.Chart(points_df).mark_circle(size=30, color="#2563eb").encode(
-        x="날짜:T", y="값:Q",
-    )
-
-    chart = (line + points).properties(height=350).configure_view(strokeWidth=0)
-    st.altair_chart(chart, use_container_width=True)
+        st.line_chart(chart_df, height=350, color=["#2563eb"])
 
     _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
     _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
@@ -436,32 +401,11 @@ else:
                                        date_start=_dt.date(int(last_date_ep.year), 1, 1),
                                        date_end=last_date_ep.date())
 
-    import altair as alt
-    ep_trend_reset = ep_trend.reset_index()
-    ep_trend_reset.columns = ["날짜"] + list(ep_trend.columns)
-    ep_long = ep_trend_reset.melt("날짜", var_name="구분", value_name="값")
     ep_cols = list(ep_trend.columns)
-    cur_col = ep_cols[0]
-    has_yoy = len(ep_cols) > 1
-    yoy_col = ep_cols[1] if has_yoy else None
-
-    if has_yoy:
-        ep_color = alt.Color("구분:N", scale=alt.Scale(domain=ep_cols, range=["#2563eb", "#7dd3fc"]),
-                             legend=alt.Legend(orient="bottom", title=None))
-        ep_size = alt.condition(alt.datum["구분"] == cur_col, alt.value(2.5), alt.value(1.2))
-        ep_dash = alt.condition(alt.datum["구분"] == cur_col, alt.value([0]), alt.value([6, 4]))
+    if len(ep_cols) > 1:
+        st.line_chart(ep_trend, height=350, color=["#2563eb", "#7dd3fc"])
     else:
-        ep_color = alt.value("#2563eb")
-        ep_size = alt.value(2.5)
-        ep_dash = alt.value([0])
-
-    ep_line = alt.Chart(ep_long).mark_line().encode(
-        x=alt.X("날짜:T", title=None), y=alt.Y("값:Q", title=None),
-        color=ep_color, strokeWidth=ep_size, strokeDash=ep_dash,
-    )
-    ep_pts_df = ep_long[ep_long["구분"] == cur_col]
-    ep_pts = alt.Chart(ep_pts_df).mark_circle(size=30, color="#2563eb").encode(x="날짜:T", y="값:Q")
-    st.altair_chart((ep_line + ep_pts).properties(height=350).configure_view(strokeWidth=0), use_container_width=True)
+        st.line_chart(ep_trend, height=350, color=["#2563eb"])
 
     st.markdown(
         f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준 · 전년 비교선(동요일) 포함</div>",
