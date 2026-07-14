@@ -121,8 +121,8 @@ else:
 
             stats = compute_kpi_deltas(series, unit)
             if stats:
-                is_pct = col_name == "CR"
-                if is_pct:
+                _is_pct = col_name == "CR"
+                if _is_pct:
                     val_str = f"{stats['current']:.1f}%"
                 elif col_name == "객단가":
                     val_str = f"{stats['current']:,.0f}"
