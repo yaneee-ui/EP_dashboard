@@ -60,6 +60,55 @@ if side["ep_traffic_file"] is not None:
 unit = side["view_unit"]
 bpu = side["bpu"]
 
+# 자사/입점 합산용 BPU 그룹 정의
+BPU_GROUPS = {
+    "자사": ["e-영업1", "e-영업2"],
+    "입점": ["e-영업3", "e-영업4"],
+}
+
+
+def aggregate_traffic(df, bpus, member="전체"):
+    """여러 BPU의 트래픽 데이터를 합산. CR/객단가는 재계산."""
+    sub = df[(df["BPU"].isin(bpus)) & (df["회원구분"] == member)]
+    if sub.empty:
+        return sub
+    agg = sub.groupby("날짜").agg({
+        "트래픽": "sum", "거래액": "sum", "구매객수": "sum",
+    }).reset_index()
+    agg["CR"] = (agg["구매객수"] / agg["트래픽"] * 100).where(agg["트래픽"] > 0, 0)
+    agg["객단가"] = (agg["거래액"] / agg["구매객수"]).where(agg["구매객수"] > 0, 0)
+    agg["BPU"] = "+".join(bpus)
+    agg["회원구분"] = member
+    return agg
+
+
+def aggregate_ep(df, bpus, match_status, lowest_status):
+    """여러 BPU의 EP채널 데이터를 합산. 비율 지표는 재계산."""
+    sub = df[(df[COL_BPU].isin(bpus)) & (df[COL_MATCH] == match_status) & (df[COL_LOWEST] == lowest_status)]
+    if sub.empty:
+        return sub
+    # 합산 가능한 컬럼(수량) vs 재계산이 필요한 컬럼(비율) 분리
+    sum_cols = [c for c in sub.columns if c not in [COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST,
+                "원부매칭율(%)", "최저가율(%)", "구매전환율(%)", "첫구매거래액(%)", "신규가입율", "첫구매 전환율(%)"]]
+    agg = sub.groupby(COL_DATE)[sum_cols].sum().reset_index()
+    # 비율 재계산
+    if "평균 원부매칭 상품수" in agg.columns and "평균 EP 전시 상품수" in agg.columns:
+        agg["원부매칭율(%)"] = (agg["평균 원부매칭 상품수"] / agg["평균 EP 전시 상품수"] * 100).where(agg["평균 EP 전시 상품수"] > 0, 0)
+    if "평균 최저가 상품수" in agg.columns and "평균 EP 전시 상품수" in agg.columns:
+        agg["최저가율(%)"] = (agg["평균 최저가 상품수"] / agg["평균 EP 전시 상품수"] * 100).where(agg["평균 EP 전시 상품수"] > 0, 0)
+    if "평균 EP 고객수(총결제)" in agg.columns and "평균 EP UV" in agg.columns:
+        agg["구매전환율(%)"] = (agg["평균 EP 고객수(총결제)"] / agg["평균 EP UV"] * 100).where(agg["평균 EP UV"] > 0, 0)
+    if "평균 EP 첫구매 거래액(총결제)" in agg.columns and "평균 EP 거래액(총결제)" in agg.columns:
+        agg["첫구매거래액(%)"] = (agg["평균 EP 첫구매 거래액(총결제)"] / agg["평균 EP 거래액(총결제)"] * 100).where(agg["평균 EP 거래액(총결제)"] > 0, 0)
+    if "평균 EP 신규가입수" in agg.columns and "평균 EP UV" in agg.columns:
+        agg["신규가입율"] = (agg["평균 EP 신규가입수"] / agg["평균 EP UV"] * 100).where(agg["평균 EP UV"] > 0, 0)
+    if "평균 EP 첫구매 고객수(총결제)" in agg.columns and "평균 EP UV" in agg.columns:
+        agg["첫구매 전환율(%)"] = (agg["평균 EP 첫구매 고객수(총결제)"] / agg["평균 EP UV"] * 100).where(agg["평균 EP UV"] > 0, 0)
+    agg[COL_BPU] = "+".join(bpus)
+    agg[COL_MATCH] = match_status
+    agg[COL_LOWEST] = lowest_status
+    return agg
+
 # 데이터 반영 현황
 last_date_ep = df_ep[COL_DATE].max()
 last_date_tr = df_traffic["날짜"].max()
@@ -90,7 +139,15 @@ st.markdown("---")
 st.markdown("### 📈 EP 실적")
 
 # 트래픽 데이터에서 해당 BPU + 회원구분=전체 필터
-tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")].copy()
+# 트래픽 데이터 필터 (자사/입점이면 합산)
+if bpu in BPU_GROUPS:
+    tr_combo = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "전체")
+    tr_member = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "회원")
+    tr_nonmember = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "비회원")
+else:
+    tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")].copy()
+    tr_member = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "회원")].copy()
+    tr_nonmember = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "비회원")].copy()
 
 if tr_combo.empty:
     st.warning(f"{bpu}의 EP실적 데이터가 없습니다.")
@@ -103,9 +160,7 @@ else:
         ("CR", "구매전환율(%)"),
         ("객단가", "객단가"),
     ]
-    # 회원UV 계산
-    tr_member = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "회원")].copy()
-    tr_nonmember = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "비회원")].copy()
+    # 회원UV 계산 (tr_member, tr_nonmember는 위에서 이미 설정됨)
 
     kpi_cols = st.columns(6)
     all_items = TRAFFIC_METRICS + [("_회원UV", "회원UV")]
@@ -363,7 +418,10 @@ lowest_options = [v for v in ["Total", "최저가"] if v in df_ep[COL_LOWEST].un
 match_status = c1.selectbox("원부매칭여부", match_options, index=0, key="ep_match")
 lowest_status = c2.selectbox("최저가여부", lowest_options, index=0, key="ep_lowest")
 
-df_ep_combo = filter_by_combo(df_ep, bpu, match_status, lowest_status)
+if bpu in BPU_GROUPS:
+    df_ep_combo = aggregate_ep(df_ep, BPU_GROUPS[bpu], match_status, lowest_status)
+else:
+    df_ep_combo = filter_by_combo(df_ep, bpu, match_status, lowest_status)
 
 if df_ep_combo.empty:
     st.warning("선택한 조합에 데이터가 없습니다.")
