@@ -138,21 +138,20 @@ st.markdown(
 st.markdown("---")
 st.markdown("### 📈 EP 실적")
 
-# 트래픽 데이터에서 해당 BPU + 회원구분=전체 필터
+# 세그먼트 필터
+_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
+segment = st.radio("고객 구분", _seg_options, horizontal=True, key="seg_filter", label_visibility="collapsed")
+
 # 트래픽 데이터 필터 (자사/입점이면 합산)
 if bpu in BPU_GROUPS:
-    tr_combo = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "전체")
-    tr_member = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "회원")
-    tr_nonmember = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "비회원")
+    tr_combo = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], segment)
 else:
-    tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")].copy()
-    tr_member = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "회원")].copy()
-    tr_nonmember = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "비회원")].copy()
+    tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == segment)].copy()
 
 if tr_combo.empty:
     st.warning(f"{bpu}의 EP실적 데이터가 없습니다.")
 else:
-    # KPI 카드 (트래픽 지표 6개)
+    # KPI 카드 (트래픽 지표 5개)
     TRAFFIC_METRICS = [
         ("트래픽", "EP UV"),
         ("거래액", "거래액(순결제)"),
@@ -160,29 +159,19 @@ else:
         ("CR", "구매전환율(%)"),
         ("객단가", "객단가"),
     ]
-    # 회원UV 계산 (tr_member, tr_nonmember는 위에서 이미 설정됨)
 
-    kpi_cols = st.columns(6)
-    all_items = TRAFFIC_METRICS + [("_회원UV", "회원UV")]
+    kpi_cols = st.columns(5)
+    all_items = TRAFFIC_METRICS
 
     for i, (col_name, display_name) in enumerate(all_items):
         with kpi_cols[i]:
-            if col_name == "_회원UV":
-                s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
-                series = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감":
-                    if not series.empty and s_mem.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
-            else:
-                s = tr_combo.set_index("날짜")[col_name].sort_index()
-                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감":
-                    if not series.empty and s.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
+            s = tr_combo.set_index("날짜")[col_name].sort_index()
+            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            if unit == "주별":
+                series.index = series.index - pd.Timedelta(days=6)
+            elif unit == "월마감":
+                if not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
 
             stats = compute_kpi_deltas(series, unit)
             if stats:
@@ -289,20 +278,12 @@ else:
     body_rows = []
     prev_label = yoy_label = None
     for col_name, display_name in all_items:
-        if col_name == "_회원UV":
-            s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
-            series = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
-            if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not series.empty and s_mem.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
-        else:
-            s = tr_combo.set_index("날짜")[col_name].sort_index()
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
-            if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
+        s = tr_combo.set_index("날짜")[col_name].sort_index()
+        series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+        if unit == "주별":
+            series.index = series.index - pd.Timedelta(days=6)
+        elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+            series = series.iloc[:-1]
         stats = compute_kpi_deltas(series, unit)
         if stats is None:
             body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
@@ -345,13 +326,6 @@ else:
             (tr_combo["날짜"] <= f"{latest_year-1}-{_cutoff_month:02d}-{_cutoff.day:02d}")
         ]
         # 회원UV용
-        mem_cur = tr_member[
-            (tr_member["날짜"] >= f"{latest_year}-01-01") & (tr_member["날짜"] <= _cutoff)
-        ] if not tr_member.empty else pd.DataFrame()
-        mem_prev = tr_member[
-            (tr_member["날짜"] >= f"{latest_year-1}-01-01") &
-            (tr_member["날짜"] <= f"{latest_year-1}-{_cutoff_month:02d}-{_cutoff.day:02d}")
-        ] if not tr_member.empty else pd.DataFrame()
 
         st.markdown(f"<br/>", unsafe_allow_html=True)
         st.markdown(f"**📊 1~{_cutoff_month}월 누계**  ·  <span style='color:#6b7280;font-size:0.85rem'>전년 동기간 비교</span>", unsafe_allow_html=True)
@@ -362,7 +336,6 @@ else:
             ("구매객수", "구매객수", False),
             ("_CR", "구매전환율(%)", True),
             ("_객단가", "객단가", False),
-            ("_회원UV", "회원UV", False),
         ]
 
         ytd_rows = []
@@ -377,11 +350,7 @@ else:
                 p_val = ytd_prev["거래액"].sum() / ytd_prev["구매객수"].sum() if not ytd_prev.empty and ytd_prev["구매객수"].sum() > 0 else None
                 c_str = f"{c_val:,.0f}"
                 p_str = f"{p_val:,.0f}" if p_val else "-"
-            elif key == "_회원UV":
-                c_val = mem_cur["트래픽"].sum() if not mem_cur.empty else 0
-                p_val = mem_prev["트래픽"].sum() if not mem_prev.empty else None
-                c_str = f"{c_val:,.0f}"
-                p_str = f"{p_val:,.0f}" if p_val else "-"
+
             else:
                 c_val = ytd_cur[key].sum()
                 p_val = ytd_prev[key].sum() if not ytd_prev.empty else None
