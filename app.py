@@ -138,9 +138,27 @@ st.markdown(
 st.markdown("---")
 st.markdown("### 📈 EP 실적")
 
-# 세그먼트 필터
-_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
-segment = st.radio("고객 구분", _seg_options, horizontal=True, key="seg_filter", label_visibility="collapsed")
+# 세그먼트 필터 + 월마감 시 월 선택
+if unit == "월마감":
+    _fc1, _fc2 = st.columns([3, 2])
+    with _fc1:
+        _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
+        segment = st.radio("고객 구분", _seg_options, horizontal=True, key="seg_filter", label_visibility="collapsed")
+    with _fc2:
+        # 마감된 월 목록 생성
+        _tr_total = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+        _tr_s = _tr_total.set_index("날짜")["트래픽"].resample("ME").mean().dropna()
+        _last_tr_date = _tr_total["날짜"].max()
+        if not _tr_s.empty and _last_tr_date < _tr_s.index[-1]:
+            _tr_s = _tr_s.iloc[:-1]  # 미완성 달 제외
+        _available_months = [f"{d.year}년 {d.month}월" for d in _tr_s.index]
+        _selected_month_label = st.selectbox("기준 월", _available_months, index=len(_available_months)-1, key="month_select")
+        _selected_month_idx = _available_months.index(_selected_month_label)
+        _selected_month_date = _tr_s.index[_selected_month_idx]
+else:
+    _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
+    segment = st.radio("고객 구분", _seg_options, horizontal=True, key="seg_filter", label_visibility="collapsed")
+    _selected_month_date = None
 
 # 트래픽 데이터 필터 (자사/입점이면 합산)
 if bpu in BPU_GROUPS:
@@ -172,6 +190,9 @@ else:
             elif unit == "월마감":
                 if not series.empty and s.index.max() < series.index[-1]:
                     series = series.iloc[:-1]
+            # 월마감에서 특정 월 선택 시, 그 월까지로 자르기
+            if _selected_month_date is not None and not series.empty:
+                series = series[series.index <= _selected_month_date]
 
             stats = compute_kpi_deltas(series, unit)
             if stats:
@@ -284,6 +305,8 @@ else:
             series.index = series.index - pd.Timedelta(days=6)
         elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
             series = series.iloc[:-1]
+        if _selected_month_date is not None and not series.empty:
+            series = series[series.index <= _selected_month_date]
         stats = compute_kpi_deltas(series, unit)
         if stats is None:
             body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
@@ -307,12 +330,15 @@ else:
     # --- 월마감일 때 누계 표시 ---
     if unit == "월마감" and not tr_combo.empty:
         latest_year = int(tr_combo["날짜"].max().year)
-        # 마감 완료된 마지막 달 말일 구하기
-        _last_resampled = tr_combo.set_index("날짜")["거래액"].resample("ME").mean().dropna()
-        if not _last_resampled.empty and tr_combo["날짜"].max() < _last_resampled.index[-1]:
-            _cutoff = _last_resampled.index[-2]  # 미완성 달 제외
+        # 선택 월이 있으면 그 월을 cutoff로, 없으면 마감 완료된 마지막 달
+        if _selected_month_date is not None:
+            _cutoff = _selected_month_date
         else:
-            _cutoff = _last_resampled.index[-1]
+            _last_resampled = tr_combo.set_index("날짜")["거래액"].resample("ME").mean().dropna()
+            if not _last_resampled.empty and tr_combo["날짜"].max() < _last_resampled.index[-1]:
+                _cutoff = _last_resampled.index[-2]
+            else:
+                _cutoff = _last_resampled.index[-1]
         _cutoff_month = _cutoff.month
 
         # 올해 누계 (1월 ~ 마감 월)
