@@ -117,65 +117,83 @@ st.sidebar.info(
     f"EP채널: ~{last_date_ep.strftime('%m/%d')}({_weekday_kr[last_date_ep.weekday()]})"
 )
 
-# --- 페이지 헤더 ---
-st.markdown("<div class='dash-header-title'>📊 실적 요약</div>", unsafe_allow_html=True)
+# --- 페이지 헤더 + 매체 필터 + 기준 시점 (스크롤 시 상단 고정) ---
+_sticky = st.container(key="sticky_header")
+with _sticky:
+    st.markdown("<div class='dash-header-title'>📊 실적 요약</div>", unsafe_allow_html=True)
 
-# --- 매체 필터 + 기준 시점 ---
-BPU_OPTIONS = [
-    ("전체", "Total"),
-    ("e-영업1", "e-영업1"),
-    ("e-영업2", "e-영업2"),
-    ("e-영업3", "e-영업3"),
-    ("e-영업4", "e-영업4"),
-    ("자사 (e1+e2)", "자사"),
-    ("입점 (e3+e4)", "입점"),
-]
+    BPU_OPTIONS = [
+        ("전체", "Total"),
+        ("e-영업1", "e-영업1"),
+        ("e-영업2", "e-영업2"),
+        ("e-영업3", "e-영업3"),
+        ("e-영업4", "e-영업4"),
+        ("자사 (e1+e2)", "자사"),
+        ("입점 (e3+e4)", "입점"),
+    ]
 
-fc1, fc2 = st.columns([2, 2])
-with fc1:
-    st.markdown("<div style='font-size:0.85rem;color:#6b7280;margin-bottom:2px;'>매체 필터</div>", unsafe_allow_html=True)
-    _bpu_label_sel = st.selectbox(
-        "매체 필터", [l for l, _ in BPU_OPTIONS],
-        label_visibility="collapsed", key="bpu_filter",
+    fc1, fc2 = st.columns([2, 2])
+    with fc1:
+        st.markdown("<div style='font-size:0.85rem;color:#6b7280;margin-bottom:2px;'>매체 필터</div>", unsafe_allow_html=True)
+        _bpu_label_sel = st.selectbox(
+            "매체 필터", [l for l, _ in BPU_OPTIONS],
+            label_visibility="collapsed", key="bpu_filter",
+        )
+        bpu = dict(BPU_OPTIONS)[_bpu_label_sel]
+
+    # 기준 시점 옵션 (Total 트래픽 데이터 기준으로 생성 — 조회 단위에 맞는 기간 목록)
+    _tr_total_all = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+    _period_s = _tr_total_all.set_index("날짜")["트래픽"].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
+    if unit == "주별":
+        _period_s.index = _period_s.index - pd.Timedelta(days=6)
+    if unit == "월마감":
+        _last_tr_all = _tr_total_all["날짜"].max()
+        if not _period_s.empty and _last_tr_all < _period_s.index[-1]:
+            _period_s = _period_s.iloc[:-1]  # 미완성 달 제외
+
+    with fc2:
+        _label2 = "기준 일자" if unit == "일별" else "기준 시점"
+        st.markdown(f"<div style='font-size:0.85rem;color:#6b7280;margin-bottom:2px;'>{_label2}</div>", unsafe_allow_html=True)
+        if unit == "일별":
+            _min_d = _period_s.index.min().date()
+            _max_d = _period_s.index.max().date()
+            _sel_date = st.date_input(
+                "기준 일자", value=_max_d, min_value=_min_d, max_value=_max_d,
+                label_visibility="collapsed", key="period_filter_date",
+            )
+            selected_period_date = pd.Timestamp(_sel_date)
+            if selected_period_date not in _period_s.index:
+                _cand = _period_s.index[_period_s.index <= selected_period_date]
+                selected_period_date = _cand[-1] if len(_cand) else _period_s.index[-1]
+        else:
+            _period_labels = [make_period_label(d, unit) for d in _period_s.index]
+            _sel_label = st.selectbox(
+                "기준 시점", _period_labels, index=len(_period_labels) - 1,
+                label_visibility="collapsed", key="period_filter",
+            )
+            selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
+
+    period_label = make_period_label(selected_period_date, unit)
+
+    st.markdown(
+        f"<div class='dash-header-sub'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
+        unsafe_allow_html=True,
     )
-    bpu = dict(BPU_OPTIONS)[_bpu_label_sel]
 
-# 기준 시점 옵션 (Total 트래픽 데이터 기준으로 생성 — 조회 단위에 맞는 기간 목록)
-_tr_total_all = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
-_period_s = _tr_total_all.set_index("날짜")["트래픽"].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
-if unit == "주별":
-    _period_s.index = _period_s.index - pd.Timedelta(days=6)
-if unit == "월마감":
-    _last_tr_all = _tr_total_all["날짜"].max()
-    if not _period_s.empty and _last_tr_all < _period_s.index[-1]:
-        _period_s = _period_s.iloc[:-1]  # 미완성 달 제외
-
-with fc2:
-    _label2 = "기준 일자" if unit == "일별" else "기준 시점"
-    st.markdown(f"<div style='font-size:0.85rem;color:#6b7280;margin-bottom:2px;'>{_label2}</div>", unsafe_allow_html=True)
-    if unit == "일별":
-        _min_d = _period_s.index.min().date()
-        _max_d = _period_s.index.max().date()
-        _sel_date = st.date_input(
-            "기준 일자", value=_max_d, min_value=_min_d, max_value=_max_d,
-            label_visibility="collapsed", key="period_filter_date",
-        )
-        selected_period_date = pd.Timestamp(_sel_date)
-        if selected_period_date not in _period_s.index:
-            _cand = _period_s.index[_period_s.index <= selected_period_date]
-            selected_period_date = _cand[-1] if len(_cand) else _period_s.index[-1]
-    else:
-        _period_labels = [make_period_label(d, unit) for d in _period_s.index]
-        _sel_label = st.selectbox(
-            "기준 시점", _period_labels, index=len(_period_labels) - 1,
-            label_visibility="collapsed", key="period_filter",
-        )
-        selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
-
-period_label = make_period_label(selected_period_date, unit)
-
+# 필터 영역 상단 고정(sticky) CSS
 st.markdown(
-    f"<div class='dash-header-sub'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
+    """
+    <style>
+    .st-key-sticky_header {
+        position: sticky;
+        top: 0;
+        z-index: 999;
+        background: #f7f8fa;
+        padding: 10px 0 12px 0;
+        border-bottom: 1px solid #e5e7eb;
+    }
+    </style>
+    """,
     unsafe_allow_html=True,
 )
 
