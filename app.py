@@ -4,6 +4,7 @@
 아래: EP 채널 지표 (원부매칭율/최저가율 등) — 기존 EP 데이터, 원부매칭/최저가 필터 적용
 """
 import streamlit as st
+import streamlit.components.v1 as components
 import pandas as pd
 import datetime as _dt
 
@@ -123,7 +124,7 @@ with _sticky:
     # 고정 대상 식별용 마커 (반드시 이 컨테이너의 첫 요소여야 함)
     st.markdown("<div id='sticky-marker-anchor'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div class='dash-header-title'>📊 실적 요약</div>", unsafe_allow_html=True)
+    st.markdown("<div style='font-size:1.15rem;font-weight:700;margin-bottom:4px;'>📊 실적 요약</div>", unsafe_allow_html=True)
 
     BPU_OPTIONS = [
         ("전체", "Total"),
@@ -137,7 +138,7 @@ with _sticky:
 
     fc1, fc2 = st.columns([2, 2])
     with fc1:
-        st.markdown("<div style='font-size:0.85rem;color:#6b7280;margin-bottom:2px;'>매체 필터</div>", unsafe_allow_html=True)
+        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
         _bpu_label_sel = st.selectbox(
             "매체 필터", [l for l, _ in BPU_OPTIONS],
             label_visibility="collapsed", key="bpu_filter",
@@ -156,7 +157,7 @@ with _sticky:
 
     with fc2:
         _label2 = "기준 일자" if unit == "일별" else "기준 시점"
-        st.markdown(f"<div style='font-size:0.85rem;color:#6b7280;margin-bottom:2px;'>{_label2}</div>", unsafe_allow_html=True)
+        st.markdown(f"<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>{_label2}</div>", unsafe_allow_html=True)
         if unit == "일별":
             _min_d = _period_s.index.min().date()
             _max_d = _period_s.index.max().date()
@@ -179,7 +180,7 @@ with _sticky:
     period_label = make_period_label(selected_period_date, unit)
 
     st.markdown(
-        f"<div class='dash-header-sub'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
+        f"<div style='font-size:0.8rem;color:#6b7280;margin-top:2px;'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
         unsafe_allow_html=True,
     )
 
@@ -195,7 +196,7 @@ st.markdown(
         right: 2rem !important;
         z-index: 999 !important;
         background: #f7f8fa !important;
-        padding: 10px 16px 12px 16px !important;
+        padding: 6px 16px 8px 16px !important;
         border-bottom: 1px solid #e5e7eb !important;
         box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
     }
@@ -207,18 +208,21 @@ st.markdown(
         right: 2rem !important;
         z-index: 999 !important;
         background: #f7f8fa !important;
-        padding: 10px 16px 12px 16px !important;
+        padding: 6px 16px 8px 16px !important;
         border-bottom: 1px solid #e5e7eb !important;
         box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
-    }
-    /* 사이드바가 접혔을 때는 왼쪽 여백을 줄여 고정 바가 화면을 벗어나지 않게 함 */
-    div[data-testid="stSidebar"][aria-expanded="false"] ~ section[data-testid="stMain"] .st-key-sticky_header,
-    div[data-testid="stSidebar"][aria-expanded="false"] ~ section[data-testid="stMain"] div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > div#sticky-marker-anchor) {
-        left: 2rem !important;
     }
     /* Streamlit 자체 상단 툴바(Share/GitHub 등)는 항상 최상단에 보이도록 z-index 우선 */
     header[data-testid="stHeader"] {
         z-index: 1000 !important;
+    }
+    /* 고정 영역 내부 위젯(selectbox/date_input) 상하 여백 축소 */
+    .st-key-sticky_header div[data-testid="stSelectbox"],
+    .st-key-sticky_header div[data-testid="stDateInput"] {
+        margin-bottom: -6px !important;
+    }
+    .st-key-sticky_header div[data-testid="element-container"] {
+        margin-bottom: 0 !important;
     }
     </style>
     """,
@@ -226,7 +230,39 @@ st.markdown(
 )
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
-st.markdown("<div style='height:150px;'></div>", unsafe_allow_html=True)
+st.markdown("<div style='height:90px;'></div>", unsafe_allow_html=True)
+
+# 사이드바 접힘/펼침/크기조정에 맞춰 고정 영역의 left 위치를 실시간으로 자동 조정
+components.html(
+    """
+    <script>
+    function adjustStickyLeft() {
+        try {
+            const doc = window.parent.document;
+            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
+            let leftPx = 32; // 사이드바 없을 때 기본 여백(2rem≈32px)
+            if (sidebar) {
+                const rect = sidebar.getBoundingClientRect();
+                if (rect.width > 10) {
+                    leftPx = rect.right + 16; // 사이드바 오른쪽 끝 + 여백
+                }
+            }
+            doc.querySelectorAll('.st-key-sticky_header').forEach(function(el) {
+                el.style.setProperty('left', leftPx + 'px', 'important');
+            });
+        } catch (e) {}
+    }
+    adjustStickyLeft();
+    try {
+        const obs = new MutationObserver(adjustStickyLeft);
+        obs.observe(window.parent.document.body, {attributes: true, subtree: true, attributeFilter: ['style', 'class']});
+        window.parent.addEventListener('resize', adjustStickyLeft);
+    } catch (e) {}
+    setInterval(adjustStickyLeft, 400); // 안전망: 주기적 재계산
+    </script>
+    """,
+    height=0,
+)
 
 
 
