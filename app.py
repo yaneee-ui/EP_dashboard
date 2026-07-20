@@ -185,9 +185,9 @@ with _sticky:
     _is_cat_page = side["page"].startswith("2")
 
     if _is_cat_page:
-        fc1, fc2, fc3, fc4 = st.columns([1, 1, 1, 1])
+        fc1, fc2, fc3, fc4, _fc_spacer = st.columns([1, 1, 1, 1, 6])
     else:
-        fc1, fc2, _fc_spacer = st.columns([1, 1, 3])
+        fc1, fc2, _fc_spacer = st.columns([1, 1, 8])
 
     with fc1:
         st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
@@ -745,37 +745,76 @@ if side["page"].startswith("2"):
 
         share_rows = []
         for cat_name in sorted(_share_df["카테고리"].unique()):
-            s = _share_df[_share_df["카테고리"] == cat_name].set_index("날짜")["거래액"].sort_index()
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            s_full = _share_df[_share_df["카테고리"] == cat_name].set_index("날짜")["거래액"].sort_index()
+            series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).mean()
             if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
-            series = series[series.index <= selected_period_date] if not series.empty else series
-            if not series.empty:
-                share_rows.append({"카테고리": cat_name, "거래액": series.iloc[-1]})
+                series_full.index = series_full.index - pd.Timedelta(days=6)
+            elif unit == "월마감" and not series_full.empty and s_full.index.max() < series_full.index[-1]:
+                series_full = series_full.iloc[:-1]
+            series = series_full[series_full.index <= selected_period_date] if not series_full.empty else series_full
+            if series.empty:
+                continue
+            cur_val = series.iloc[-1]
+            cur_date = series.index[-1]
+
+            # 전년 동시점 값 (동요일 364일 전 / 월마감은 1년 전)
+            if unit == "월마감":
+                prev_date = cur_date - pd.DateOffset(years=1)
+            else:
+                prev_date = cur_date - pd.Timedelta(days=364)
+            if prev_date in series_full.index:
+                prev_val = series_full.loc[prev_date]
+            else:
+                cand = series_full.index[series_full.index <= prev_date]
+                prev_val = series_full.loc[cand[-1]] if len(cand) else None
+
+            share_rows.append({"카테고리": cat_name, "거래액": cur_val, "전년거래액": prev_val})
 
         if share_rows:
             share_df = pd.DataFrame(share_rows).sort_values("거래액", ascending=False).reset_index(drop=True)
             _total_gmv = share_df["거래액"].sum()
             share_df["비중"] = (share_df["거래액"] / _total_gmv * 100) if _total_gmv > 0 else 0
-            _max_gmv = share_df["거래액"].max() if not share_df.empty else 1
+            _max_gmv = max(
+                share_df["거래액"].max() if not share_df.empty else 1,
+                share_df["전년거래액"].max(skipna=True) if share_df["전년거래액"].notna().any() else 0,
+                1,
+            )
+            _yoy_label_share = UNIT_CONFIG[unit]["yoy_label"]
 
             bar_rows_html = []
             for _, r in share_df.iterrows():
                 _pct_width = (r["거래액"] / _max_gmv * 100) if _max_gmv > 0 else 0
+                _has_prev = pd.notna(r["전년거래액"])
+                _prev_pct_width = (r["전년거래액"] / _max_gmv * 100) if _has_prev and _max_gmv > 0 else 0
+                _yoy_delta = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if _has_prev and r["전년거래액"] != 0 else None
+                _prev_val_str = f"{r['전년거래액']:,.0f}" if _has_prev else "-"
+
                 bar_rows_html.append(
-                    "<div style='display:flex;align-items:center;margin-bottom:8px;'>"
-                    f"<div style='width:70px;flex-shrink:0;font-size:0.82rem;color:#374151;'>{r['카테고리']}</div>"
-                    "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:22px;margin:0 10px;position:relative;'>"
+                    "<div style='margin-bottom:12px;'>"
+                    "<div style='display:flex;align-items:center;margin-bottom:3px;'>"
+                    f"<div style='width:70px;flex-shrink:0;font-size:0.82rem;color:#374151;font-weight:600;'>{r['카테고리']}</div>"
+                    "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:20px;margin:0 10px;position:relative;'>"
                     f"<div style='width:{_pct_width:.1f}%;background:#2563eb;height:100%;border-radius:4px;'></div>"
                     "</div>"
-                    f"<div style='width:150px;flex-shrink:0;text-align:right;font-size:0.82rem;color:#374151;'>"
+                    f"<div style='width:190px;flex-shrink:0;text-align:right;font-size:0.82rem;color:#374151;'>"
                     f"{r['거래액']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
+                    "</div>"
+                    "<div style='display:flex;align-items:center;'>"
+                    "<div style='width:70px;flex-shrink:0;'></div>"
+                    "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:14px;margin:0 10px;position:relative;'>"
+                    f"<div style='width:{_prev_pct_width:.1f}%;background:#7dd3fc;height:100%;border-radius:4px;'></div>"
+                    "</div>"
+                    f"<div style='width:190px;flex-shrink:0;text-align:right;font-size:0.76rem;color:#9ca3af;'>"
+                    f"{_prev_val_str}{f' · {_yoy_label_share} ' + format_delta_html(_yoy_delta) if _yoy_delta is not None else ''}</div>"
+                    "</div>"
                     "</div>"
                 )
             st.markdown(
                 "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
+                "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
+                "<span><span style='display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:2px;margin-right:4px;'></span>올해</span>"
+                "<span><span style='display:inline-block;width:10px;height:10px;background:#7dd3fc;border-radius:2px;margin-right:4px;'></span>작년(동시점)</span>"
+                "</div>"
                 + "".join(bar_rows_html) +
                 "</div>",
                 unsafe_allow_html=True,
