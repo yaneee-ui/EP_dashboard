@@ -120,6 +120,9 @@ st.sidebar.info(
 # --- 페이지 헤더 + 매체 필터 + 기준 시점 (스크롤 시 상단 고정) ---
 _sticky = st.container(key="sticky_header")
 with _sticky:
+    # 고정 대상 식별용 마커 (반드시 이 컨테이너의 첫 요소여야 함)
+    st.markdown("<div id='sticky-marker-anchor'></div>", unsafe_allow_html=True)
+
     st.markdown("<div class='dash-header-title'>📊 실적 요약</div>", unsafe_allow_html=True)
 
     BPU_OPTIONS = [
@@ -180,17 +183,31 @@ with _sticky:
         unsafe_allow_html=True,
     )
 
-# 필터 영역 상단 고정(sticky) CSS
+# 필터 영역 상단 고정(sticky) CSS — 여러 경로로 동시에 타겟팅해 확실히 걸리게 함
 st.markdown(
     """
     <style>
+    /* 스크롤 컨테이너 명시 */
+    section[data-testid="stMain"] {
+        overflow-y: auto !important;
+    }
+    /* 방법 1: container key 클래스 직접 타겟팅 */
     .st-key-sticky_header {
-        position: sticky;
-        top: 0;
-        z-index: 999;
-        background: #f7f8fa;
-        padding: 10px 0 12px 0;
-        border-bottom: 1px solid #e5e7eb;
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 999 !important;
+        background: #f7f8fa !important;
+        padding: 10px 0 12px 0 !important;
+        border-bottom: 1px solid #e5e7eb !important;
+    }
+    /* 방법 2: 마커 기반 :has() 셀렉터 (백업, 구조적으로 정확히 이 컨테이너만 매칭) */
+    div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > div#sticky-marker-anchor) {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 999 !important;
+        background: #f7f8fa !important;
+        padding: 10px 0 12px 0 !important;
+        border-bottom: 1px solid #e5e7eb !important;
     }
     </style>
     """,
