@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 import datetime as _dt
 
-from data_loader import load_data, load_traffic_data
+from data_loader import load_data, load_traffic_data, load_category_data
 from sidebar import render_sidebar
 from filters import filter_by_combo
 from kpi import render_kpi_cards
@@ -38,10 +38,12 @@ side = render_sidebar()
 if side["refresh"]:
     load_data.clear()
     load_traffic_data.clear()
+    load_category_data.clear()
 
 # --- 데이터 로드 ---
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
 df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
+df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
 
 # EP채널 업로드
 if side["ep_channel_file"] is not None:
@@ -57,6 +59,14 @@ if side["ep_traffic_file"] is not None:
     _tr_min = df_traffic["날짜"].min().strftime("%Y-%m-%d")
     _tr_max = df_traffic["날짜"].max().strftime("%Y-%m-%d")
     st.sidebar.success(f"EP실적 데이터 업로드 완료: {_tr_min} ~ {_tr_max}")
+
+# 카테고리 업로드
+if side["ep_category_file"] is not None:
+    _cf = side["ep_category_file"]
+    df_category = pd.read_csv(_cf)
+    df_category["날짜"] = pd.to_datetime(df_category["날짜"])
+    st.sidebar.success(f"카테고리 데이터 업로드 완료 ({df_category['카테고리'].nunique()}개 카테고리)")
+
 
 unit = side["view_unit"]
 
@@ -252,35 +262,39 @@ st.markdown(
 )
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
-st.markdown("<div style='height:90px;'></div>", unsafe_allow_html=True)
+st.markdown(
+    "<div style='height:90px;'></div>"
+    "<div id='content-align-marker' style='height:0;'></div>",
+    unsafe_allow_html=True,
+)
 
-# 사이드바 접힘/펼침/크기조정에 맞춰 고정 영역의 left 위치를 실시간으로 자동 조정
+# 사이드바 접힘/펼침/크기조정에 맞춰 고정 영역의 좌우 위치를 아래 콘텐츠와 정확히 일치시킴
 components.html(
     """
     <script>
-    function adjustStickyLeft() {
+    function adjustStickyPosition() {
         try {
             const doc = window.parent.document;
-            const sidebar = doc.querySelector('[data-testid="stSidebar"]');
-            let leftPx = 32; // 사이드바 없을 때 기본 여백(2rem≈32px)
-            if (sidebar) {
-                const rect = sidebar.getBoundingClientRect();
-                if (rect.width > 10) {
-                    leftPx = rect.right + 16; // 사이드바 오른쪽 끝 + 여백
-                }
+            const marker = doc.querySelector('#content-align-marker');
+            const stickyEls = doc.querySelectorAll('.st-key-sticky_header');
+            if (marker && stickyEls.length) {
+                const rect = marker.getBoundingClientRect();
+                const rightPx = window.parent.innerWidth - rect.right;
+                const PAD = 16; // 고정 영역 자체의 좌우 padding(px)과 동일한 값
+                stickyEls.forEach(function(el) {
+                    el.style.setProperty('left', (rect.left - PAD) + 'px', 'important');
+                    el.style.setProperty('right', (rightPx - PAD) + 'px', 'important');
+                });
             }
-            doc.querySelectorAll('.st-key-sticky_header').forEach(function(el) {
-                el.style.setProperty('left', leftPx + 'px', 'important');
-            });
         } catch (e) {}
     }
-    adjustStickyLeft();
+    adjustStickyPosition();
     try {
-        const obs = new MutationObserver(adjustStickyLeft);
+        const obs = new MutationObserver(adjustStickyPosition);
         obs.observe(window.parent.document.body, {attributes: true, subtree: true, attributeFilter: ['style', 'class']});
-        window.parent.addEventListener('resize', adjustStickyLeft);
+        window.parent.addEventListener('resize', adjustStickyPosition);
     } catch (e) {}
-    setInterval(adjustStickyLeft, 400); // 안전망: 주기적 재계산
+    setInterval(adjustStickyPosition, 400); // 안전망: 주기적 재계산
     </script>
     """,
     height=0,
@@ -636,3 +650,125 @@ else:
         f"<tbody>{''.join(ep_body_rows)}</tbody></table>"
     )
     st.markdown(ep_summary_html, unsafe_allow_html=True)
+
+
+# ============================================================
+# 카테고리별 실적 (카테고리 → 브랜드 드릴다운, 전년비교 가능)
+# ============================================================
+st.markdown("---")
+st.markdown("### 🗂️ 카테고리별 실적")
+
+if df_category.empty:
+    st.info("카테고리 데이터가 없습니다. 사이드바에서 ep_category.csv를 업로드해주세요.")
+else:
+    # 매체필터(bpu)에 맞춰 카테고리 데이터 필터링 (자사/입점은 합산)
+    if bpu in BPU_GROUPS:
+        cat_bpu_df = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
+    elif bpu == "Total":
+        cat_bpu_df = df_category  # 전체 BPU 합산은 아래에서 groupby로 처리
+    else:
+        cat_bpu_df = df_category[df_category["BPU"] == bpu]
+
+    cc1, cc2 = st.columns(2)
+    with cc1:
+        _cat_options = ["전체"] + sorted([c for c in df_category["카테고리"].unique() if c != "전체"])
+        selected_cat = st.selectbox("카테고리", _cat_options, index=0, key="cat_select")
+    with cc2:
+        _brand_pool = df_category[df_category["카테고리"] == selected_cat]["브랜드"].unique()
+        _brand_options = ["전체"] + sorted([b for b in _brand_pool if b != "전체"])
+        selected_brand = st.selectbox("브랜드", _brand_options, index=0, key="brand_select")
+
+    cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
+    if bpu == "Total" and not cat_combo.empty:
+        cat_combo = cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
+        cat_combo["CR"] = (cat_combo["구매객수"] / cat_combo["트래픽"] * 100).where(cat_combo["트래픽"] > 0, 0)
+        cat_combo["객단가"] = (cat_combo["거래액"] / cat_combo["구매객수"]).where(cat_combo["구매객수"] > 0, 0)
+
+    if cat_combo.empty:
+        st.warning(f"{selected_cat} / {selected_brand} 조합에 데이터가 없습니다.")
+    else:
+        st.markdown(
+            f"<div class='chart-caption'>{bpu} · <b>{selected_cat}</b> / <b>{selected_brand}</b> 기준</div>",
+            unsafe_allow_html=True,
+        )
+
+        # --- KPI 카드 ---
+        CAT_METRICS = [
+            ("트래픽", "UV"),
+            ("거래액", "거래액"),
+            ("구매객수", "구매객수"),
+            ("CR", "구매전환율(%)"),
+            ("객단가", "객단가"),
+        ]
+        cat_cols = st.columns(5)
+        for i, (col_name, display_name) in enumerate(CAT_METRICS):
+            with cat_cols[i]:
+                s = cat_combo.set_index("날짜")[col_name].sort_index()
+                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                if unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                series = series[series.index <= selected_period_date] if not series.empty else series
+                stats = compute_kpi_deltas(series, unit)
+                if stats:
+                    _is_pct = col_name == "CR"
+                    val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
+                    cfg = UNIT_CONFIG[unit]
+                    st.markdown(
+                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:160px;'>"
+                        f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
+                        f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                        f"<div style='font-size:0.76rem;margin-top:6px;'>"
+                        f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}<br/>"
+                        f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}"
+                        f"</div></div>",
+                        unsafe_allow_html=True,
+                    )
+                else:
+                    st.markdown(
+                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:160px;'>"
+                        f"<div style='color:#6b7280;font-size:0.8rem;'>{display_name}</div>"
+                        f"<div style='font-size:1.2rem;color:#9ca3af;'>-</div></div>",
+                        unsafe_allow_html=True,
+                    )
+
+        st.markdown("<br/>", unsafe_allow_html=True)
+
+        # --- 추이 차트 (전년 비교선 포함) ---
+        h1, h2 = st.columns([2, 3])
+        h1.markdown("**카테고리 실적 추이**")
+        cat_metric = h2.selectbox(
+            "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
+            index=1, key="cat_metric", label_visibility="collapsed",
+        )
+        show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
+
+        s_raw = cat_combo.set_index("날짜")[cat_metric].sort_index()
+        cat_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
+        if unit == "주별":
+            cat_full.index = cat_full.index - pd.Timedelta(days=6)
+        elif unit == "월마감" and not cat_full.empty and s_raw.index.max() < cat_full.index[-1]:
+            cat_full = cat_full.iloc[:-1]
+
+        latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
+        cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
+        cat_chart_df = pd.DataFrame({cat_metric: cat_series})
+
+        if show_cat_yoy and not cat_series.empty:
+            if unit == "월마감":
+                prev_dates = cat_series.index - pd.DateOffset(years=1)
+            else:
+                prev_dates = cat_series.index - pd.Timedelta(days=364)
+            yoy_vals = []
+            for pd_date in prev_dates:
+                if pd_date in cat_full.index:
+                    yoy_vals.append(cat_full.loc[pd_date])
+                else:
+                    cand = cat_full.index[cat_full.index <= pd_date]
+                    yoy_vals.append(cat_full.loc[cand[-1]] if len(cand) else None)
+            yoy_label_cat = UNIT_CONFIG[unit]["yoy_label"]
+            cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
+            st.line_chart(cat_chart_df, height=350, color=["#2563eb", "#7dd3fc"])
+        else:
+            st.line_chart(cat_chart_df, height=350, color=["#2563eb"])
