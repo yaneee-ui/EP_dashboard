@@ -605,10 +605,34 @@ else:
     ep_metrics_list = [m for m, _ in EP_CHANNEL_METRICS]
     ep_metric = h2.selectbox("지표", ep_metrics_list, index=0, key="ep_metric", label_visibility="collapsed")
 
-    ep_trend, ep_yoy = main_trend_data(df_ep_combo, ep_metric, unit, show_yoy=True,
-                                       current_year=int(last_date_ep.year),
-                                       date_start=_dt.date(int(last_date_ep.year), 1, 1),
-                                       date_end=last_date_ep.date())
+    _ep_latest_year = int(last_date_ep.year)
+    if unit == "일별":
+        _ep_max_d = last_date_ep.date()
+        _ep_min_d = _dt.date(_ep_latest_year, 1, 1)
+        _ep_default_start = max(_ep_min_d, _ep_max_d - _dt.timedelta(days=30))
+        col_ed, col_ey = st.columns([4, 1])
+        with col_ed:
+            ep_dr = st.date_input(
+                "기간", value=(_ep_default_start, _ep_max_d),
+                min_value=_ep_min_d, max_value=_ep_max_d, key="ep_range",
+            )
+        with col_ey:
+            show_ep_yoy = st.checkbox("전년 비교선 표시", value=True, key="ep_yoy_cb")
+        if isinstance(ep_dr, tuple) and len(ep_dr) == 2:
+            _ep_date_start, _ep_date_end = ep_dr
+        else:
+            _ep_date_start, _ep_date_end = _ep_default_start, _ep_max_d
+    else:
+        col_esp, col_ey = st.columns([5, 1])
+        with col_ey:
+            show_ep_yoy = st.checkbox("전년 비교선 표시", value=True, key="ep_yoy_cb")
+        _ep_date_start = _dt.date(_ep_latest_year, 1, 1)
+        _ep_date_end = last_date_ep.date()
+
+    ep_trend, ep_yoy = main_trend_data(df_ep_combo, ep_metric, unit, show_yoy=show_ep_yoy,
+                                       current_year=_ep_latest_year,
+                                       date_start=_ep_date_start,
+                                       date_end=_ep_date_end)
 
     ep_cols = list(ep_trend.columns)
     if len(ep_cols) > 1:
@@ -617,7 +641,8 @@ else:
         st.line_chart(ep_trend, height=350, color=["#2563eb"])
 
     st.markdown(
-        f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준 · 전년 비교선(동요일) 포함</div>",
+        f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준"
+        f"{' · 전년 비교선(동요일) 포함' if show_ep_yoy else ''}</div>",
         unsafe_allow_html=True,
     )
 
@@ -671,11 +696,23 @@ else:
 
     cc1, cc2 = st.columns(2)
     with cc1:
-        _cat_options = ["전체"] + sorted([c for c in df_category["카테고리"].unique() if c != "전체"])
+        # 실제 값(트래픽/거래액 등)이 하나라도 있는 카테고리만 표시
+        _valid_cats = (
+            cat_bpu_df.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+            .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "카테고리"]
+            .unique()
+        )
+        _cat_options = ["전체"] + sorted([c for c in _valid_cats if c != "전체"])
         selected_cat = st.selectbox("카테고리", _cat_options, index=0, key="cat_select")
     with cc2:
-        _brand_pool = df_category[df_category["카테고리"] == selected_cat]["브랜드"].unique()
-        _brand_options = ["전체"] + sorted([b for b in _brand_pool if b != "전체"])
+        # 선택한 카테고리(+매체필터) 기준, 실제 값이 있는 브랜드만 표시
+        _cat_filtered = cat_bpu_df[cat_bpu_df["카테고리"] == selected_cat]
+        _valid_brands = (
+            _cat_filtered.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+            .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "브랜드"]
+            .unique()
+        )
+        _brand_options = ["전체"] + sorted([b for b in _valid_brands if b != "전체"])
         selected_brand = st.selectbox("브랜드", _brand_options, index=0, key="brand_select")
 
     cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
@@ -742,7 +779,6 @@ else:
             "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
             index=1, key="cat_metric", label_visibility="collapsed",
         )
-        show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
 
         s_raw = cat_combo.set_index("날짜")[cat_metric].sort_index()
         cat_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
@@ -753,6 +789,26 @@ else:
 
         latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
         cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
+
+        if unit == "일별" and not cat_series.empty:
+            _cat_max_d = cat_series.index.max().date()
+            _cat_min_d = cat_series.index.min().date()
+            _cat_default_start = max(_cat_min_d, _cat_max_d - _dt.timedelta(days=30))
+            col_cd, col_cy = st.columns([4, 1])
+            with col_cd:
+                cat_dr = st.date_input(
+                    "기간", value=(_cat_default_start, _cat_max_d),
+                    min_value=_cat_min_d, max_value=_cat_max_d, key="cat_range",
+                )
+            with col_cy:
+                show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
+            if isinstance(cat_dr, tuple) and len(cat_dr) == 2:
+                cat_series = cat_series[(cat_series.index >= pd.Timestamp(cat_dr[0])) & (cat_series.index <= pd.Timestamp(cat_dr[1]))]
+        else:
+            col_csp, col_cy = st.columns([5, 1])
+            with col_cy:
+                show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
+
         cat_chart_df = pd.DataFrame({cat_metric: cat_series})
 
         if show_cat_yoy and not cat_series.empty:
