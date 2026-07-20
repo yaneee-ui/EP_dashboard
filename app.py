@@ -194,7 +194,7 @@ st.markdown(
     /* 방법 1: container key 클래스 직접 타겟팅 */
     .st-key-sticky_header {
         position: sticky !important;
-        top: 0 !important;
+        top: 3.7rem !important;
         z-index: 999 !important;
         background: #f7f8fa !important;
         padding: 10px 0 12px 0 !important;
@@ -203,11 +203,15 @@ st.markdown(
     /* 방법 2: 마커 기반 :has() 셀렉터 (백업, 구조적으로 정확히 이 컨테이너만 매칭) */
     div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > div#sticky-marker-anchor) {
         position: sticky !important;
-        top: 0 !important;
+        top: 3.7rem !important;
         z-index: 999 !important;
         background: #f7f8fa !important;
         padding: 10px 0 12px 0 !important;
         border-bottom: 1px solid #e5e7eb !important;
+    }
+    /* Streamlit 자체 상단 툴바(Share/GitHub 등)는 항상 최상단에 보이도록 z-index 우선 */
+    header[data-testid="stHeader"] {
+        z-index: 1000 !important;
     }
     </style>
     """,
