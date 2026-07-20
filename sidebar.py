@@ -30,7 +30,7 @@ def render_sidebar():
     st.sidebar.markdown("**메뉴**")
     page = st.sidebar.radio(
         "메뉴",
-        ["1. 실적 요약", "2. 카테고리 실적 요약"],
+        ["1. 실적 요약", "2. 카테고리 실적 요약", "3. 누적 데이터", "4. 누적 데이터 (카테고리)"],
         label_visibility="collapsed",
     )
 
