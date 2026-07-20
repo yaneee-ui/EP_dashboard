@@ -1,4 +1,4 @@
-"""좌측 사이드바: 조회 단위(콤팩트) + 메뉴(BPU별) + 데이터 업로드."""
+"""좌측 사이드바: 조회 단위(콤팩트) + 데이터 업로드."""
 import streamlit as st
 
 
@@ -23,24 +23,6 @@ def render_sidebar():
 
     st.sidebar.divider()
 
-    # --- 메뉴 (Total + 개별 BPU) ---
-    st.sidebar.markdown("**메뉴**")
-    page = st.sidebar.radio(
-        "메뉴",
-        [
-            "01. 실적 요약",
-            "a. e-영업1 실적",
-            "b. e-영업2 실적",
-            "c. e-영업3 실적",
-            "d. e-영업4 실적",
-            "e. 자사 실적 (1+2)",
-            "f. 입점 실적 (3+4)",
-        ],
-        label_visibility="collapsed",
-    )
-
-    st.sidebar.divider()
-
     # --- 데이터 업로드 ---
     st.sidebar.markdown("**데이터 업로드**")
     st.sidebar.caption("변환기에서 만든 CSV를 올리면 바로 반영됩니다.")
@@ -54,21 +36,8 @@ def render_sidebar():
     )
     refresh = st.sidebar.button("🔄 새로고침 (다시 읽기)", use_container_width=True)
 
-    # 메뉴에서 BPU 자동 결정
-    page_bpu_map = {
-        "01. 실적 요약": "Total",
-        "a. e-영업1 실적": "e-영업1",
-        "b. e-영업2 실적": "e-영업2",
-        "c. e-영업3 실적": "e-영업3",
-        "d. e-영업4 실적": "e-영업4",
-        "e. 자사 실적 (1+2)": "자사",
-        "f. 입점 실적 (3+4)": "입점",
-    }
-
     return {
         "view_unit": view_unit,
-        "page": page,
-        "bpu": page_bpu_map.get(page, "Total"),
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
         "refresh": refresh,
