@@ -474,3 +474,32 @@ else:
         f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준 · 전년 비교선(동요일) 포함</div>",
         unsafe_allow_html=True,
     )
+
+    st.markdown("<br/>", unsafe_allow_html=True)
+
+    # --- EP 채널 요약 표 (EP실적 요약표와 동일 스타일 · 동일 비교 기준) ---
+    st.markdown(f"**EP 채널 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} / {match_status} / {lowest_status}</span>", unsafe_allow_html=True)
+
+    ep_body_rows = []
+    ep_prev_label = ep_yoy_label = None
+    for metric_key, display_name in EP_CHANNEL_METRICS:
+        series = resample_series(df_ep_combo, metric_key, unit)
+        stats = compute_kpi_deltas(series, unit)
+        if stats is None:
+            ep_body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
+            continue
+        ep_prev_label = stats["prev_label"]
+        ep_yoy_label = stats["yoy_label"]
+        _is_pct = "%" in metric_key or metric_key == "신규가입율"
+        val = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
+        ep_body_rows.append(
+            f"<tr><td class='m'>{display_name}</td><td class='v'>{val}</td>"
+            f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>"
+            f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td></tr>"
+        )
+    ep_summary_html = (
+        "<table class='summary-table'>"
+        f"<thead><tr><th>지표</th><th>값</th><th>{ep_prev_label or '-'}</th><th>{ep_yoy_label or '-'}</th></tr></thead>"
+        f"<tbody>{''.join(ep_body_rows)}</tbody></table>"
+    )
+    st.markdown(ep_summary_html, unsafe_allow_html=True)
