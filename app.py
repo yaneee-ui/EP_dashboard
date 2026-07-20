@@ -881,3 +881,40 @@ if side["page"].startswith("2"):
                 st.line_chart(cat_chart_df, height=350, color=["#2563eb", "#7dd3fc"])
             else:
                 st.line_chart(cat_chart_df, height=350, color=["#2563eb"])
+
+            st.markdown("<br/>", unsafe_allow_html=True)
+
+            # --- 카테고리 실적 요약 표 (EP실적/EP채널과 동일 스타일·기준) ---
+            st.markdown(
+                f"**카테고리 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · {selected_cat} / {selected_brand}</span>",
+                unsafe_allow_html=True,
+            )
+            cat_summary_rows = []
+            cat_prev_label = cat_yoy_label = None
+            for col_name, display_name in CAT_METRICS:
+                s2 = cat_combo.set_index("날짜")[col_name].sort_index()
+                series2 = s2.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                if unit == "주별":
+                    series2.index = series2.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not series2.empty and s2.index.max() < series2.index[-1]:
+                    series2 = series2.iloc[:-1]
+                series2 = series2[series2.index <= selected_period_date] if not series2.empty else series2
+                stats2 = compute_kpi_deltas(series2, unit)
+                if stats2 is None:
+                    cat_summary_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
+                    continue
+                cat_prev_label = stats2["prev_label"]
+                cat_yoy_label = stats2["yoy_label"]
+                _is_pct2 = col_name == "CR"
+                val2 = f"{stats2['current']:.1f}%" if _is_pct2 else f"{stats2['current']:,.0f}"
+                cat_summary_rows.append(
+                    f"<tr><td class='m'>{display_name}</td><td class='v'>{val2}</td>"
+                    f"<td class='d'>{format_delta_html(stats2['prev_delta'])}</td>"
+                    f"<td class='d'>{format_delta_html(stats2['yoy_delta'])}</td></tr>"
+                )
+            cat_summary_html = (
+                "<table class='summary-table'>"
+                f"<thead><tr><th>지표</th><th>값</th><th>{cat_prev_label or '-'}</th><th>{cat_yoy_label or '-'}</th></tr></thead>"
+                f"<tbody>{''.join(cat_summary_rows)}</tbody></table>"
+            )
+            st.markdown(cat_summary_html, unsafe_allow_html=True)
