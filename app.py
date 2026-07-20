@@ -718,25 +718,30 @@ if side["page"].startswith("2"):
                 share_rows.append({"카테고리": cat_name, "거래액": series.iloc[-1]})
 
         if share_rows:
-            share_df = pd.DataFrame(share_rows).sort_values("거래액", ascending=False)
+            share_df = pd.DataFrame(share_rows).sort_values("거래액", ascending=False).reset_index(drop=True)
             _total_gmv = share_df["거래액"].sum()
             share_df["비중"] = (share_df["거래액"] / _total_gmv * 100) if _total_gmv > 0 else 0
+            _max_gmv = share_df["거래액"].max() if not share_df.empty else 1
 
-            chart_bar_df = share_df.set_index("카테고리")[["거래액"]]
-            st.bar_chart(chart_bar_df, height=320, color=["#2563eb"], horizontal=True)
-
-            share_table_rows = "".join(
-                f"<tr><td class='m'>{r['카테고리']}</td>"
-                f"<td class='v'>{r['거래액']:,.0f}</td>"
-                f"<td class='v'>{r['비중']:.1f}%</td></tr>"
-                for _, r in share_df.iterrows()
+            bar_rows_html = []
+            for _, r in share_df.iterrows():
+                _pct_width = (r["거래액"] / _max_gmv * 100) if _max_gmv > 0 else 0
+                bar_rows_html.append(
+                    "<div style='display:flex;align-items:center;margin-bottom:8px;'>"
+                    f"<div style='width:70px;flex-shrink:0;font-size:0.82rem;color:#374151;'>{r['카테고리']}</div>"
+                    "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:22px;margin:0 10px;position:relative;'>"
+                    f"<div style='width:{_pct_width:.1f}%;background:#2563eb;height:100%;border-radius:4px;'></div>"
+                    "</div>"
+                    f"<div style='width:150px;flex-shrink:0;text-align:right;font-size:0.82rem;color:#374151;'>"
+                    f"{r['거래액']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
+                    "</div>"
+                )
+            st.markdown(
+                "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
+                + "".join(bar_rows_html) +
+                "</div>",
+                unsafe_allow_html=True,
             )
-            share_html = (
-                "<table class='summary-table'>"
-                "<thead><tr><th>카테고리</th><th>거래액</th><th>비중</th></tr></thead>"
-                f"<tbody>{share_table_rows}</tbody></table>"
-            )
-            st.markdown(share_html, unsafe_allow_html=True)
         else:
             st.info("해당 조건에 카테고리 거래액 데이터가 없습니다.")
 
