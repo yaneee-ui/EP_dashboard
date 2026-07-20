@@ -130,6 +130,8 @@ st.sidebar.info(
 
 # --- 페이지 헤더 + 매체 필터 + 기준 시점 (스크롤 시 상단 고정) ---
 _sticky = st.container(key="sticky_header")
+_page_num = side["page"].split(".")[0]
+
 with _sticky:
     # 고정 대상 식별용 마커 (반드시 이 컨테이너의 첫 요소여야 함)
     st.markdown("<div id='sticky-marker-anchor'></div>", unsafe_allow_html=True)
@@ -144,111 +146,202 @@ with _sticky:
         ("입점 (e3+e4)", "입점"),
     ]
 
-    # 기준 시점 옵션 (Total 트래픽 데이터 기준으로 생성 — 조회 단위에 맞는 기간 목록)
-    _tr_total_all = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
-    _period_s = _tr_total_all.set_index("날짜")["트래픽"].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
-    if unit == "주별":
-        _period_s.index = _period_s.index - pd.Timedelta(days=6)
-    if unit == "월마감":
-        _last_tr_all = _tr_total_all["날짜"].max()
-        if not _period_s.empty and _last_tr_all < _period_s.index[-1]:
-            _period_s = _period_s.iloc[:-1]  # 미완성 달 제외
+    _page_titles = {
+        "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약",
+        "3": "📋 누적 데이터", "4": "📋 누적 데이터 (카테고리)",
+    }
 
-    if unit == "일별":
-        _min_d = _period_s.index.min().date()
-        _max_d = _period_s.index.max().date()
-    else:
-        _period_labels = [make_period_label(d, unit) for d in _period_s.index]
+    # ========================================================
+    # 페이지 1 / 2: 매체필터 + 기준시점 (+카테고리/브랜드)
+    # ========================================================
+    if _page_num in ("1", "2"):
+        # 기준 시점 옵션 (Total 트래픽 데이터 기준으로 생성 — 조회 단위에 맞는 기간 목록)
+        _tr_total_all = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+        _period_s = _tr_total_all.set_index("날짜")["트래픽"].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
+        if unit == "주별":
+            _period_s.index = _period_s.index - pd.Timedelta(days=6)
+        if unit == "월마감":
+            _last_tr_all = _tr_total_all["날짜"].max()
+            if not _period_s.empty and _last_tr_all < _period_s.index[-1]:
+                _period_s = _period_s.iloc[:-1]  # 미완성 달 제외
 
-    # 위젯 렌더 전, 세션 상태로 현재 선택값을 미리 파악해 제목 옆에 표시
-    if unit == "일별":
-        _prev_date = st.session_state.get("period_filter_date", _max_d)
-        try:
-            _period_label_preview = make_period_label(pd.Timestamp(_prev_date), unit)
-        except Exception:
-            _period_label_preview = make_period_label(pd.Timestamp(_max_d), unit)
-    else:
-        _default_label = _period_labels[-1] if _period_labels else ""
-        _prev_label_sel = st.session_state.get("period_filter", _default_label)
-        _period_label_preview = _prev_label_sel if _prev_label_sel in _period_labels else _default_label
-
-    # 제목 + 조회 단위/기준 (한 줄에 표시)
-    _page_title = "📊 실적 요약" if side["page"].startswith("1") else "🗂️ 카테고리 실적 요약"
-    st.markdown(
-        f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
-        f"<span style='font-size:1.15rem;font-weight:700;'>{_page_title}</span>"
-        f"<span style='font-size:0.8rem;color:#6b7280;'>조회 단위: <b>{unit}</b> · 기준: <b>{_period_label_preview}</b></span>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
-
-    _is_cat_page = side["page"].startswith("2")
-
-    if _is_cat_page:
-        fc1, fc2, fc3, fc4, _fc_spacer = st.columns([1, 1, 1, 1, 6])
-    else:
-        fc1, fc2, _fc_spacer = st.columns([1, 1, 8])
-
-    with fc1:
-        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
-        _bpu_label_sel = st.selectbox(
-            "매체 필터", [l for l, _ in BPU_OPTIONS],
-            label_visibility="collapsed", key="bpu_filter",
-        )
-        bpu = dict(BPU_OPTIONS)[_bpu_label_sel]
-
-    with fc2:
-        _label2 = "기준 일자" if unit == "일별" else "기준 시점"
-        st.markdown(f"<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>{_label2}</div>", unsafe_allow_html=True)
         if unit == "일별":
-            _sel_date = st.date_input(
-                "기준 일자", value=_max_d, min_value=_min_d, max_value=_max_d,
-                label_visibility="collapsed", key="period_filter_date",
-            )
-            selected_period_date = pd.Timestamp(_sel_date)
-            if selected_period_date not in _period_s.index:
-                _cand = _period_s.index[_period_s.index <= selected_period_date]
-                selected_period_date = _cand[-1] if len(_cand) else _period_s.index[-1]
+            _min_d = _period_s.index.min().date()
+            _max_d = _period_s.index.max().date()
         else:
-            _sel_label = st.selectbox(
-                "기준 시점", _period_labels, index=len(_period_labels) - 1,
-                label_visibility="collapsed", key="period_filter",
-            )
-            selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
+            _period_labels = [make_period_label(d, unit) for d in _period_s.index]
 
-    # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
-    selected_cat, selected_brand = "전체", "전체"
-    if _is_cat_page and not df_category.empty:
-        # 매체필터(bpu) 기준으로 데이터 범위 결정 (자사/입점은 합산)
-        if bpu in BPU_GROUPS:
-            _cat_bpu_df_preview = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
-        elif bpu == "Total":
-            _cat_bpu_df_preview = df_category
+        # 위젯 렌더 전, 세션 상태로 현재 선택값을 미리 파악해 제목 옆에 표시
+        if unit == "일별":
+            _prev_date = st.session_state.get("period_filter_date", _max_d)
+            try:
+                _period_label_preview = make_period_label(pd.Timestamp(_prev_date), unit)
+            except Exception:
+                _period_label_preview = make_period_label(pd.Timestamp(_max_d), unit)
         else:
-            _cat_bpu_df_preview = df_category[df_category["BPU"] == bpu]
+            _default_label = _period_labels[-1] if _period_labels else ""
+            _prev_label_sel = st.session_state.get("period_filter", _default_label)
+            _period_label_preview = _prev_label_sel if _prev_label_sel in _period_labels else _default_label
 
-        with fc3:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>카테고리</div>", unsafe_allow_html=True)
-            _valid_cats_top = (
-                _cat_bpu_df_preview.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
-                .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "카테고리"]
-                .unique()
+        st.markdown(
+            f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>"
+            f"<span style='font-size:0.8rem;color:#6b7280;'>조회 단위: <b>{unit}</b> · 기준: <b>{_period_label_preview}</b></span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        _is_cat_page = _page_num == "2"
+        if _is_cat_page:
+            fc1, fc2, fc3, fc4, _fc_spacer = st.columns([1, 1, 1, 1, 6])
+        else:
+            fc1, fc2, _fc_spacer = st.columns([1, 1, 8])
+
+        with fc1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
+            _bpu_label_sel = st.selectbox(
+                "매체 필터", [l for l, _ in BPU_OPTIONS],
+                label_visibility="collapsed", key="bpu_filter",
             )
-            _cat_options_top = ["전체"] + sorted([c for c in _valid_cats_top if c != "전체"])
-            selected_cat = st.selectbox("카테고리", _cat_options_top, index=0, label_visibility="collapsed", key="cat_select")
+            bpu = dict(BPU_OPTIONS)[_bpu_label_sel]
 
-        with fc4:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>브랜드</div>", unsafe_allow_html=True)
-            _cat_filtered_top = _cat_bpu_df_preview[_cat_bpu_df_preview["카테고리"] == selected_cat]
-            _valid_brands_top = (
-                _cat_filtered_top.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
-                .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "브랜드"]
-                .unique()
+        with fc2:
+            _label2 = "기준 일자" if unit == "일별" else "기준 시점"
+            st.markdown(f"<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>{_label2}</div>", unsafe_allow_html=True)
+            if unit == "일별":
+                _sel_date = st.date_input(
+                    "기준 일자", value=_max_d, min_value=_min_d, max_value=_max_d,
+                    label_visibility="collapsed", key="period_filter_date",
+                )
+                selected_period_date = pd.Timestamp(_sel_date)
+                if selected_period_date not in _period_s.index:
+                    _cand = _period_s.index[_period_s.index <= selected_period_date]
+                    selected_period_date = _cand[-1] if len(_cand) else _period_s.index[-1]
+            else:
+                _sel_label = st.selectbox(
+                    "기준 시점", _period_labels, index=len(_period_labels) - 1,
+                    label_visibility="collapsed", key="period_filter",
+                )
+                selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
+
+        # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
+        selected_cat, selected_brand = "전체", "전체"
+        if _is_cat_page and not df_category.empty:
+            # 매체필터(bpu) 기준으로 데이터 범위 결정 (자사/입점은 합산)
+            if bpu in BPU_GROUPS:
+                _cat_bpu_df_preview = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
+            elif bpu == "Total":
+                _cat_bpu_df_preview = df_category
+            else:
+                _cat_bpu_df_preview = df_category[df_category["BPU"] == bpu]
+
+            with fc3:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>카테고리</div>", unsafe_allow_html=True)
+                _valid_cats_top = (
+                    _cat_bpu_df_preview.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+                    .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "카테고리"]
+                    .unique()
+                )
+                _cat_options_top = ["전체"] + sorted([c for c in _valid_cats_top if c != "전체"])
+                selected_cat = st.selectbox("카테고리", _cat_options_top, index=0, label_visibility="collapsed", key="cat_select")
+
+            with fc4:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>브랜드</div>", unsafe_allow_html=True)
+                _cat_filtered_top = _cat_bpu_df_preview[_cat_bpu_df_preview["카테고리"] == selected_cat]
+                _valid_brands_top = (
+                    _cat_filtered_top.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+                    .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "브랜드"]
+                    .unique()
+                )
+                _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
+                selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, label_visibility="collapsed", key="brand_select")
+
+        period_label = make_period_label(selected_period_date, unit)
+
+    # ========================================================
+    # 페이지 3 / 4: 매체필터 + 기간유형 + 시작일/종료일 (+카테고리/브랜드)
+    # ========================================================
+    else:
+        CUM_UNIT_OPTIONS = [("일자별", "일별"), ("주차별", "주별"), ("월별", "월별"), ("월마감", "월마감")]
+
+        _cum_bpu_prev = st.session_state.get("cum_bpu_filter", "전체")
+        _cum_unit_prev = st.session_state.get("cum_unit_filter", "일자별")
+        st.markdown(
+            f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>"
+            f"<span style='font-size:0.8rem;color:#6b7280;'>매체: <b>{_cum_bpu_prev}</b> · 기간유형: <b>{_cum_unit_prev}</b></span>"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+
+        _is_cum_cat_page = _page_num == "4"
+        if _is_cum_cat_page:
+            gc1, gc2, gc3, gc4, gc5, gc6 = st.columns([1, 1, 1, 1, 1, 1])
+        else:
+            gc1, gc2, gc3, gc4, _gc_spacer = st.columns([1, 1, 1, 1, 4])
+
+        with gc1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
+            _cum_bpu_label = st.selectbox(
+                "매체", [l for l, _ in BPU_OPTIONS],
+                label_visibility="collapsed", key="cum_bpu_filter",
             )
-            _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
-            selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, label_visibility="collapsed", key="brand_select")
+            bpu = dict(BPU_OPTIONS)[_cum_bpu_label]
 
-    period_label = make_period_label(selected_period_date, unit)
+        with gc2:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간 유형</div>", unsafe_allow_html=True)
+            _cum_unit_label = st.selectbox(
+                "기간 유형", [l for l, _ in CUM_UNIT_OPTIONS],
+                label_visibility="collapsed", key="cum_unit_filter",
+            )
+            cum_unit = dict(CUM_UNIT_OPTIONS)[_cum_unit_label]
+
+        # 데이터 있는 전체 날짜 범위 (트래픽 데이터 기준)
+        _cum_min_d = df_traffic["날짜"].min().date()
+        _cum_max_d = df_traffic["날짜"].max().date()
+
+        with gc3:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>시작일</div>", unsafe_allow_html=True)
+            cum_start = st.date_input(
+                "시작일", value=_cum_min_d, min_value=_cum_min_d, max_value=_cum_max_d,
+                label_visibility="collapsed", key="cum_start_date",
+            )
+        with gc4:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>종료일</div>", unsafe_allow_html=True)
+            cum_end = st.date_input(
+                "종료일", value=_cum_max_d, min_value=_cum_min_d, max_value=_cum_max_d,
+                label_visibility="collapsed", key="cum_end_date",
+            )
+
+        selected_cat, selected_brand = "전체", "전체"
+        if _is_cum_cat_page and not df_category.empty:
+            if bpu in BPU_GROUPS:
+                _cat_bpu_df_preview = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
+            elif bpu == "Total":
+                _cat_bpu_df_preview = df_category
+            else:
+                _cat_bpu_df_preview = df_category[df_category["BPU"] == bpu]
+
+            with gc5:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>카테고리</div>", unsafe_allow_html=True)
+                _valid_cats_top = (
+                    _cat_bpu_df_preview.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+                    .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "카테고리"]
+                    .unique()
+                )
+                _cat_options_top = ["전체"] + sorted([c for c in _valid_cats_top if c != "전체"])
+                selected_cat = st.selectbox("카테고리", _cat_options_top, index=0, label_visibility="collapsed", key="cat_select")
+
+            with gc6:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>브랜드</div>", unsafe_allow_html=True)
+                _cat_filtered_top = _cat_bpu_df_preview[_cat_bpu_df_preview["카테고리"] == selected_cat]
+                _valid_brands_top = (
+                    _cat_filtered_top.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+                    .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "브랜드"]
+                    .unique()
+                )
+                _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
+                selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, label_visibility="collapsed", key="brand_select")
 
 # 필터 영역 상단 고정(fixed) CSS — position:fixed는 스크롤 컨테이너 구조와 무관하게 항상 화면에 고정됨
 st.markdown(
@@ -783,9 +876,9 @@ if side["page"].startswith("2"):
 
             bar_rows_html = []
             for _, r in share_df.iterrows():
-                _pct_width = (r["거래액"] / _max_gmv * 100) if _max_gmv > 0 else 0
+                _pct_width = max(0, (r["거래액"] / _max_gmv * 100)) if _max_gmv > 0 else 0
                 _has_prev = pd.notna(r["전년거래액"])
-                _prev_pct_width = (r["전년거래액"] / _max_gmv * 100) if _has_prev and _max_gmv > 0 else 0
+                _prev_pct_width = max(0, (r["전년거래액"] / _max_gmv * 100)) if _has_prev and _max_gmv > 0 else 0
                 _yoy_delta = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if _has_prev and r["전년거래액"] != 0 else None
                 _prev_val_str = f"{r['전년거래액']:,.0f}" if _has_prev else "-"
 
@@ -974,3 +1067,162 @@ if side["page"].startswith("2"):
                 f"<tbody>{''.join(cat_summary_rows)}</tbody></table>"
             )
             st.markdown(cat_summary_html, unsafe_allow_html=True)
+
+
+# ============================================================
+# 페이지 3: 누적 데이터 (EP실적 + EP채널 합쳐서 기간별 표)
+# ============================================================
+if side["page"].startswith("3"):
+    st.markdown("---")
+    st.markdown(
+        f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · "
+        f"{cum_start} ~ {cum_end}</div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- EP실적 부분 (트래픽/거래액/구매객수/CR/객단가) ---
+    if bpu in BPU_GROUPS:
+        _cum_tr = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "전체")
+    else:
+        _cum_tr = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")]
+
+    tr_table_rows = {}
+    if not _cum_tr.empty:
+        for metric in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
+            s = _cum_tr.set_index("날짜")[metric].sort_index()
+            series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
+            if cum_unit == "주별":
+                series.index = series.index - pd.Timedelta(days=6)
+            elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                series = series.iloc[:-1]
+            series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+            tr_table_rows[metric] = series
+
+    # --- EP채널 부분 (원부매칭율 등, Total/Total 기준) ---
+    if bpu in BPU_GROUPS:
+        _cum_ep = aggregate_ep(df_ep, BPU_GROUPS[bpu], "Total", "Total")
+    elif bpu == "Total":
+        _cum_ep = df_ep[(df_ep[COL_BPU] == "Total") & (df_ep[COL_MATCH] == "Total") & (df_ep[COL_LOWEST] == "Total")]
+    else:
+        _cum_ep = df_ep[(df_ep[COL_BPU] == bpu) & (df_ep[COL_MATCH] == "Total") & (df_ep[COL_LOWEST] == "Total")]
+
+    EP_CUM_METRICS = ["원부매칭율(%)", "최저가율(%)", "평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]
+    ep_table_rows = {}
+    if not _cum_ep.empty:
+        for metric in EP_CUM_METRICS:
+            series = resample_series(_cum_ep, metric, cum_unit)
+            series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+            ep_table_rows[metric] = series
+
+    # --- 병합해서 표 만들기 (최신 기간이 위로 오도록 내림차순) ---
+    all_dates = sorted(set().union(
+        *[s.index for s in tr_table_rows.values()],
+        *[s.index for s in ep_table_rows.values()],
+    ), reverse=True)
+
+    if not all_dates:
+        st.info("선택한 조건에 데이터가 없습니다.")
+    else:
+        COLS = [
+            ("트래픽", "UV", False), ("거래액", "거래액(순결제)", False), ("구매객수", "구매객수", False),
+            ("CR", "구매전환율(%)", True), ("객단가", "객단가", False),
+            ("원부매칭율(%)", "원부매칭율(%)", True), ("최저가율(%)", "최저가율(%)", True),
+            ("평균 EP 전시 상품수", "전시상품수", False), ("평균 원부매칭 상품수", "원부매칭상품수", False),
+            ("평균 최저가 상품수", "최저가상품수", False),
+        ]
+        header_html = "<th>구분</th>" + "".join(f"<th>{label}</th>" for _, label, _ in COLS)
+        body_rows = []
+        for d in all_dates:
+            row_label = make_period_label(d, cum_unit)
+            cells = []
+            for key, _, is_pct in COLS:
+                src = tr_table_rows.get(key, ep_table_rows.get(key))
+                val = src.get(d) if src is not None and d in src.index else None
+                if val is None or pd.isna(val):
+                    cells.append("<td>-</td>")
+                elif is_pct:
+                    cells.append(f"<td>{val:.1f}%</td>")
+                else:
+                    cells.append(f"<td>{val:,.0f}</td>")
+            body_rows.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
+
+        st.markdown(f"**누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_dates)}개 기간</span>", unsafe_allow_html=True)
+        table_html = (
+            "<div style='overflow-x:auto;'><table class='summary-table'>"
+            f"<thead><tr>{header_html}</tr></thead>"
+            f"<tbody>{''.join(body_rows)}</tbody></table></div>"
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
+
+
+# ============================================================
+# 페이지 4: 누적 데이터 (카테고리)
+# ============================================================
+if side["page"].startswith("4"):
+    st.markdown("---")
+    st.markdown(
+        f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · "
+        f"{cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{selected_brand}</b></div>",
+        unsafe_allow_html=True,
+    )
+
+    if df_category.empty:
+        st.info("카테고리 데이터가 없습니다.")
+    else:
+        if bpu in BPU_GROUPS:
+            _cum_cat_df = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
+        elif bpu == "Total":
+            _cum_cat_df = df_category
+        else:
+            _cum_cat_df = df_category[df_category["BPU"] == bpu]
+
+        _cum_cat_combo = _cum_cat_df[(_cum_cat_df["카테고리"] == selected_cat) & (_cum_cat_df["브랜드"] == selected_brand)]
+        if bpu == "Total" and not _cum_cat_combo.empty:
+            _cum_cat_combo = _cum_cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
+            _cum_cat_combo["CR"] = (_cum_cat_combo["구매객수"] / _cum_cat_combo["트래픽"] * 100).where(_cum_cat_combo["트래픽"] > 0, 0)
+            _cum_cat_combo["객단가"] = (_cum_cat_combo["거래액"] / _cum_cat_combo["구매객수"]).where(_cum_cat_combo["구매객수"] > 0, 0)
+
+        if _cum_cat_combo.empty:
+            st.warning(f"{selected_cat} / {selected_brand} 조합에 데이터가 없습니다.")
+        else:
+            CAT_CUM_COLS = [
+                ("트래픽", "UV", False), ("거래액", "거래액", False), ("구매객수", "구매객수", False),
+                ("CR", "구매전환율(%)", True), ("객단가", "객단가", False),
+            ]
+            cat_table_rows = {}
+            for key, _, _is_pct in CAT_CUM_COLS:
+                s = _cum_cat_combo.set_index("날짜")[key].sort_index()
+                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
+                if cum_unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                cat_table_rows[key] = series
+
+            all_cat_dates = sorted(set().union(*[s.index for s in cat_table_rows.values()]), reverse=True)
+            if not all_cat_dates:
+                st.info("선택한 조건에 데이터가 없습니다.")
+            else:
+                header_html2 = "<th>구분</th>" + "".join(f"<th>{label}</th>" for _, label, _ in CAT_CUM_COLS)
+                body_rows2 = []
+                for d in all_cat_dates:
+                    row_label = make_period_label(d, cum_unit)
+                    cells = []
+                    for key, _, _is_pct in CAT_CUM_COLS:
+                        val = cat_table_rows[key].get(d)
+                        if val is None or pd.isna(val):
+                            cells.append("<td>-</td>")
+                        elif _is_pct:
+                            cells.append(f"<td>{val:.1f}%</td>")
+                        else:
+                            cells.append(f"<td>{val:,.0f}</td>")
+                    body_rows2.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
+
+                st.markdown(f"**카테고리 누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_cat_dates)}개 기간</span>", unsafe_allow_html=True)
+                table_html2 = (
+                    "<div style='overflow-x:auto;'><table class='summary-table'>"
+                    f"<thead><tr>{header_html2}</tr></thead>"
+                    f"<tbody>{''.join(body_rows2)}</tbody></table></div>"
+                )
+                st.markdown(table_html2, unsafe_allow_html=True)
