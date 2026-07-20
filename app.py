@@ -275,10 +275,7 @@ with _sticky:
         )
 
         _is_cum_cat_page = _page_num == "4"
-        if _is_cum_cat_page:
-            gc1, gc2, gc3, gc4, gc5, gc6 = st.columns([1, 1, 1, 1, 1, 1])
-        else:
-            gc1, gc2, gc3, gc4, _gc_spacer = st.columns([1, 1, 1, 1, 4])
+        gc1, gc2, gc3, gc4, _gc_spacer = st.columns([1, 1, 1, 1, 4])
 
         with gc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
@@ -313,6 +310,7 @@ with _sticky:
                 label_visibility="collapsed", key="cum_end_date",
             )
 
+        # 카테고리 페이지(4번)는 둘째 줄에 카테고리/브랜드 필터 추가
         selected_cat, selected_brand = "전체", "전체"
         if _is_cum_cat_page and not df_category.empty:
             if bpu in BPU_GROUPS:
@@ -321,6 +319,9 @@ with _sticky:
                 _cat_bpu_df_preview = df_category
             else:
                 _cat_bpu_df_preview = df_category[df_category["BPU"] == bpu]
+
+            st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+            gc5, gc6, _gc_spacer2 = st.columns([1, 1, 8])
 
             with gc5:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>카테고리</div>", unsafe_allow_html=True)
@@ -394,8 +395,9 @@ st.markdown(
 )
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
+_spacer_height = 140 if _page_num == "4" else 90
 st.markdown(
-    "<div style='height:90px;'></div>"
+    f"<div style='height:{_spacer_height}px;'></div>"
     "<div id='content-align-marker' style='height:0;'></div>",
     unsafe_allow_html=True,
 )
