@@ -9,8 +9,11 @@ def render_sidebar():
     # --- 조회 단위 (콤팩트 한 줄) ---
     st.sidebar.markdown(
         "<style>"
-        "div[data-testid='stSidebar'] .stRadio > div {gap: 0.3rem;}"
-        "div[data-testid='stSidebar'] .stRadio label {font-size: 0.85rem; padding: 0.2rem 0.5rem;}"
+        "div[data-testid='stSidebar'] .stRadio > div {gap: 0.15rem; flex-wrap: nowrap;}"
+        "div[data-testid='stSidebar'] .stRadio label {"
+        "  font-size: 0.72rem; padding: 0.15rem 0.35rem; white-space: nowrap;"
+        "}"
+        "div[data-testid='stSidebar'] .stRadio label p {font-size: 0.72rem;}"
         "</style>",
         unsafe_allow_html=True,
     )
@@ -24,7 +27,7 @@ def render_sidebar():
     st.sidebar.divider()
 
     # --- 데이터 업로드 ---
-    st.sidebar.markdown("**데이터 업로드**")
+    st.sidebar.markdown("**📁 데이터 업로드**")
     st.sidebar.caption("변환기에서 만든 CSV를 올리면 바로 반영됩니다.")
     ep_channel_file = st.sidebar.file_uploader(
         "EP채널 (ep_data_long.csv)", type=["csv", "xlsx", "xls"],
@@ -34,12 +37,20 @@ def render_sidebar():
         "EP실적 (ep_traffic.csv)", type=["csv"],
         key="ep_traffic_upload",
     )
-    refresh = st.sidebar.button("🔄 새로고침 (다시 읽기)", use_container_width=True)
+    ep_category_file = st.sidebar.file_uploader(
+        "카테고리별 (ep_category.csv)", type=["csv"],
+        key="ep_category_upload",
+    )
+
+    st.sidebar.markdown("**🔄 새로고침**")
+    st.sidebar.caption("업로드가 반영 안 될 때 눌러주세요.")
+    refresh = st.sidebar.button("다시 읽기", use_container_width=True)
 
     return {
         "view_unit": view_unit,
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
+        "ep_category_file": ep_category_file,
         "refresh": refresh,
     }
 
