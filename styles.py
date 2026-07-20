@@ -97,5 +97,12 @@ div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlockBorderWra
 div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] > div {
     height: 100%;
 }
+
+/* 모든 필터 selectbox/date_input 폭 제한 (사이드바 제외, 본문 전체 적용) */
+div[data-testid="stMain"] div[data-testid="stSelectbox"],
+div[data-testid="stMain"] div[data-testid="stDateInput"],
+div[data-testid="stMain"] div[data-testid="stMultiSelect"] {
+    max-width: 240px !important;
+}
 </style>
 """
