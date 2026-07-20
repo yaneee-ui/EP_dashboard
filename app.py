@@ -182,7 +182,13 @@ with _sticky:
         unsafe_allow_html=True,
     )
 
-    fc1, fc2, _fc_spacer = st.columns([1, 1, 3])
+    _is_cat_page = side["page"].startswith("2")
+
+    if _is_cat_page:
+        fc1, fc2, fc3, fc4 = st.columns([1, 1, 1, 1])
+    else:
+        fc1, fc2, _fc_spacer = st.columns([1, 1, 3])
+
     with fc1:
         st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
         _bpu_label_sel = st.selectbox(
@@ -209,6 +215,38 @@ with _sticky:
                 label_visibility="collapsed", key="period_filter",
             )
             selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
+
+    # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
+    selected_cat, selected_brand = "전체", "전체"
+    if _is_cat_page and not df_category.empty:
+        # 매체필터(bpu) 기준으로 데이터 범위 결정 (자사/입점은 합산)
+        if bpu in BPU_GROUPS:
+            _cat_bpu_df_preview = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
+        elif bpu == "Total":
+            _cat_bpu_df_preview = df_category
+        else:
+            _cat_bpu_df_preview = df_category[df_category["BPU"] == bpu]
+
+        with fc3:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>카테고리</div>", unsafe_allow_html=True)
+            _valid_cats_top = (
+                _cat_bpu_df_preview.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+                .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "카테고리"]
+                .unique()
+            )
+            _cat_options_top = ["전체"] + sorted([c for c in _valid_cats_top if c != "전체"])
+            selected_cat = st.selectbox("카테고리", _cat_options_top, index=0, label_visibility="collapsed", key="cat_select")
+
+        with fc4:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>브랜드</div>", unsafe_allow_html=True)
+            _cat_filtered_top = _cat_bpu_df_preview[_cat_bpu_df_preview["카테고리"] == selected_cat]
+            _valid_brands_top = (
+                _cat_filtered_top.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
+                .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "브랜드"]
+                .unique()
+            )
+            _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
+            selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, label_visibility="collapsed", key="brand_select")
 
     period_label = make_period_label(selected_period_date, unit)
 
@@ -746,27 +784,6 @@ if side["page"].startswith("2"):
             st.info("해당 조건에 카테고리 거래액 데이터가 없습니다.")
 
         st.markdown("<br/>", unsafe_allow_html=True)
-
-        cc1, cc2 = st.columns(2)
-        with cc1:
-            # 실제 값(트래픽/거래액 등)이 하나라도 있는 카테고리만 표시
-            _valid_cats = (
-                cat_bpu_df.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
-                .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "카테고리"]
-                .unique()
-            )
-            _cat_options = ["전체"] + sorted([c for c in _valid_cats if c != "전체"])
-            selected_cat = st.selectbox("카테고리", _cat_options, index=0, key="cat_select")
-        with cc2:
-            # 선택한 카테고리(+매체필터) 기준, 실제 값이 있는 브랜드만 표시
-            _cat_filtered = cat_bpu_df[cat_bpu_df["카테고리"] == selected_cat]
-            _valid_brands = (
-                _cat_filtered.dropna(subset=["트래픽", "거래액", "구매객수"], how="all")
-                .loc[lambda d: (d["트래픽"] > 0) | (d["거래액"] > 0) | (d["구매객수"] > 0), "브랜드"]
-                .unique()
-            )
-            _brand_options = ["전체"] + sorted([b for b in _valid_brands if b != "전체"])
-            selected_brand = st.selectbox("브랜드", _brand_options, index=0, key="brand_select")
 
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
         if bpu == "Total" and not cat_combo.empty:
