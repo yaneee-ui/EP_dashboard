@@ -183,31 +183,38 @@ with _sticky:
         unsafe_allow_html=True,
     )
 
-# 필터 영역 상단 고정(sticky) CSS — 여러 경로로 동시에 타겟팅해 확실히 걸리게 함
+# 필터 영역 상단 고정(fixed) CSS — position:fixed는 스크롤 컨테이너 구조와 무관하게 항상 화면에 고정됨
 st.markdown(
     """
     <style>
-    /* 스크롤 컨테이너 명시 */
-    section[data-testid="stMain"] {
-        overflow-y: auto !important;
-    }
     /* 방법 1: container key 클래스 직접 타겟팅 */
     .st-key-sticky_header {
-        position: sticky !important;
+        position: fixed !important;
         top: 3.7rem !important;
+        left: 22rem !important;
+        right: 2rem !important;
         z-index: 999 !important;
         background: #f7f8fa !important;
-        padding: 10px 0 12px 0 !important;
+        padding: 10px 16px 12px 16px !important;
         border-bottom: 1px solid #e5e7eb !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
     }
-    /* 방법 2: 마커 기반 :has() 셀렉터 (백업, 구조적으로 정확히 이 컨테이너만 매칭) */
+    /* 방법 2: 마커 기반 :has() 셀렉터 (백업) */
     div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > div#sticky-marker-anchor) {
-        position: sticky !important;
+        position: fixed !important;
         top: 3.7rem !important;
+        left: 22rem !important;
+        right: 2rem !important;
         z-index: 999 !important;
         background: #f7f8fa !important;
-        padding: 10px 0 12px 0 !important;
+        padding: 10px 16px 12px 16px !important;
         border-bottom: 1px solid #e5e7eb !important;
+        box-shadow: 0 2px 6px rgba(0,0,0,0.06) !important;
+    }
+    /* 사이드바가 접혔을 때는 왼쪽 여백을 줄여 고정 바가 화면을 벗어나지 않게 함 */
+    div[data-testid="stSidebar"][aria-expanded="false"] ~ section[data-testid="stMain"] .st-key-sticky_header,
+    div[data-testid="stSidebar"][aria-expanded="false"] ~ section[data-testid="stMain"] div[data-testid="stVerticalBlock"]:has(> div[data-testid="element-container"] > div#sticky-marker-anchor) {
+        left: 2rem !important;
     }
     /* Streamlit 자체 상단 툴바(Share/GitHub 등)는 항상 최상단에 보이도록 z-index 우선 */
     header[data-testid="stHeader"] {
@@ -217,6 +224,11 @@ st.markdown(
     """,
     unsafe_allow_html=True,
 )
+
+# 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
+st.markdown("<div style='height:150px;'></div>", unsafe_allow_html=True)
+
+
 
 # ============================================================
 # 상단: EP 실적 (트래픽/거래액/구매객수/CR/객단가)
