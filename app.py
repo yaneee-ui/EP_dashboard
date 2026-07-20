@@ -124,8 +124,6 @@ with _sticky:
     # 고정 대상 식별용 마커 (반드시 이 컨테이너의 첫 요소여야 함)
     st.markdown("<div id='sticky-marker-anchor'></div>", unsafe_allow_html=True)
 
-    st.markdown("<div style='font-size:1.15rem;font-weight:700;margin-bottom:4px;'>📊 실적 요약</div>", unsafe_allow_html=True)
-
     BPU_OPTIONS = [
         ("전체", "Total"),
         ("e-영업1", "e-영업1"),
@@ -135,15 +133,6 @@ with _sticky:
         ("자사 (e1+e2)", "자사"),
         ("입점 (e3+e4)", "입점"),
     ]
-
-    fc1, fc2 = st.columns([2, 2])
-    with fc1:
-        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
-        _bpu_label_sel = st.selectbox(
-            "매체 필터", [l for l, _ in BPU_OPTIONS],
-            label_visibility="collapsed", key="bpu_filter",
-        )
-        bpu = dict(BPU_OPTIONS)[_bpu_label_sel]
 
     # 기준 시점 옵션 (Total 트래픽 데이터 기준으로 생성 — 조회 단위에 맞는 기간 목록)
     _tr_total_all = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
@@ -155,12 +144,46 @@ with _sticky:
         if not _period_s.empty and _last_tr_all < _period_s.index[-1]:
             _period_s = _period_s.iloc[:-1]  # 미완성 달 제외
 
+    if unit == "일별":
+        _min_d = _period_s.index.min().date()
+        _max_d = _period_s.index.max().date()
+    else:
+        _period_labels = [make_period_label(d, unit) for d in _period_s.index]
+
+    # 위젯 렌더 전, 세션 상태로 현재 선택값을 미리 파악해 제목 옆에 표시
+    if unit == "일별":
+        _prev_date = st.session_state.get("period_filter_date", _max_d)
+        try:
+            _period_label_preview = make_period_label(pd.Timestamp(_prev_date), unit)
+        except Exception:
+            _period_label_preview = make_period_label(pd.Timestamp(_max_d), unit)
+    else:
+        _default_label = _period_labels[-1] if _period_labels else ""
+        _prev_label_sel = st.session_state.get("period_filter", _default_label)
+        _period_label_preview = _prev_label_sel if _prev_label_sel in _period_labels else _default_label
+
+    # 제목 + 조회 단위/기준 (한 줄에 표시)
+    st.markdown(
+        f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
+        f"<span style='font-size:1.15rem;font-weight:700;'>📊 실적 요약</span>"
+        f"<span style='font-size:0.8rem;color:#6b7280;'>조회 단위: <b>{unit}</b> · 기준: <b>{_period_label_preview}</b></span>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+    fc1, fc2, _fc_spacer = st.columns([1, 1, 3])
+    with fc1:
+        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
+        _bpu_label_sel = st.selectbox(
+            "매체 필터", [l for l, _ in BPU_OPTIONS],
+            label_visibility="collapsed", key="bpu_filter",
+        )
+        bpu = dict(BPU_OPTIONS)[_bpu_label_sel]
+
     with fc2:
         _label2 = "기준 일자" if unit == "일별" else "기준 시점"
         st.markdown(f"<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>{_label2}</div>", unsafe_allow_html=True)
         if unit == "일별":
-            _min_d = _period_s.index.min().date()
-            _max_d = _period_s.index.max().date()
             _sel_date = st.date_input(
                 "기준 일자", value=_max_d, min_value=_min_d, max_value=_max_d,
                 label_visibility="collapsed", key="period_filter_date",
@@ -170,7 +193,6 @@ with _sticky:
                 _cand = _period_s.index[_period_s.index <= selected_period_date]
                 selected_period_date = _cand[-1] if len(_cand) else _period_s.index[-1]
         else:
-            _period_labels = [make_period_label(d, unit) for d in _period_s.index]
             _sel_label = st.selectbox(
                 "기준 시점", _period_labels, index=len(_period_labels) - 1,
                 label_visibility="collapsed", key="period_filter",
@@ -178,11 +200,6 @@ with _sticky:
             selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
 
     period_label = make_period_label(selected_period_date, unit)
-
-    st.markdown(
-        f"<div style='font-size:0.8rem;color:#6b7280;margin-top:2px;'>조회 단위: <b>{unit}</b> · 기준: <b>{period_label}</b></div>",
-        unsafe_allow_html=True,
-    )
 
 # 필터 영역 상단 고정(fixed) CSS — position:fixed는 스크롤 컨테이너 구조와 무관하게 항상 화면에 고정됨
 st.markdown(
@@ -216,10 +233,15 @@ st.markdown(
     header[data-testid="stHeader"] {
         z-index: 1000 !important;
     }
-    /* 고정 영역 내부 위젯(selectbox/date_input) 상하 여백 축소 */
+    /* 고정 영역 내부 위젯(selectbox/date_input) 상하 여백 축소 + 폭 제한(잘림 방지) */
     .st-key-sticky_header div[data-testid="stSelectbox"],
     .st-key-sticky_header div[data-testid="stDateInput"] {
         margin-bottom: -6px !important;
+        max-width: 260px !important;
+    }
+    .st-key-sticky_header div[data-testid="stSelectbox"] > div,
+    .st-key-sticky_header div[data-testid="stDateInput"] > div {
+        max-width: 260px !important;
     }
     .st-key-sticky_header div[data-testid="element-container"] {
         margin-bottom: 0 !important;
