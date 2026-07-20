@@ -26,6 +26,16 @@ def render_sidebar():
 
     st.sidebar.divider()
 
+    # --- 메뉴 (페이지 선택) ---
+    st.sidebar.markdown("**메뉴**")
+    page = st.sidebar.radio(
+        "메뉴",
+        ["1. 실적 요약", "2. 카테고리 실적 요약"],
+        label_visibility="collapsed",
+    )
+
+    st.sidebar.divider()
+
     # --- 데이터 업로드 ---
     st.sidebar.markdown("**📁 데이터 업로드**")
     st.sidebar.caption("변환기에서 만든 CSV를 올리면 바로 반영됩니다.")
@@ -48,6 +58,7 @@ def render_sidebar():
 
     return {
         "view_unit": view_unit,
+        "page": page,
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
         "ep_category_file": ep_category_file,
