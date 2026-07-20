@@ -915,28 +915,6 @@ if side["page"].startswith("2"):
         else:
             cat_bpu_df = df_category[df_category["BPU"] == bpu]
 
-        # --- 카테고리별 거래액 비중 (브랜드=전체 기준, 선택 시점까지) ---
-        _share_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
-        if bpu == "Total":
-            _share_df = _share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
-        render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준")
-
-        st.markdown("<br/>", unsafe_allow_html=True)
-
-        # --- 브랜드별 거래액 랭킹 ---
-        # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
-        if selected_cat == "전체":
-            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] != "전체")]
-            _brand_subtitle = f"{bpu} · 전체 카테고리 기준"
-        else:
-            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] != "전체")]
-            _brand_subtitle = f"{bpu} · {selected_cat} 카테고리 기준"
-        if bpu == "Total":
-            _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
-        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle)
-
-        st.markdown("<br/>", unsafe_allow_html=True)
-
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
         if bpu == "Total" and not cat_combo.empty:
             cat_combo = cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
@@ -1087,6 +1065,31 @@ if side["page"].startswith("2"):
                 f"<tbody>{''.join(cat_summary_rows)}</tbody></table>"
             )
             st.markdown(cat_summary_html, unsafe_allow_html=True)
+
+        st.markdown("<br/>", unsafe_allow_html=True)
+
+        # --- 카테고리별 거래액 비중 (브랜드=전체 기준, 선택 시점까지) ---
+        _share_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
+        if bpu == "Total":
+            _share_df = _share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+        render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준")
+
+        st.markdown("<br/>", unsafe_allow_html=True)
+
+        # --- 브랜드별 거래액 랭킹 ---
+        # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
+        if selected_cat == "전체":
+            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] != "전체")]
+            _brand_subtitle = f"{bpu} · 전체 카테고리 기준"
+        else:
+            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] != "전체")]
+            _brand_subtitle = f"{bpu} · {selected_cat} 카테고리 기준"
+        if bpu == "Total":
+            _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
+        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle)
+
+        st.markdown("<br/>", unsafe_allow_html=True)
+
 
 
 # ============================================================
