@@ -8,7 +8,7 @@ import streamlit.components.v1 as components
 import pandas as pd
 import datetime as _dt
 
-from data_loader import load_data, load_traffic_data, load_category_data
+from data_loader import load_data, load_traffic_data, load_category_data, load_brand_names
 from sidebar import render_sidebar
 from filters import filter_by_combo
 from kpi import render_kpi_cards
@@ -44,6 +44,17 @@ if side["refresh"]:
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
 df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
+BRAND_NAMES = load_brand_names()  # 브랜드 코드 -> 한글 브랜드명
+
+
+def brand_label(code):
+    """브랜드 코드를 '코드 (브랜드명)' 형태로 표시. '전체'는 그대로."""
+    if code == "전체" or code not in BRAND_NAMES:
+        return code
+    return f"{code} ({BRAND_NAMES[code]})"
+
+
+BRAND_LABELS = {code: brand_label(code) for code in BRAND_NAMES}  # 랭킹 차트용 "코드 (이름)" 매핑
 
 # EP채널 업로드
 if side["ep_channel_file"] is not None:
@@ -120,8 +131,62 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
     return agg
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle):
-    """group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링."""
+def render_bpu_comparison_table(df_traffic):
+    """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
+    지표 5개(EP UV/거래액/구매객수/구매전환율/객단가) x 각각 [값/전일비/전주평균비/전년동요일비]."""
+    BPU_COLS = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
+    METRICS = [
+        ("트래픽", "EP UV", False),
+        ("거래액", "거래액(순결제)", False),
+        ("구매객수", "구매객수", False),
+        ("CR", "구매전환율(%)", True),
+        ("객단가", "객단가", False),
+    ]
+
+    def _series_for(bpu_key, metric):
+        if bpu_key in BPU_GROUPS:
+            sub = aggregate_traffic(df_traffic, BPU_GROUPS[bpu_key], "전체")
+        else:
+            sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == "전체")]
+        if sub.empty:
+            return pd.Series(dtype="float64")
+        return sub.set_index("날짜")[metric].sort_index().resample("D").mean()
+
+    for metric_key, metric_label, is_pct in METRICS:
+        header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
+        row_val, row_prev, row_avg, row_yoy = [], [], [], []
+        for bpu_key in BPU_COLS:
+            series = _series_for(bpu_key, metric_key)
+            stats = compute_kpi_deltas(series, "일별")
+            if stats is None:
+                row_val.append("<td>-</td>")
+                row_prev.append("<td>-</td>")
+                row_avg.append("<td>-</td>")
+                row_yoy.append("<td>-</td>")
+                continue
+            val_str = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
+            row_val.append(f"<td class='v'>{val_str}</td>")
+            row_prev.append(f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>")
+            row_avg.append(f"<td class='d'>{format_delta_html(stats['avg_delta'])}</td>")
+            row_yoy.append(f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td>")
+
+        table_html = (
+            "<table class='summary-table' style='margin-bottom:14px;'>"
+            f"<thead><tr><th colspan='{len(BPU_COLS)+1}' style='background:#eef2ff;color:#374151;font-weight:700;'>{metric_label}</th></tr>"
+            f"<tr>{header_html}</tr></thead>"
+            "<tbody>"
+            f"<tr><td class='m'>값</td>{''.join(row_val)}</tr>"
+            f"<tr><td class='m'>전일비</td>{''.join(row_prev)}</tr>"
+            f"<tr><td class='m'>전주평균비</td>{''.join(row_avg)}</tr>"
+            f"<tr><td class='m'>전년동요일비</td>{''.join(row_yoy)}</tr>"
+            "</tbody></table>"
+        )
+        st.markdown(table_html, unsafe_allow_html=True)
+
+
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None):
+    """group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
+    label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명)."""
     rows = []
     for name in sorted(sub_df[group_col].unique()):
         s_full = sub_df[sub_df[group_col] == name].set_index("날짜")["거래액"].sort_index()
@@ -172,10 +237,14 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         _yoy_delta = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if _has_prev and r["전년거래액"] != 0 else None
         _prev_val_str = f"{r['전년거래액']:,.0f}" if _has_prev else "-"
 
+        _raw_label = r[group_col]
+        _display_label = label_map.get(_raw_label, _raw_label) if label_map else _raw_label
+        _label_width = 190 if label_map else 80
+
         bar_rows_html.append(
             "<div style='margin-bottom:12px;'>"
             "<div style='display:flex;align-items:center;margin-bottom:3px;'>"
-            f"<div style='width:80px;flex-shrink:0;font-size:0.82rem;color:#374151;font-weight:600;'>{r[group_col]}</div>"
+            f"<div style='width:{_label_width}px;flex-shrink:0;font-size:0.8rem;color:#374151;font-weight:600;'>{_display_label}</div>"
             "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:20px;margin:0 10px;position:relative;'>"
             f"<div style='width:{_pct_width:.1f}%;background:#2563eb;height:100%;border-radius:4px;'></div>"
             "</div>"
@@ -183,7 +252,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             f"{r['거래액']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
             "</div>"
             "<div style='display:flex;align-items:center;'>"
-            "<div style='width:80px;flex-shrink:0;'></div>"
+            f"<div style='width:{_label_width}px;flex-shrink:0;'></div>"
             "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:14px;margin:0 10px;position:relative;'>"
             f"<div style='width:{_prev_pct_width:.1f}%;background:#7dd3fc;height:100%;border-radius:4px;'></div>"
             "</div>"
@@ -338,7 +407,7 @@ with _sticky:
                     .unique()
                 )
                 _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
-                selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, label_visibility="collapsed", key="brand_select")
+                selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, format_func=brand_label, label_visibility="collapsed", key="brand_select")
 
         period_label = make_period_label(selected_period_date, unit)
 
@@ -426,7 +495,7 @@ with _sticky:
                     .unique()
                 )
                 _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
-                selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, label_visibility="collapsed", key="brand_select")
+                selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, format_func=brand_label, label_visibility="collapsed", key="brand_select")
 
 # 필터 영역 상단 고정(fixed) CSS — position:fixed는 스크롤 컨테이너 구조와 무관하게 항상 화면에 고정됨
 st.markdown(
@@ -479,7 +548,7 @@ st.markdown(
 )
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
-_spacer_height = 140 if _page_num == "4" else 90
+_spacer_height = 120 if _page_num == "4" else 65
 st.markdown(
     f"<div style='height:{_spacer_height}px;'></div>"
     "<div id='content-align-marker' style='height:0;'></div>",
@@ -588,7 +657,7 @@ if side["page"].startswith("1"):
                         unsafe_allow_html=True,
                     )
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # 지표 추이 차트 (트래픽 지표)
         h1, h2 = st.columns([2, 3])
@@ -663,7 +732,7 @@ if side["page"].startswith("1"):
             unsafe_allow_html=True,
         )
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # 실적 요약 표 (트래픽 지표)
         st.markdown(f"**EP 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu}</span>", unsafe_allow_html=True)
@@ -816,7 +885,7 @@ if side["page"].startswith("1"):
                         unsafe_allow_html=True,
                     )
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # EP 채널 지표 추이
         h1, h2 = st.columns([2, 3])
@@ -865,7 +934,7 @@ if side["page"].startswith("1"):
             unsafe_allow_html=True,
         )
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # --- EP 채널 요약 표 (EP실적 요약표와 동일 스타일 · 동일 비교 기준) ---
         st.markdown(f"**EP 채널 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} / {match_status} / {lowest_status}</span>", unsafe_allow_html=True)
@@ -895,6 +964,13 @@ if side["page"].startswith("1"):
         )
         st.markdown(ep_summary_html, unsafe_allow_html=True)
 
+    st.markdown("---")
+    st.markdown("### 🏢 사업부별 실적 비교", unsafe_allow_html=True)
+    st.markdown(
+        "<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · 일별 기준 · 값·전일비·전주평균비·전년동요일비</div>",
+        unsafe_allow_html=True,
+    )
+    render_bpu_comparison_table(df_traffic)
 
 
 if side["page"].startswith("2"):
@@ -922,10 +998,10 @@ if side["page"].startswith("2"):
             cat_combo["객단가"] = (cat_combo["거래액"] / cat_combo["구매객수"]).where(cat_combo["구매객수"] > 0, 0)
 
         if cat_combo.empty:
-            st.warning(f"{selected_cat} / {selected_brand} 조합에 데이터가 없습니다.")
+            st.warning(f"{selected_cat} / {brand_label(selected_brand)} 조합에 데이터가 없습니다.")
         else:
             st.markdown(
-                f"<div class='chart-caption'>{bpu} · <b>{selected_cat}</b> / <b>{selected_brand}</b> 기준</div>",
+                f"<div class='chart-caption'>{bpu} · <b>{selected_cat}</b> / <b>{brand_label(selected_brand)}</b> 기준</div>",
                 unsafe_allow_html=True,
             )
 
@@ -970,7 +1046,7 @@ if side["page"].startswith("2"):
                             unsafe_allow_html=True,
                         )
 
-            st.markdown("<br/>", unsafe_allow_html=True)
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
             # --- 추이 차트 (전년 비교선 포함) ---
             h1, h2 = st.columns([2, 3])
@@ -1029,11 +1105,11 @@ if side["page"].startswith("2"):
             else:
                 st.line_chart(cat_chart_df, height=350, color=["#2563eb"])
 
-            st.markdown("<br/>", unsafe_allow_html=True)
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
             # --- 카테고리 실적 요약 표 (EP실적/EP채널과 동일 스타일·기준) ---
             st.markdown(
-                f"**카테고리 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · {selected_cat} / {selected_brand}</span>",
+                f"**카테고리 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · {selected_cat} / {brand_label(selected_brand)}</span>",
                 unsafe_allow_html=True,
             )
             cat_summary_rows = []
@@ -1066,7 +1142,7 @@ if side["page"].startswith("2"):
             )
             st.markdown(cat_summary_html, unsafe_allow_html=True)
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # --- 카테고리별 거래액 비중 (브랜드=전체 기준, 선택 시점까지) ---
         _share_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
@@ -1074,7 +1150,7 @@ if side["page"].startswith("2"):
             _share_df = _share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
         render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준")
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # --- 브랜드별 거래액 랭킹 ---
         # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
@@ -1086,9 +1162,9 @@ if side["page"].startswith("2"):
             _brand_subtitle = f"{bpu} · {selected_cat} 카테고리 기준"
         if bpu == "Total":
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
-        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle)
+        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle, label_map=BRAND_LABELS)
 
-        st.markdown("<br/>", unsafe_allow_html=True)
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
 
 
@@ -1185,7 +1261,7 @@ if side["page"].startswith("4"):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · "
-        f"{cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{selected_brand}</b></div>",
+        f"{cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{brand_label(selected_brand)}</b></div>",
         unsafe_allow_html=True,
     )
 
@@ -1206,7 +1282,7 @@ if side["page"].startswith("4"):
             _cum_cat_combo["객단가"] = (_cum_cat_combo["거래액"] / _cum_cat_combo["구매객수"]).where(_cum_cat_combo["구매객수"] > 0, 0)
 
         if _cum_cat_combo.empty:
-            st.warning(f"{selected_cat} / {selected_brand} 조합에 데이터가 없습니다.")
+            st.warning(f"{selected_cat} / {brand_label(selected_brand)} 조합에 데이터가 없습니다.")
         else:
             CAT_CUM_COLS = [
                 ("트래픽", "UV", False), ("거래액", "거래액", False), ("구매객수", "구매객수", False),
