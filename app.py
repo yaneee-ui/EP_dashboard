@@ -7,6 +7,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import datetime as _dt
+import io
 
 from data_loader import load_data, load_traffic_data, load_category_data, load_brand_names
 from sidebar import render_sidebar
@@ -129,6 +130,20 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
     agg[COL_MATCH] = match_status
     agg[COL_LOWEST] = lowest_status
     return agg
+
+
+def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드"):
+    """DataFrame을 엑셀 파일로 변환해 다운로드 버튼으로 제공."""
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        df_export.to_excel(writer, index=False, sheet_name="누적 데이터")
+    st.download_button(
+        label,
+        data=buf.getvalue(),
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        use_container_width=False,
+    )
 
 
 def render_bpu_comparison_table(df_traffic):
@@ -539,6 +554,32 @@ with _sticky:
                 _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
                 selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, format_func=brand_label, label_visibility="collapsed", key="brand_select")
 
+
+        # 페이지3(누적 데이터)/4(카테고리)는 둘째 줄에 세그먼트(고객 구분) 필터 추가
+        cum_segment = "전체"
+        if _page_num == "3":
+            _cum_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
+            if len(_cum_seg_options) > 1:
+                st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+                cum_segment = st.radio(
+                    "고객 구분", _cum_seg_options, horizontal=True,
+                    key="cum_seg_filter", label_visibility="collapsed",
+                )
+        elif _page_num == "4":
+            _has_cum_cat_segment = "회원구분" in df_category.columns
+            if _has_cum_cat_segment and selected_brand == "전체":
+                _cum_cat_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_category["회원구분"].unique()]
+            else:
+                _cum_cat_seg_options = ["전체"]
+            if len(_cum_cat_seg_options) > 1:
+                st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
+                cum_segment = st.radio(
+                    "고객 구분", _cum_cat_seg_options, horizontal=True,
+                    key="cum_cat_seg_filter", label_visibility="collapsed",
+                )
+            elif _has_cum_cat_segment and selected_brand != "전체":
+                st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
+
 # 필터 영역 상단 고정(fixed) CSS — position:fixed는 스크롤 컨테이너 구조와 무관하게 항상 화면에 고정됨
 st.markdown(
     """
@@ -591,8 +632,8 @@ st.markdown(
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
 if _page_num == "4":
-    _spacer_height = 120
-elif _page_num in ("1", "2"):
+    _spacer_height = 155
+elif _page_num in ("1", "2", "3"):
     _spacer_height = 100
 else:
     _spacer_height = 65
@@ -1255,16 +1296,17 @@ if side["page"].startswith("3"):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
-        f"{cum_start} ~ {cum_end}</div>",
+        f"고객구분: <b>{cum_segment}</b> · {cum_start} ~ {cum_end}"
+        f"{' (EP채널 지표는 고객구분 구분 없이 전체 기준)' if cum_segment != '전체' else ''}</div>",
         unsafe_allow_html=True,
     )
     _agg_func = "sum" if cum_agg_mode == "누적" else "mean"
 
     # --- EP실적 부분 (트래픽/거래액/구매객수는 합계 가능, CR/객단가는 합계 기반 재계산) ---
     if bpu in BPU_GROUPS:
-        _cum_tr = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "전체")
+        _cum_tr = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], cum_segment)
     else:
-        _cum_tr = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "전체")]
+        _cum_tr = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == cum_segment)]
 
     tr_table_rows = {}
     if not _cum_tr.empty:
@@ -1343,21 +1385,32 @@ if side["page"].startswith("3"):
         ]
         header_html = "<th>구분</th>" + "".join(f"<th>{label}</th>" for _, label, _ in COLS)
         body_rows = []
+        export_rows = []
         for d in all_dates:
             row_label = make_period_label(d, cum_unit)
             cells = []
-            for key, _, is_pct in COLS:
+            export_row = {"구분": row_label}
+            for key, label, is_pct in COLS:
                 src = tr_table_rows.get(key, ep_table_rows.get(key))
                 val = src.get(d) if src is not None and d in src.index else None
                 if val is None or pd.isna(val):
                     cells.append("<td>-</td>")
+                    export_row[label] = None
                 elif is_pct:
                     cells.append(f"<td>{val:.1f}%</td>")
+                    export_row[label] = round(val, 1)
                 else:
                     cells.append(f"<td>{val:,.0f}</td>")
+                    export_row[label] = round(val, 0)
             body_rows.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
+            export_rows.append(export_row)
 
-        st.markdown(f"**누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_dates)}개 기간</span>", unsafe_allow_html=True)
+        _tc1, _tc2 = st.columns([4, 1])
+        with _tc1:
+            st.markdown(f"**누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_dates)}개 기간</span>", unsafe_allow_html=True)
+        with _tc2:
+            _fname = f"누적데이터_{bpu}_{cum_unit}_{cum_start}_{cum_end}.xlsx".replace(" ", "")
+            render_excel_download(pd.DataFrame(export_rows), _fname)
         table_html = (
             "<div style='overflow-x:auto;'><table class='summary-table'>"
             f"<thead><tr>{header_html}</tr></thead>"
@@ -1373,7 +1426,7 @@ if side["page"].startswith("4"):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
-        f"{cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{brand_label(selected_brand)}</b></div>",
+        f"고객구분: <b>{cum_segment}</b> · {cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{brand_label(selected_brand)}</b></div>",
         unsafe_allow_html=True,
     )
 
@@ -1386,6 +1439,9 @@ if side["page"].startswith("4"):
             _cum_cat_df = df_category
         else:
             _cum_cat_df = df_category[df_category["BPU"] == bpu]
+
+        if "회원구분" in _cum_cat_df.columns:
+            _cum_cat_df = _cum_cat_df[_cum_cat_df["회원구분"] == cum_segment]
 
         _cum_cat_combo = _cum_cat_df[(_cum_cat_df["카테고리"] == selected_cat) & (_cum_cat_df["브랜드"] == selected_brand)]
         if bpu == "Total" and not _cum_cat_combo.empty:
@@ -1432,20 +1488,31 @@ if side["page"].startswith("4"):
             else:
                 header_html2 = "<th>구분</th>" + "".join(f"<th>{label}</th>" for _, label, _ in CAT_CUM_COLS)
                 body_rows2 = []
+                export_rows2 = []
                 for d in all_cat_dates:
                     row_label = make_period_label(d, cum_unit)
                     cells = []
-                    for key, _, _is_pct in CAT_CUM_COLS:
+                    export_row2 = {"구분": row_label}
+                    for key, label, _is_pct in CAT_CUM_COLS:
                         val = cat_table_rows[key].get(d)
                         if val is None or pd.isna(val):
                             cells.append("<td>-</td>")
+                            export_row2[label] = None
                         elif _is_pct:
                             cells.append(f"<td>{val:.1f}%</td>")
+                            export_row2[label] = round(val, 1)
                         else:
                             cells.append(f"<td>{val:,.0f}</td>")
+                            export_row2[label] = round(val, 0)
                     body_rows2.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
+                    export_rows2.append(export_row2)
 
-                st.markdown(f"**카테고리 누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_cat_dates)}개 기간</span>", unsafe_allow_html=True)
+                _tc3, _tc4 = st.columns([4, 1])
+                with _tc3:
+                    st.markdown(f"**카테고리 누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_cat_dates)}개 기간</span>", unsafe_allow_html=True)
+                with _tc4:
+                    _fname2 = f"카테고리누적데이터_{bpu}_{selected_cat}_{brand_label(selected_brand)}_{cum_unit}.xlsx".replace(" ", "")
+                    render_excel_download(pd.DataFrame(export_rows2), _fname2)
                 table_html2 = (
                     "<div style='overflow-x:auto;'><table class='summary-table'>"
                     f"<thead><tr>{header_html2}</tr></thead>"
