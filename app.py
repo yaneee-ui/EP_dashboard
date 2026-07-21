@@ -133,30 +133,31 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
 
 def render_bpu_comparison_table(df_traffic):
     """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
-    지표 5개(EP UV/거래액/구매객수/구매전환율/객단가) x 각각 [값/전일비/전주평균비/전년동요일비]."""
+    지표(EP UV/회원UV/거래액/구매객수/구매전환율/객단가) x 각각 [값/전일비/전주평균비/전년동요일비]."""
     BPU_COLS = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
     METRICS = [
-        ("트래픽", "EP UV", False),
-        ("거래액", "거래액(순결제)", False),
-        ("구매객수", "구매객수", False),
-        ("CR", "구매전환율(%)", True),
-        ("객단가", "객단가", False),
+        ("트래픽", "전체", "EP UV", False),
+        ("트래픽", "회원", "회원UV", False),
+        ("거래액", "전체", "거래액(순결제)", False),
+        ("구매객수", "전체", "구매객수", False),
+        ("CR", "전체", "구매전환율(%)", True),
+        ("객단가", "전체", "객단가", False),
     ]
 
-    def _series_for(bpu_key, metric):
+    def _series_for(bpu_key, metric, member="전체"):
         if bpu_key in BPU_GROUPS:
-            sub = aggregate_traffic(df_traffic, BPU_GROUPS[bpu_key], "전체")
+            sub = aggregate_traffic(df_traffic, BPU_GROUPS[bpu_key], member)
         else:
-            sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == "전체")]
+            sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == member)]
         if sub.empty:
             return pd.Series(dtype="float64")
         return sub.set_index("날짜")[metric].sort_index().resample("D").mean()
 
-    for metric_key, metric_label, is_pct in METRICS:
+    for metric_key, member, metric_label, is_pct in METRICS:
         header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
         row_val, row_prev, row_avg, row_yoy = [], [], [], []
         for bpu_key in BPU_COLS:
-            series = _series_for(bpu_key, metric_key)
+            series = _series_for(bpu_key, metric_key, member)
             stats = compute_kpi_deltas(series, "일별")
             if stats is None:
                 row_val.append("<td>-</td>")
@@ -419,16 +420,17 @@ with _sticky:
 
         _cum_bpu_prev = st.session_state.get("cum_bpu_filter", "전체")
         _cum_unit_prev = st.session_state.get("cum_unit_filter", "일자별")
+        _cum_agg_prev = st.session_state.get("cum_agg_mode", "일평균")
         st.markdown(
             f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>"
-            f"<span style='font-size:0.8rem;color:#6b7280;'>매체: <b>{_cum_bpu_prev}</b> · 기간유형: <b>{_cum_unit_prev}</b></span>"
+            f"<span style='font-size:0.8rem;color:#6b7280;'>매체: <b>{_cum_bpu_prev}</b> · 기간유형: <b>{_cum_unit_prev}</b> · 집계: <b>{_cum_agg_prev}</b></span>"
             f"</div>",
             unsafe_allow_html=True,
         )
 
         _is_cum_cat_page = _page_num == "4"
-        gc1, gc2, gc3, gc4, _gc_spacer = st.columns([1, 1, 1, 1, 4])
+        gc1, gc2, gc3, gc4, gc5, _gc_spacer = st.columns([1, 1, 1, 1, 1, 3])
 
         with gc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
@@ -446,17 +448,24 @@ with _sticky:
             )
             cum_unit = dict(CUM_UNIT_OPTIONS)[_cum_unit_label]
 
+        with gc3:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
+            cum_agg_mode = st.selectbox(
+                "집계 방식", ["일평균", "누적"],
+                label_visibility="collapsed", key="cum_agg_mode",
+            )
+
         # 데이터 있는 전체 날짜 범위 (트래픽 데이터 기준)
         _cum_min_d = df_traffic["날짜"].min().date()
         _cum_max_d = df_traffic["날짜"].max().date()
 
-        with gc3:
+        with gc4:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>시작일</div>", unsafe_allow_html=True)
             cum_start = st.date_input(
                 "시작일", value=_cum_min_d, min_value=_cum_min_d, max_value=_cum_max_d,
                 label_visibility="collapsed", key="cum_start_date",
             )
-        with gc4:
+        with gc5:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>종료일</div>", unsafe_allow_html=True)
             cum_end = st.date_input(
                 "종료일", value=_cum_max_d, min_value=_cum_min_d, max_value=_cum_max_d,
@@ -603,8 +612,10 @@ if side["page"].startswith("1"):
     # 트래픽 데이터 필터 (자사/입점이면 합산)
     if bpu in BPU_GROUPS:
         tr_combo = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], segment)
+        tr_member = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "회원")
     else:
         tr_combo = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == segment)].copy()
+        tr_member = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == "회원")].copy()
 
     if tr_combo.empty:
         st.warning(f"{bpu}의 EP실적 데이터가 없습니다.")
@@ -760,6 +771,27 @@ if side["page"].startswith("1"):
                 f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>"
                 f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td></tr>"
             )
+
+        # 회원UV 행 추가 (선택된 세그먼트와 무관하게 항상 표시)
+        if not tr_member.empty:
+            s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
+            series_mem = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            if unit == "주별":
+                series_mem.index = series_mem.index - pd.Timedelta(days=6)
+            elif unit == "월마감" and not series_mem.empty and s_mem.index.max() < series_mem.index[-1]:
+                series_mem = series_mem.iloc[:-1]
+            if not series_mem.empty:
+                series_mem = series_mem[series_mem.index <= selected_period_date]
+            stats_mem = compute_kpi_deltas(series_mem, unit)
+            if stats_mem is None:
+                body_rows.append("<tr><td>회원UV</td><td>-</td><td>-</td><td>-</td></tr>")
+            else:
+                body_rows.append(
+                    f"<tr><td class='m'>회원UV</td><td class='v'>{stats_mem['current']:,.0f}</td>"
+                    f"<td class='d'>{format_delta_html(stats_mem['prev_delta'])}</td>"
+                    f"<td class='d'>{format_delta_html(stats_mem['yoy_delta'])}</td></tr>"
+                )
+
         html = (
             "<table class='summary-table'>"
             f"<thead><tr><th>지표</th><th>값</th><th>{prev_label or '-'}</th><th>{yoy_label or '-'}</th></tr></thead>"
@@ -991,6 +1023,25 @@ if side["page"].startswith("2"):
         else:
             cat_bpu_df = df_category[df_category["BPU"] == bpu]
 
+        # 세그먼트 필터 (고객 구분) — 카테고리 레벨(브랜드=전체)에서만 제공, 특정 브랜드 선택시엔 '전체'만 존재
+        _has_segment = "회원구분" in df_category.columns
+        if _has_segment and selected_brand == "전체":
+            _cat_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_category["회원구분"].unique()]
+        else:
+            _cat_seg_options = ["전체"]
+        if len(_cat_seg_options) > 1:
+            cat_segment = st.radio("고객 구분", _cat_seg_options, horizontal=True, key="cat_seg_filter", label_visibility="collapsed")
+        else:
+            cat_segment = "전체"
+            if _has_segment and selected_brand != "전체":
+                st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
+
+        # 세그먼트 필터 적용 전 원본 보관 (브랜드 랭킹은 세그먼트=전체 데이터만 있으므로 이걸 사용)
+        cat_bpu_df_all_seg = cat_bpu_df
+
+        if _has_segment:
+            cat_bpu_df = cat_bpu_df[cat_bpu_df["회원구분"] == cat_segment]
+
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
         if bpu == "Total" and not cat_combo.empty:
             cat_combo = cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
@@ -1154,12 +1205,15 @@ if side["page"].startswith("2"):
 
         # --- 브랜드별 거래액 랭킹 ---
         # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
+        # (브랜드 레벨 데이터는 세그먼트=전체만 존재하므로 cat_bpu_df_all_seg 사용)
         if selected_cat == "전체":
-            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] != "전체")]
+            _brand_share_df = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == "전체") & (cat_bpu_df_all_seg["브랜드"] != "전체")]
             _brand_subtitle = f"{bpu} · 전체 카테고리 기준"
         else:
-            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] != "전체")]
+            _brand_share_df = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] != "전체")]
             _brand_subtitle = f"{bpu} · {selected_cat} 카테고리 기준"
+        if _has_segment:
+            _brand_share_df = _brand_share_df[_brand_share_df["회원구분"] == "전체"]
         if bpu == "Total":
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
         render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle, label_map=BRAND_LABELS)
@@ -1174,12 +1228,13 @@ if side["page"].startswith("2"):
 if side["page"].startswith("3"):
     st.markdown("---")
     st.markdown(
-        f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · "
+        f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
         f"{cum_start} ~ {cum_end}</div>",
         unsafe_allow_html=True,
     )
+    _agg_func = "sum" if cum_agg_mode == "누적" else "mean"
 
-    # --- EP실적 부분 (트래픽/거래액/구매객수/CR/객단가) ---
+    # --- EP실적 부분 (트래픽/거래액/구매객수는 합계 가능, CR/객단가는 합계 기반 재계산) ---
     if bpu in BPU_GROUPS:
         _cum_tr = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], "전체")
     else:
@@ -1187,17 +1242,34 @@ if side["page"].startswith("3"):
 
     tr_table_rows = {}
     if not _cum_tr.empty:
-        for metric in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
-            s = _cum_tr.set_index("날짜")[metric].sort_index()
-            series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
+        base_series = {}
+        for base_metric in ["트래픽", "거래액", "구매객수"]:
+            s = _cum_tr.set_index("날짜")[base_metric].sort_index()
+            series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).agg(_agg_func)
             if cum_unit == "주별":
                 series.index = series.index - pd.Timedelta(days=6)
             elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                 series = series.iloc[:-1]
             series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-            tr_table_rows[metric] = series
+            base_series[base_metric] = series
+            tr_table_rows[base_metric] = series
 
-    # --- EP채널 부분 (원부매칭율 등, Total/Total 기준) ---
+        if cum_agg_mode == "누적":
+            # 비율 지표는 합계 기반으로 재계산
+            tr_table_rows["CR"] = (base_series["구매객수"] / base_series["트래픽"] * 100).replace([float("inf")], None)
+            tr_table_rows["객단가"] = (base_series["거래액"] / base_series["구매객수"]).replace([float("inf")], None)
+        else:
+            for metric in ["CR", "객단가"]:
+                s = _cum_tr.set_index("날짜")[metric].sort_index()
+                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
+                if cum_unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                tr_table_rows[metric] = series
+
+    # --- EP채널 부분 (전시상품수 등은 합계 가능, 원부매칭율/최저가율은 합계 기반 재계산) ---
     if bpu in BPU_GROUPS:
         _cum_ep = aggregate_ep(df_ep, BPU_GROUPS[bpu], "Total", "Total")
     elif bpu == "Total":
@@ -1205,13 +1277,27 @@ if side["page"].startswith("3"):
     else:
         _cum_ep = df_ep[(df_ep[COL_BPU] == bpu) & (df_ep[COL_MATCH] == "Total") & (df_ep[COL_LOWEST] == "Total")]
 
-    EP_CUM_METRICS = ["원부매칭율(%)", "최저가율(%)", "평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]
     ep_table_rows = {}
     if not _cum_ep.empty:
-        for metric in EP_CUM_METRICS:
-            series = resample_series(_cum_ep, metric, cum_unit)
-            series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-            ep_table_rows[metric] = series
+        if cum_agg_mode == "누적":
+            ep_base = {}
+            for base_metric in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
+                s = _cum_ep.set_index(COL_DATE)[base_metric].sort_index()
+                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
+                if cum_unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                ep_base[base_metric] = series
+                ep_table_rows[base_metric] = series
+            ep_table_rows["원부매칭율(%)"] = (ep_base["평균 원부매칭 상품수"] / ep_base["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
+            ep_table_rows["최저가율(%)"] = (ep_base["평균 최저가 상품수"] / ep_base["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
+        else:
+            for metric in ["원부매칭율(%)", "최저가율(%)", "평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
+                series = resample_series(_cum_ep, metric, cum_unit)
+                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                ep_table_rows[metric] = series
 
     # --- 병합해서 표 만들기 (최신 기간이 위로 오도록 내림차순) ---
     all_dates = sorted(set().union(
@@ -1260,7 +1346,7 @@ if side["page"].startswith("3"):
 if side["page"].startswith("4"):
     st.markdown("---")
     st.markdown(
-        f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · "
+        f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
         f"{cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{brand_label(selected_brand)}</b></div>",
         unsafe_allow_html=True,
     )
@@ -1289,15 +1375,30 @@ if side["page"].startswith("4"):
                 ("CR", "구매전환율(%)", True), ("객단가", "객단가", False),
             ]
             cat_table_rows = {}
-            for key, _, _is_pct in CAT_CUM_COLS:
-                s = _cum_cat_combo.set_index("날짜")[key].sort_index()
-                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
-                if cum_unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                    series = series.iloc[:-1]
-                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-                cat_table_rows[key] = series
+            if cum_agg_mode == "누적":
+                cat_base = {}
+                for base_metric in ["트래픽", "거래액", "구매객수"]:
+                    s = _cum_cat_combo.set_index("날짜")[base_metric].sort_index()
+                    series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
+                    if cum_unit == "주별":
+                        series.index = series.index - pd.Timedelta(days=6)
+                    elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                        series = series.iloc[:-1]
+                    series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                    cat_base[base_metric] = series
+                    cat_table_rows[base_metric] = series
+                cat_table_rows["CR"] = (cat_base["구매객수"] / cat_base["트래픽"] * 100).replace([float("inf")], None)
+                cat_table_rows["객단가"] = (cat_base["거래액"] / cat_base["구매객수"]).replace([float("inf")], None)
+            else:
+                for key, _, _is_pct in CAT_CUM_COLS:
+                    s = _cum_cat_combo.set_index("날짜")[key].sort_index()
+                    series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
+                    if cum_unit == "주별":
+                        series.index = series.index - pd.Timedelta(days=6)
+                    elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                        series = series.iloc[:-1]
+                    series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                    cat_table_rows[key] = series
 
             all_cat_dates = sorted(set().union(*[s.index for s in cat_table_rows.values()]), reverse=True)
             if not all_cat_dates:
