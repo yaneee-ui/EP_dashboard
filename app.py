@@ -434,6 +434,15 @@ with _sticky:
                 if _has_segment and selected_brand != "전체":
                     st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
 
+        # 페이지1(실적요약)일 때는 EP실적용 세그먼트(고객 구분) 필터 노출
+        if _page_num == "1":
+            _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
+            st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+            segment = st.radio(
+                "고객 구분", _seg_options, horizontal=True,
+                key="seg_filter", label_visibility="collapsed",
+            )
+
         period_label = make_period_label(selected_period_date, unit)
 
     # ========================================================
@@ -583,7 +592,7 @@ st.markdown(
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
 if _page_num == "4":
     _spacer_height = 120
-elif _page_num == "2":
+elif _page_num in ("1", "2"):
     _spacer_height = 100
 else:
     _spacer_height = 65
@@ -634,9 +643,7 @@ if side["page"].startswith("1"):
     st.markdown("---")
     st.markdown("### 📈 EP 실적")
 
-    # 세그먼트 필터 (고객 구분)
-    _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
-    segment = st.radio("고객 구분", _seg_options, horizontal=True, key="seg_filter", label_visibility="collapsed")
+    # 세그먼트 필터는 상단 고정 영역에서 이미 선택됨 (segment 변수 재사용)
 
     # 트래픽 데이터 필터 (자사/입점이면 합산)
     if bpu in BPU_GROUPS:
