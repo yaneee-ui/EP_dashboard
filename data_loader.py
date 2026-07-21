@@ -70,3 +70,16 @@ def load_category_data() -> pd.DataFrame:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
     return df.sort_values("날짜").reset_index(drop=True)
+
+
+BRAND_NAMES_PATH = "brand_names.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_brand_names() -> dict:
+    """브랜드 코드 -> 브랜드명(한글) 매핑 딕셔너리 로드."""
+    import os
+    if not os.path.exists(BRAND_NAMES_PATH):
+        return {}
+    df = pd.read_csv(BRAND_NAMES_PATH)
+    return dict(zip(df["코드"], df["브랜드명"]))
