@@ -185,9 +185,10 @@ def render_bpu_comparison_table(df_traffic):
         st.markdown(table_html, unsafe_allow_html=True)
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None):
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False):
     """group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
-    label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명)."""
+    label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명).
+    hide_zero=True면 올해/작년 거래액이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외."""
     rows = []
     for name in sorted(sub_df[group_col].unique()):
         s_full = sub_df[sub_df[group_col] == name].set_index("날짜")["거래액"].sort_index()
@@ -211,6 +212,12 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         else:
             cand = series_full.index[series_full.index <= prev_date]
             prev_val = series_full.loc[cand[-1]] if len(cand) else None
+
+        if hide_zero:
+            _cur_zero = pd.isna(cur_val) or abs(cur_val) < 0.5
+            _prev_zero = prev_val is None or pd.isna(prev_val) or abs(prev_val) < 0.5
+            if _cur_zero and _prev_zero:
+                continue
 
         rows.append({group_col: name, "거래액": cur_val, "전년거래액": prev_val})
 
@@ -410,6 +417,23 @@ with _sticky:
                 _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
                 selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, format_func=brand_label, label_visibility="collapsed", key="brand_select")
 
+            # 세그먼트(고객 구분) — 카테고리 레벨(브랜드=전체)에서만 제공
+            _has_segment = "회원구분" in df_category.columns
+            if _has_segment and selected_brand == "전체":
+                _cat_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_category["회원구분"].unique()]
+            else:
+                _cat_seg_options = ["전체"]
+            if len(_cat_seg_options) > 1:
+                st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
+                cat_segment = st.radio(
+                    "고객 구분", _cat_seg_options, horizontal=True,
+                    key="cat_seg_filter", label_visibility="collapsed",
+                )
+            else:
+                cat_segment = "전체"
+                if _has_segment and selected_brand != "전체":
+                    st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
+
         period_label = make_period_label(selected_period_date, unit)
 
     # ========================================================
@@ -557,7 +581,12 @@ st.markdown(
 )
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
-_spacer_height = 120 if _page_num == "4" else 65
+if _page_num == "4":
+    _spacer_height = 120
+elif _page_num == "2":
+    _spacer_height = 100
+else:
+    _spacer_height = 65
 st.markdown(
     f"<div style='height:{_spacer_height}px;'></div>"
     "<div id='content-align-marker' style='height:0;'></div>",
@@ -1023,18 +1052,8 @@ if side["page"].startswith("2"):
         else:
             cat_bpu_df = df_category[df_category["BPU"] == bpu]
 
-        # 세그먼트 필터 (고객 구분) — 카테고리 레벨(브랜드=전체)에서만 제공, 특정 브랜드 선택시엔 '전체'만 존재
+        # 세그먼트 필터는 상단 고정 영역에서 이미 선택됨 (cat_segment 변수 재사용)
         _has_segment = "회원구분" in df_category.columns
-        if _has_segment and selected_brand == "전체":
-            _cat_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_category["회원구분"].unique()]
-        else:
-            _cat_seg_options = ["전체"]
-        if len(_cat_seg_options) > 1:
-            cat_segment = st.radio("고객 구분", _cat_seg_options, horizontal=True, key="cat_seg_filter", label_visibility="collapsed")
-        else:
-            cat_segment = "전체"
-            if _has_segment and selected_brand != "전체":
-                st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
 
         # 세그먼트 필터 적용 전 원본 보관 (브랜드 랭킹은 세그먼트=전체 데이터만 있으므로 이걸 사용)
         cat_bpu_df_all_seg = cat_bpu_df
@@ -1216,7 +1235,7 @@ if side["page"].startswith("2"):
             _brand_share_df = _brand_share_df[_brand_share_df["회원구분"] == "전체"]
         if bpu == "Total":
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
-        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle, label_map=BRAND_LABELS)
+        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle, label_map=BRAND_LABELS, hide_zero=True)
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
