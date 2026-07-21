@@ -58,13 +58,16 @@ CATEGORY_DATA_PATH = "ep_category.csv"
 
 @st.cache_data(ttl=3600, show_spinner="카테고리 데이터를 불러오는 중...")
 def load_category_data() -> pd.DataFrame:
-    """카테고리/브랜드별 실적 데이터 로드 (세그먼트=전체만, 전체 기간)."""
+    """카테고리/브랜드별 실적 데이터 로드 (전체 기간). 카테고리 레벨은 세그먼트별, 브랜드 레벨은 전체만."""
     import os
     if not os.path.exists(CATEGORY_DATA_PATH):
-        return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "트래픽", "거래액", "구매객수", "CR", "객단가"])
+        return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"])
     df = pd.read_csv(CATEGORY_DATA_PATH)
     df["날짜"] = pd.to_datetime(df["날짜"])
-    for col in ["BPU", "카테고리", "브랜드"]:
+    _cat_cols = ["BPU", "카테고리", "브랜드"]
+    if "회원구분" in df.columns:
+        _cat_cols.append("회원구분")
+    for col in _cat_cols:
         df[col] = df[col].astype("category")
     for col in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
         if col in df.columns:
