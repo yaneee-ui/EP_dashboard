@@ -1398,10 +1398,10 @@ if side["page"].startswith("3"):
                     export_row[label] = None
                 elif is_pct:
                     cells.append(f"<td>{val:.1f}%</td>")
-                    export_row[label] = round(val, 1)
+                    export_row[label] = float(val)  # 엑셀에는 반올림 없이 원본 값 그대로
                 else:
                     cells.append(f"<td>{val:,.0f}</td>")
-                    export_row[label] = round(val, 0)
+                    export_row[label] = float(val)  # 엑셀에는 반올림 없이 원본 값 그대로
             body_rows.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
             export_rows.append(export_row)
 
@@ -1500,10 +1500,10 @@ if side["page"].startswith("4"):
                             export_row2[label] = None
                         elif _is_pct:
                             cells.append(f"<td>{val:.1f}%</td>")
-                            export_row2[label] = round(val, 1)
+                            export_row2[label] = float(val)  # 엑셀에는 반올림 없이 원본 값 그대로
                         else:
                             cells.append(f"<td>{val:,.0f}</td>")
-                            export_row2[label] = round(val, 0)
+                            export_row2[label] = float(val)  # 엑셀에는 반올림 없이 원본 값 그대로
                     body_rows2.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
                     export_rows2.append(export_row2)
 
