@@ -1322,22 +1322,22 @@ if side["page"].startswith("3"):
             base_series[base_metric] = series
             tr_table_rows[base_metric] = series
 
-        if cum_agg_mode == "누적":
-            # 비율 지표는 합계 기반으로 재계산
-            tr_table_rows["CR"] = (base_series["구매객수"] / base_series["트래픽"] * 100).replace([float("inf")], None)
-            tr_table_rows["객단가"] = (base_series["거래액"] / base_series["구매객수"]).replace([float("inf")], None)
-        else:
-            for metric in ["CR", "객단가"]:
-                s = _cum_tr.set_index("날짜")[metric].sort_index()
-                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
-                if cum_unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                    series = series.iloc[:-1]
-                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-                tr_table_rows[metric] = series
+        # 비율 지표(CR/객단가)는 일평균/누적 모드와 무관하게 항상 기간 합계 기반으로 재계산
+        # (일별 비율값을 단순 평균하면 부정확 — 분자·분모를 각각 합산한 뒤 비율을 구해야 정확함)
+        _sum_series = {}
+        for base_metric in ["트래픽", "거래액", "구매객수"]:
+            s = _cum_tr.set_index("날짜")[base_metric].sort_index()
+            series_sum = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
+            if cum_unit == "주별":
+                series_sum.index = series_sum.index - pd.Timedelta(days=6)
+            elif cum_unit == "월마감" and not series_sum.empty and s.index.max() < series_sum.index[-1]:
+                series_sum = series_sum.iloc[:-1]
+            series_sum = series_sum[(series_sum.index >= pd.Timestamp(cum_start)) & (series_sum.index <= pd.Timestamp(cum_end))]
+            _sum_series[base_metric] = series_sum
+        tr_table_rows["CR"] = (_sum_series["구매객수"] / _sum_series["트래픽"] * 100).replace([float("inf")], None)
+        tr_table_rows["객단가"] = (_sum_series["거래액"] / _sum_series["구매객수"]).replace([float("inf")], None)
 
-    # --- EP채널 부분 (전시상품수 등은 합계 가능, 원부매칭율/최저가율은 합계 기반 재계산) ---
+    # --- EP채널 부분 (전시상품수 등은 모드에 따라 평균/합계, 원부매칭율/최저가율은 항상 합계기반 재계산) ---
     if bpu in BPU_GROUPS:
         _cum_ep = aggregate_ep(df_ep, BPU_GROUPS[bpu], "Total", "Total")
     elif bpu == "Total":
@@ -1347,25 +1347,30 @@ if side["page"].startswith("3"):
 
     ep_table_rows = {}
     if not _cum_ep.empty:
-        if cum_agg_mode == "누적":
-            ep_base = {}
-            for base_metric in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
-                s = _cum_ep.set_index(COL_DATE)[base_metric].sort_index()
-                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
-                if cum_unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                    series = series.iloc[:-1]
-                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-                ep_base[base_metric] = series
-                ep_table_rows[base_metric] = series
-            ep_table_rows["원부매칭율(%)"] = (ep_base["평균 원부매칭 상품수"] / ep_base["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
-            ep_table_rows["최저가율(%)"] = (ep_base["평균 최저가 상품수"] / ep_base["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
-        else:
-            for metric in ["원부매칭율(%)", "최저가율(%)", "평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
-                series = resample_series(_cum_ep, metric, cum_unit)
-                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-                ep_table_rows[metric] = series
+        # 전시상품수/원부매칭상품수/최저가상품수는 집계 모드(일평균/누적)에 따라 평균 또는 합계
+        for base_metric in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
+            s = _cum_ep.set_index(COL_DATE)[base_metric].sort_index()
+            series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).agg(_agg_func)
+            if cum_unit == "주별":
+                series.index = series.index - pd.Timedelta(days=6)
+            elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                series = series.iloc[:-1]
+            series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+            ep_table_rows[base_metric] = series
+
+        # 원부매칭율/최저가율은 일평균/누적 모드와 무관하게 항상 기간 합계 기반으로 재계산
+        ep_base_sum = {}
+        for base_metric in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
+            s = _cum_ep.set_index(COL_DATE)[base_metric].sort_index()
+            series_sum = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
+            if cum_unit == "주별":
+                series_sum.index = series_sum.index - pd.Timedelta(days=6)
+            elif cum_unit == "월마감" and not series_sum.empty and s.index.max() < series_sum.index[-1]:
+                series_sum = series_sum.iloc[:-1]
+            series_sum = series_sum[(series_sum.index >= pd.Timestamp(cum_start)) & (series_sum.index <= pd.Timestamp(cum_end))]
+            ep_base_sum[base_metric] = series_sum
+        ep_table_rows["원부매칭율(%)"] = (ep_base_sum["평균 원부매칭 상품수"] / ep_base_sum["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
+        ep_table_rows["최저가율(%)"] = (ep_base_sum["평균 최저가 상품수"] / ep_base_sum["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
 
     # --- 병합해서 표 만들기 (최신 기간이 위로 오도록 내림차순) ---
     all_dates = sorted(set().union(
@@ -1429,6 +1434,7 @@ if side["page"].startswith("4"):
         f"고객구분: <b>{cum_segment}</b> · {cum_start} ~ {cum_end} · <b>{selected_cat}</b> / <b>{brand_label(selected_brand)}</b></div>",
         unsafe_allow_html=True,
     )
+    _agg_func = "sum" if cum_agg_mode == "누적" else "mean"
 
     if df_category.empty:
         st.info("카테고리 데이터가 없습니다.")
@@ -1457,30 +1463,30 @@ if side["page"].startswith("4"):
                 ("CR", "구매전환율(%)", True), ("객단가", "객단가", False),
             ]
             cat_table_rows = {}
-            if cum_agg_mode == "누적":
-                cat_base = {}
-                for base_metric in ["트래픽", "거래액", "구매객수"]:
-                    s = _cum_cat_combo.set_index("날짜")[base_metric].sort_index()
-                    series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
-                    if cum_unit == "주별":
-                        series.index = series.index - pd.Timedelta(days=6)
-                    elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
-                    series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-                    cat_base[base_metric] = series
-                    cat_table_rows[base_metric] = series
-                cat_table_rows["CR"] = (cat_base["구매객수"] / cat_base["트래픽"] * 100).replace([float("inf")], None)
-                cat_table_rows["객단가"] = (cat_base["거래액"] / cat_base["구매객수"]).replace([float("inf")], None)
-            else:
-                for key, _, _is_pct in CAT_CUM_COLS:
-                    s = _cum_cat_combo.set_index("날짜")[key].sort_index()
-                    series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
-                    if cum_unit == "주별":
-                        series.index = series.index - pd.Timedelta(days=6)
-                    elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
-                    series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
-                    cat_table_rows[key] = series
+            # UV/거래액/구매객수는 집계 모드(일평균/누적)에 따라 평균 또는 합계
+            for base_metric in ["트래픽", "거래액", "구매객수"]:
+                s = _cum_cat_combo.set_index("날짜")[base_metric].sort_index()
+                series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).agg(_agg_func)
+                if cum_unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                cat_table_rows[base_metric] = series
+
+            # CR/객단가는 일평균/누적 모드와 무관하게 항상 기간 합계 기반으로 재계산
+            cat_base_sum = {}
+            for base_metric in ["트래픽", "거래액", "구매객수"]:
+                s = _cum_cat_combo.set_index("날짜")[base_metric].sort_index()
+                series_sum = s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
+                if cum_unit == "주별":
+                    series_sum.index = series_sum.index - pd.Timedelta(days=6)
+                elif cum_unit == "월마감" and not series_sum.empty and s.index.max() < series_sum.index[-1]:
+                    series_sum = series_sum.iloc[:-1]
+                series_sum = series_sum[(series_sum.index >= pd.Timestamp(cum_start)) & (series_sum.index <= pd.Timestamp(cum_end))]
+                cat_base_sum[base_metric] = series_sum
+            cat_table_rows["CR"] = (cat_base_sum["구매객수"] / cat_base_sum["트래픽"] * 100).replace([float("inf")], None)
+            cat_table_rows["객단가"] = (cat_base_sum["거래액"] / cat_base_sum["구매객수"]).replace([float("inf")], None)
 
             all_cat_dates = sorted(set().union(*[s.index for s in cat_table_rows.values()]), reverse=True)
             if not all_cat_dates:
