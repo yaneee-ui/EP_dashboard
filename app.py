@@ -331,14 +331,23 @@ with _sticky:
     # 페이지 1 / 2: 매체필터 + 기준시점 (+카테고리/브랜드)
     # ========================================================
     if _page_num in ("1", "2"):
-        # 기준 시점 옵션 (Total 트래픽 데이터 기준으로 생성 — 조회 단위에 맞는 기간 목록)
-        _tr_total_all = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
-        _period_s = _tr_total_all.set_index("날짜")["트래픽"].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
+        # 기준 시점 옵션: 페이지1은 트래픽(EP실적) 데이터, 페이지2는 카테고리 데이터 기준으로 생성
+        # (두 데이터의 최신 날짜가 다를 수 있어, 실제 존재하는 기간만 선택지로 제공)
+        if _page_num == "2" and not df_category.empty:
+            _period_base_df = df_category[(df_category["카테고리"] == "전체") & (df_category["브랜드"] == "전체")]
+            if "회원구분" in _period_base_df.columns:
+                _period_base_df = _period_base_df[_period_base_df["회원구분"] == "전체"]
+            _period_metric_col = "트래픽"
+        else:
+            _period_base_df = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+            _period_metric_col = "트래픽"
+
+        _period_s = _period_base_df.set_index("날짜")[_period_metric_col].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
         if unit == "주별":
             _period_s.index = _period_s.index - pd.Timedelta(days=6)
         if unit == "월마감":
-            _last_tr_all = _tr_total_all["날짜"].max()
-            if not _period_s.empty and _last_tr_all < _period_s.index[-1]:
+            _last_base_date = _period_base_df["날짜"].max()
+            if not _period_s.empty and _last_base_date < _period_s.index[-1]:
                 _period_s = _period_s.iloc[:-1]  # 미완성 달 제외
 
         if unit == "일별":
