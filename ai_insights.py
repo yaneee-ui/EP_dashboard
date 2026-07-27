@@ -24,6 +24,48 @@ def _make_cache_key(metrics_payload: list, context_label: str) -> str:
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
+def _pick_available_models(client):
+    """API에서 실제 사용 가능한 모델 목록을 조회해, generateContent 지원 모델을 우선순위대로 반환.
+    (모델 세대가 바뀌어도 코드 수정 없이 동작하도록 하드코딩 대신 동적 조회)"""
+    try:
+        candidates = []
+        for m in client.models.list():
+            actions = getattr(m, "supported_actions", None) or []
+            if "generateContent" not in actions:
+                continue
+            name = (m.name or "").replace("models/", "")
+            if not name:
+                continue
+            lower = name.lower()
+            # 이미지/임베딩/TTS 등 텍스트 생성용이 아닌 모델 제외
+            if any(k in lower for k in ("embedding", "imagen", "image", "tts", "veo", "aqa", "learnlm")):
+                continue
+            # 무료 티어 친화적인 순서로 점수화 (flash-lite > flash > 그 외, 최신 세대 우선)
+            score = 0
+            if "flash-lite" in lower:
+                score += 100
+            elif "flash" in lower:
+                score += 90
+            elif "pro" in lower:
+                score += 10
+            if "preview" in lower or "exp" in lower:
+                score -= 5  # 안정 버전 우선
+            # 버전 숫자가 클수록(최신) 가산점
+            import re as _re
+            ver = _re.search(r"(\d+(?:\.\d+)?)", name)
+            if ver:
+                try:
+                    score += float(ver.group(1)) * 2
+                except Exception:
+                    pass
+            candidates.append((score, name))
+        candidates.sort(key=lambda x: -x[0])
+        return [n for _, n in candidates[:6]]
+    except Exception:
+        # 조회 실패 시 fallback 후보군
+        return ["gemini-3-flash", "gemini-3.1-flash-lite", "gemini-2.5-flash", "gemini-2.0-flash"]
+
+
 def generate_insights(metrics_payload: list, context_label: str, cache_prefix: str):
     """
     metrics_payload: [{"name": "EP UV", "value": "16,475", "prev_label":"전일비", "prev_delta": 7.5,
@@ -69,7 +111,10 @@ def generate_insights(metrics_payload: list, context_label: str, cache_prefix: s
 
         response = None
         _tried_errors = []
-        for _model in ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]:
+        _models_to_try = _pick_available_models(client)
+        if not _models_to_try:
+            raise RuntimeError("사용 가능한 Gemini 모델을 찾지 못했습니다. API 키/프로젝트 설정을 확인해주세요.")
+        for _model in _models_to_try:
             try:
                 response = client.models.generate_content(
                     model=_model,
@@ -82,15 +127,37 @@ def generate_insights(metrics_payload: list, context_label: str, cache_prefix: s
                 )
                 break
             except Exception as _e:
-                _tried_errors.append(f"[{_model}] {_e}")
+                _msg = str(_e)
+                _short = _msg[:120] + ("..." if len(_msg) > 120 else "")
+                _tried_errors.append(f"[{_model}] {_short}")
                 continue
         if response is None:
-            raise RuntimeError(" | ".join(_tried_errors))
+            raise RuntimeError("모든 모델 시도 실패 → " + " | ".join(_tried_errors))
         result = json.loads(response.text)
         st.session_state[cache_key] = result
         return result
     except Exception as e:
         return {"error": str(e)}
+
+
+def list_available_models_text():
+    """진단용: 현재 API 키로 접근 가능한 generateContent 모델 목록을 문자열로 반환."""
+    api_key = get_api_key()
+    if not api_key:
+        return "API 키가 등록되지 않았습니다."
+    try:
+        from google import genai
+        client = genai.Client(api_key=api_key)
+        rows = []
+        for m in client.models.list():
+            actions = getattr(m, "supported_actions", None) or []
+            if "generateContent" in actions:
+                rows.append((m.name or "").replace("models/", ""))
+        if not rows:
+            return "generateContent를 지원하는 모델이 하나도 조회되지 않았습니다."
+        return "\n".join(f"- {r}" for r in rows)
+    except Exception as e:
+        return f"모델 목록 조회 실패: {e}"
 
 
 def render_overall_summary_box(result):
@@ -102,6 +169,12 @@ def render_overall_summary_box(result):
         return
     if "error" in result:
         st.warning(f"AI 인사이트 생성 실패: {result['error']}")
+        with st.expander("🔍 내 API 키로 사용 가능한 모델 확인하기"):
+            st.code(list_available_models_text())
+            st.caption(
+                "위 목록에 모델이 있는데도 계속 실패한다면 무료 할당량(quota) 문제일 가능성이 높아요. "
+                "aistudio.google.com → 사용량/비율 제한 메뉴에서 해당 모델의 무료 한도를 확인해주세요."
+            )
         return
     summary = result.get("overall_summary", "")
     if summary:
