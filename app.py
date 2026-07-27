@@ -146,9 +146,10 @@ def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드
     )
 
 
-def render_bpu_comparison_table(df_traffic):
+def render_bpu_comparison_table(df_traffic, selected_period_date=None):
     """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
-    지표(EP UV/회원UV/거래액/구매객수/구매전환율/객단가) x 각각 [값/전일비/전주평균비/전년동요일비]."""
+    지표(EP UV/회원UV/거래액/구매객수/구매전환율/객단가) x 각각 [값/전일비/전주평균비/전년동요일비].
+    selected_period_date가 주어지면 그 날짜까지의 데이터로 값/증감을 계산한다(상단 '기준 시점' 반영)."""
     BPU_COLS = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
     METRICS = [
         ("트래픽", "전체", "EP UV", False),
@@ -166,7 +167,10 @@ def render_bpu_comparison_table(df_traffic):
             sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == member)]
         if sub.empty:
             return pd.Series(dtype="float64")
-        return sub.set_index("날짜")[metric].sort_index().resample("D").mean()
+        series = sub.set_index("날짜")[metric].sort_index().resample("D").mean()
+        if selected_period_date is not None and not series.empty:
+            series = series[series.index <= selected_period_date]
+        return series
 
     for metric_key, member, metric_label, is_pct in METRICS:
         header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
@@ -1084,11 +1088,24 @@ if side["page"].startswith("1"):
 
     st.markdown("---")
     st.markdown("### 🏢 사업부별 실적 비교", unsafe_allow_html=True)
+
+    # 이 표는 항상 '일별' 기준이므로, 상단에서 선택한 기준시점(주/월 라벨)을
+    # 그 기간의 실제 마지막 날짜로 변환해서 컷오프로 사용 (미완성 기간은 최신 데이터까지)
+    if unit == "일별":
+        _bpu_table_cutoff = selected_period_date
+    elif unit == "주별":
+        _bpu_table_cutoff = min(selected_period_date + pd.Timedelta(days=6), last_date_tr)
+    elif unit == "월마감":
+        _bpu_table_cutoff = selected_period_date + pd.offsets.MonthEnd(0)
+    else:  # 월별
+        _month_end = selected_period_date + pd.offsets.MonthEnd(0)
+        _bpu_table_cutoff = min(_month_end, last_date_tr)
+
     st.markdown(
-        "<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · 일별 기준 · 값·전일비·전주평균비·전년동요일비</div>",
+        f"<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · 일별 기준(상단 기준시점까지: {_bpu_table_cutoff.strftime('%Y-%m-%d')}) · 값·전일비·전주평균비·전년동요일비</div>",
         unsafe_allow_html=True,
     )
-    render_bpu_comparison_table(df_traffic)
+    render_bpu_comparison_table(df_traffic, selected_period_date=_bpu_table_cutoff)
 
 
 if side["page"].startswith("2"):
