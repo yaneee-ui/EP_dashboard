@@ -10,7 +10,10 @@ import datetime as _dt
 import io
 
 from data_loader import load_data, load_traffic_data, load_category_data, load_brand_names
-from ai_insights import generate_insights, render_overall_summary_box, render_metric_insight
+from ai_insights import (
+    generate_insights, render_overall_summary_box, render_metric_insight,
+    generate_ranking_insights, render_ranking_insight_box,
+)
 from sidebar import render_sidebar
 from filters import filter_by_combo
 from kpi import render_kpi_cards
@@ -213,10 +216,137 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         st.markdown(table_html, unsafe_allow_html=True)
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False):
+def render_line_chart(chart_df, height=350):
+    """줌/팬이 비활성화된 라인 차트.
+    st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
+    Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)"""
+    import altair as alt
+
+    if chart_df is None or chart_df.empty:
+        st.info("표시할 데이터가 없습니다.")
+        return
+
+    cols = list(chart_df.columns)
+    colors = ["#2563eb", "#7dd3fc"][: len(cols)]
+
+    _df = chart_df.copy()
+    _df.index.name = "날짜"
+    long_df = _df.reset_index().melt("날짜", var_name="구분", value_name="값")
+    long_df = long_df.dropna(subset=["값"])
+
+    chart = (
+        alt.Chart(long_df)
+        .mark_line(strokeWidth=2)
+        .encode(
+            x=alt.X("날짜:T", title=None, axis=alt.Axis(format="%m/%d", labelAngle=0)),
+            y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
+            color=alt.Color(
+                "구분:N",
+                scale=alt.Scale(domain=cols, range=colors),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            tooltip=[
+                alt.Tooltip("날짜:T", title="날짜", format="%Y-%m-%d"),
+                alt.Tooltip("구분:N", title="구분"),
+                alt.Tooltip("값:Q", title="값", format=",.0f"),
+            ],
+        )
+        .properties(height=height)
+    )
+    # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
+    st.altair_chart(chart, use_container_width=True)
+
+
+def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300):
+    """순수 SVG 도넛 차트 (외부 라이브러리 없음 → 렌더링 안정적, 휠 줌 없음)."""
+    import math
+
+    total = sum(v for v in values if v and v > 0)
+    if total <= 0:
+        st.info("표시할 데이터가 없습니다.")
+        return
+
+    palette = colors or [
+        "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#7dd3fc",
+        "#38bdf8", "#0ea5e9", "#0284c7", "#a5b4fc", "#c7d2fe", "#e2e8f0",
+    ]
+    cx = cy = size / 2
+    r_outer = size / 2 - 6
+    r_inner = r_outer * 0.62
+
+    def _pt(r, ang):
+        rad = math.radians(ang - 90)
+        return cx + r * math.cos(rad), cy + r * math.sin(rad)
+
+    paths = []
+    start = 0.0
+    for i, (lab, val) in enumerate(zip(labels, values)):
+        if not val or val <= 0:
+            continue
+        frac = val / total
+        end = start + frac * 360
+        # 100%짜리 한 조각이면 원 두 개로 그린다(단일 arc는 그려지지 않음)
+        if frac >= 0.9999:
+            paths.append(
+                f"<circle cx='{cx}' cy='{cy}' r='{(r_outer + r_inner) / 2:.2f}' "
+                f"fill='none' stroke='{palette[i % len(palette)]}' stroke-width='{r_outer - r_inner:.2f}'>"
+                f"<title>{lab}: {val:,.0f} ({frac * 100:.1f}%)</title></circle>"
+            )
+            start = end
+            continue
+        large = 1 if (end - start) > 180 else 0
+        x1, y1 = _pt(r_outer, start)
+        x2, y2 = _pt(r_outer, end)
+        x3, y3 = _pt(r_inner, end)
+        x4, y4 = _pt(r_inner, start)
+        d = (
+            f"M {x1:.2f} {y1:.2f} A {r_outer:.2f} {r_outer:.2f} 0 {large} 1 {x2:.2f} {y2:.2f} "
+            f"L {x3:.2f} {y3:.2f} A {r_inner:.2f} {r_inner:.2f} 0 {large} 0 {x4:.2f} {y4:.2f} Z"
+        )
+        paths.append(
+            f"<path d='{d}' fill='{palette[i % len(palette)]}' stroke='#fff' stroke-width='1.5'>"
+            f"<title>{lab}: {val:,.0f} ({frac * 100:.1f}%)</title></path>"
+        )
+        start = end
+
+    center_html = ""
+    if center_title or center_value:
+        center_html = (
+            f"<text x='{cx}' y='{cy - 6}' text-anchor='middle' font-size='11' fill='#6b7280'>{center_title}</text>"
+            f"<text x='{cx}' y='{cy + 14}' text-anchor='middle' font-size='15' font-weight='700' fill='#111827'>{center_value}</text>"
+        )
+
+    legend_items = []
+    for i, (lab, val) in enumerate(zip(labels, values)):
+        if not val or val <= 0:
+            continue
+        pct = val / total * 100
+        legend_items.append(
+            f"<div style='display:flex;align-items:center;margin-bottom:5px;font-size:0.8rem;'>"
+            f"<span style='display:inline-block;width:10px;height:10px;border-radius:2px;"
+            f"background:{palette[i % len(palette)]};margin-right:7px;flex-shrink:0;'></span>"
+            f"<span style='flex:1;color:#374151;'>{lab}</span>"
+            f"<span style='color:#6b7280;margin-left:10px;'>{val:,.0f}</span>"
+            f"<span style='color:#9ca3af;margin-left:8px;width:48px;text-align:right;'>{pct:.1f}%</span>"
+            f"</div>"
+        )
+
+    st.markdown(
+        f"<div style='display:flex;align-items:center;gap:24px;flex-wrap:wrap;"
+        f"background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
+        f"<svg width='{size}' height='{size}' viewBox='0 0 {size} {size}' style='flex-shrink:0;'>"
+        f"{''.join(paths)}{center_html}</svg>"
+        f"<div style='flex:1;min-width:260px;'>{''.join(legend_items)}</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False):
     """group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
     label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명).
-    hide_zero=True면 올해/작년 거래액이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외."""
+    hide_zero=True면 올해/작년 거래액이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외.
+    ai_key가 주어지면 'AI 인사이트' 버튼과 결과 박스를 함께 표시한다."""
     rows = []
     for name in sorted(sub_df[group_col].unique()):
         s_full = sub_df[sub_df[group_col] == name].set_index("날짜")["거래액"].sort_index()
@@ -249,7 +379,15 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
 
         rows.append({group_col: name, "거래액": cur_val, "전년거래액": prev_val})
 
-    st.markdown(f"**{title}**  ·  <span style='color:#6b7280;font-size:0.85rem'>{subtitle}</span>", unsafe_allow_html=True)
+    if ai_key:
+        _rk_c1, _rk_c2 = st.columns([4, 1])
+        with _rk_c1:
+            st.markdown(f"**{title}**  ·  <span style='color:#6b7280;font-size:0.85rem'>{subtitle}</span>", unsafe_allow_html=True)
+        with _rk_c2:
+            _rk_clicked = st.button("🤖 AI 인사이트", key=f"ai_btn_{ai_key}", use_container_width=True)
+    else:
+        st.markdown(f"**{title}**  ·  <span style='color:#6b7280;font-size:0.85rem'>{subtitle}</span>", unsafe_allow_html=True)
+        _rk_clicked = False
 
     if not rows:
         st.info("해당 조건에 데이터가 없습니다.")
@@ -264,6 +402,33 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         1,
     )
     _yoy_label_share = UNIT_CONFIG[unit]["yoy_label"]
+
+    # --- AI 인사이트 (요청 시) ---
+    if ai_key:
+        _ai_rank_result = None
+        if _rk_clicked:
+            _rank_payload = []
+            for _, r in share_df.iterrows():
+                _nm = r[group_col]
+                _nm_disp = label_map.get(_nm, _nm) if label_map else _nm
+                _yv = None
+                if pd.notna(r["전년거래액"]) and r["전년거래액"] != 0:
+                    _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100
+                _rank_payload.append({
+                    "name": str(_nm_disp),
+                    "current": float(r["거래액"]) if pd.notna(r["거래액"]) else 0.0,
+                    "prev": float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else 0.0,
+                    "share": float(r["비중"]),
+                    "yoy": round(_yv, 1) if _yv is not None else None,
+                })
+            with st.spinner("AI 인사이트 생성 중..."):
+                _ai_rank_result = generate_ranking_insights(
+                    _rank_payload, ai_context or subtitle, f"rank_{ai_key}"
+                )
+                st.session_state[f"ai_rank_result_{ai_key}"] = _ai_rank_result
+        elif f"ai_rank_result_{ai_key}" in st.session_state:
+            _ai_rank_result = st.session_state[f"ai_rank_result_{ai_key}"]
+        render_ranking_insight_box(_ai_rank_result)
 
     bar_rows_html = []
     for _, r in share_df.iterrows():
@@ -297,6 +462,36 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             "</div>"
             "</div>"
         )
+    # --- 도넛 차트 모드: 구성비를 한눈에 + 전년비 상세는 접이식 ---
+    if donut:
+        _top_n = 10
+        _dn = share_df[share_df["거래액"] > 0].copy()
+        _labels, _values = [], []
+        for _, r in _dn.head(_top_n).iterrows():
+            _nm = r[group_col]
+            _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
+            _values.append(float(r["거래액"]))
+        _rest = _dn.iloc[_top_n:]["거래액"].sum() if len(_dn) > _top_n else 0
+        if _rest > 0:
+            _labels.append(f"기타 ({len(_dn) - _top_n}개)")
+            _values.append(float(_rest))
+
+        render_donut_chart(
+            _labels, _values,
+            center_title="총 거래액",
+            center_value=f"{share_df['거래액'].sum():,.0f}",
+        )
+
+        with st.expander(f"📊 전년 대비 상세 보기 ({_yoy_label_share})", expanded=False):
+            st.markdown(
+                "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
+                "<span><span style='display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:2px;margin-right:4px;'></span>올해</span>"
+                "<span><span style='display:inline-block;width:10px;height:10px;background:#7dd3fc;border-radius:2px;margin-right:4px;'></span>작년(동시점)</span>"
+                "</div>" + "".join(bar_rows_html),
+                unsafe_allow_html=True,
+            )
+        return
+
     st.markdown(
         "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
         "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
@@ -424,6 +619,7 @@ with _sticky:
 
         # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
         selected_cat, selected_brand = "전체", "전체"
+        cat_segment = "전체"
         if _is_cat_page and not df_category.empty:
             # 매체필터(bpu) 기준으로 데이터 범위 결정 (자사/입점은 합산)
             if bpu in BPU_GROUPS:
@@ -856,9 +1052,9 @@ if side["page"].startswith("1"):
 
         # 금년=진한 파랑, 전년=하늘색
         if yoy_col_name and show_tr_yoy:
-            st.line_chart(chart_df, height=350, color=["#2563eb", "#7dd3fc"])
+            render_line_chart(chart_df, height=350)
         else:
-            st.line_chart(chart_df, height=350, color=["#2563eb"])
+            render_line_chart(chart_df, height=350)
 
         _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
         _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
@@ -1085,9 +1281,9 @@ if side["page"].startswith("1"):
 
         ep_cols = list(ep_trend.columns)
         if len(ep_cols) > 1:
-            st.line_chart(ep_trend, height=350, color=["#2563eb", "#7dd3fc"])
+            render_line_chart(ep_trend, height=350)
         else:
-            st.line_chart(ep_trend, height=350, color=["#2563eb"])
+            render_line_chart(ep_trend, height=350)
 
         st.markdown(
             f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준"
@@ -1186,17 +1382,52 @@ if side["page"].startswith("2"):
                 ("CR", "구매전환율(%)"),
                 ("객단가", "객단가"),
             ]
+
+            # 1단계: 값/증감 먼저 계산 (AI payload 구성용)
+            _cat_computed = {}
+            for col_name, display_name in CAT_METRICS:
+                s = cat_combo.set_index("날짜")[col_name].sort_index()
+                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                if unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                series = series[series.index <= selected_period_date] if not series.empty else series
+                _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit))
+
+            # 2단계: AI 인사이트 버튼 + 종합 요약
+            _cat_ai_c1, _cat_ai_c2 = st.columns([5, 1])
+            with _cat_ai_c2:
+                _ai_clicked_cat = st.button("🤖 AI 인사이트", key="ai_btn_cat_summary", use_container_width=True)
+            _cfg_cat = UNIT_CONFIG[unit]
+            _ai_payload_cat = []
+            for display_name, (col_name, stats) in _cat_computed.items():
+                if stats:
+                    _is_pct_c = col_name == "CR"
+                    _ai_payload_cat.append({
+                        "name": display_name,
+                        "value": f"{stats['current']:.1f}%" if _is_pct_c else f"{stats['current']:,.0f}",
+                        "prev_label": _cfg_cat["prev_label"], "prev_delta": stats["prev_delta"] or 0,
+                        "yoy_label": _cfg_cat["yoy_label"], "yoy_delta": stats["yoy_delta"] or 0,
+                    })
+            _ai_result_cat = None
+            if _ai_clicked_cat:
+                with st.spinner("AI 인사이트 생성 중..."):
+                    _ai_result_cat = generate_insights(
+                        _ai_payload_cat,
+                        f"카테고리 실적 · {bpu} · {selected_cat}/{brand_label(selected_brand)} · {cat_segment} · {unit} · 기준 {period_label}",
+                        "cat_summary",
+                    )
+                    st.session_state["ai_result_cat_latest"] = _ai_result_cat
+            elif "ai_result_cat_latest" in st.session_state:
+                _ai_result_cat = st.session_state["ai_result_cat_latest"]
+            render_overall_summary_box(_ai_result_cat)
+
+            # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
             cat_cols = st.columns(5)
             for i, (col_name, display_name) in enumerate(CAT_METRICS):
                 with cat_cols[i]:
-                    s = cat_combo.set_index("날짜")[col_name].sort_index()
-                    series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
-                    if unit == "주별":
-                        series.index = series.index - pd.Timedelta(days=6)
-                    elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
-                    series = series[series.index <= selected_period_date] if not series.empty else series
-                    stats = compute_kpi_deltas(series, unit)
+                    _, stats = _cat_computed[display_name]
                     if stats:
                         _is_pct = col_name == "CR"
                         val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
@@ -1211,6 +1442,7 @@ if side["page"].startswith("2"):
                             f"</div></div>",
                             unsafe_allow_html=True,
                         )
+                        render_metric_insight(_ai_result_cat, display_name)
                     else:
                         st.markdown(
                             f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:160px;'>"
@@ -1274,9 +1506,9 @@ if side["page"].startswith("2"):
                         yoy_vals.append(cat_full.loc[cand[-1]] if len(cand) else None)
                 yoy_label_cat = UNIT_CONFIG[unit]["yoy_label"]
                 cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
-                st.line_chart(cat_chart_df, height=350, color=["#2563eb", "#7dd3fc"])
+                render_line_chart(cat_chart_df, height=350)
             else:
-                st.line_chart(cat_chart_df, height=350, color=["#2563eb"])
+                render_line_chart(cat_chart_df, height=350)
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -1321,7 +1553,8 @@ if side["page"].startswith("2"):
         _share_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _share_df = _share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
-        render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준")
+        render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준",
+                               donut=True, ai_key="cat_share", ai_context=f"카테고리별 거래액 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}")
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -1338,7 +1571,9 @@ if side["page"].startswith("2"):
             _brand_share_df = _brand_share_df[_brand_share_df["회원구분"] == "전체"]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
-        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle, label_map=BRAND_LABELS, hide_zero=True)
+        render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle,
+                               label_map=BRAND_LABELS, hide_zero=True,
+                               donut=True, ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}")
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
