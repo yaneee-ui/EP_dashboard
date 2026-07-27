@@ -257,8 +257,10 @@ def render_line_chart(chart_df, height=350):
     st.altair_chart(chart, use_container_width=True)
 
 
-def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300):
-    """순수 SVG 도넛 차트 (외부 라이브러리 없음 → 렌더링 안정적, 휠 줌 없음)."""
+def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
+                       deltas=None, delta_label="", center_sub=""):
+    """순수 SVG 도넛 차트 (외부 라이브러리 없음 → 렌더링 안정적, 휠 줌 없음).
+    deltas가 주어지면 범례에 항목별 전년비 증감(▲/▼)을 함께 표시한다."""
     import math
 
     total = sum(v for v in values if v and v > 0)
@@ -310,10 +312,30 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         start = end
 
     center_html = ""
-    if center_title or center_value:
+    if center_title or center_value or center_sub:
+        _cy_base = cy - 14 if center_sub else cy - 6
         center_html = (
-            f"<text x='{cx}' y='{cy - 6}' text-anchor='middle' font-size='11' fill='#6b7280'>{center_title}</text>"
-            f"<text x='{cx}' y='{cy + 14}' text-anchor='middle' font-size='15' font-weight='700' fill='#111827'>{center_value}</text>"
+            f"<text x='{cx}' y='{_cy_base}' text-anchor='middle' font-size='11' fill='#6b7280'>{center_title}</text>"
+            f"<text x='{cx}' y='{_cy_base + 20}' text-anchor='middle' font-size='15' font-weight='700' fill='#111827'>{center_value}</text>"
+        )
+        if center_sub:
+            center_html += (
+                f"<text x='{cx}' y='{_cy_base + 38}' text-anchor='middle' font-size='10.5' fill='#6b7280'>{center_sub}</text>"
+            )
+
+    _has_delta = deltas is not None
+    header_html = ""
+    if _has_delta:
+        header_html = (
+            "<div style='display:flex;align-items:center;font-size:0.7rem;color:#9ca3af;"
+            "border-bottom:1px solid #f1f2f4;padding-bottom:4px;margin-bottom:6px;'>"
+            "<span style='width:17px;flex-shrink:0;'></span>"
+            "<span style='flex:1;'>항목</span>"
+            "<span style='width:96px;text-align:right;'>올해</span>"
+            "<span style='width:44px;text-align:right;'>비중</span>"
+            "<span style='width:96px;text-align:right;'>작년</span>"
+            f"<span style='width:70px;text-align:right;'>{delta_label or '전년비'}</span>"
+            "</div>"
         )
 
     legend_items = []
@@ -321,22 +343,38 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         if not val or val <= 0:
             continue
         pct = val / total * 100
-        legend_items.append(
-            f"<div style='display:flex;align-items:center;margin-bottom:5px;font-size:0.8rem;'>"
+        row = (
+            f"<div style='display:flex;align-items:center;margin-bottom:5px;font-size:0.78rem;'>"
             f"<span style='display:inline-block;width:10px;height:10px;border-radius:2px;"
             f"background:{palette[i % len(palette)]};margin-right:7px;flex-shrink:0;'></span>"
             f"<span style='flex:1;color:#374151;'>{lab}</span>"
-            f"<span style='color:#6b7280;margin-left:10px;'>{val:,.0f}</span>"
-            f"<span style='color:#9ca3af;margin-left:8px;width:48px;text-align:right;'>{pct:.1f}%</span>"
-            f"</div>"
         )
+        if _has_delta:
+            _d = deltas[i] if i < len(deltas) else None
+            _prev_val = _d.get("prev") if isinstance(_d, dict) else None
+            _yoy_val = _d.get("yoy") if isinstance(_d, dict) else None
+            _prev_str = f"{_prev_val:,.0f}" if _prev_val is not None else "-"
+            _yoy_html = format_delta_html(_yoy_val) if _yoy_val is not None else "<span style='color:#9ca3af'>-</span>"
+            row += (
+                f"<span style='color:#374151;width:96px;text-align:right;'>{val:,.0f}</span>"
+                f"<span style='color:#9ca3af;width:44px;text-align:right;'>{pct:.1f}%</span>"
+                f"<span style='color:#9ca3af;width:96px;text-align:right;'>{_prev_str}</span>"
+                f"<span style='width:70px;text-align:right;'>{_yoy_html}</span>"
+            )
+        else:
+            row += (
+                f"<span style='color:#6b7280;margin-left:10px;'>{val:,.0f}</span>"
+                f"<span style='color:#9ca3af;margin-left:8px;width:48px;text-align:right;'>{pct:.1f}%</span>"
+            )
+        row += "</div>"
+        legend_items.append(row)
 
     st.markdown(
         f"<div style='display:flex;align-items:center;gap:24px;flex-wrap:wrap;"
         f"background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
         f"<svg width='{size}' height='{size}' viewBox='0 0 {size} {size}' style='flex-shrink:0;'>"
         f"{''.join(paths)}{center_html}</svg>"
-        f"<div style='flex:1;min-width:260px;'>{''.join(legend_items)}</div>"
+        f"<div style='flex:1;min-width:{440 if _has_delta else 260}px;'>{header_html}{''.join(legend_items)}</div>"
         f"</div>",
         unsafe_allow_html=True,
     )
@@ -466,23 +504,44 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     if donut:
         _top_n = 10
         _dn = share_df[share_df["거래액"] > 0].copy()
-        _labels, _values = [], []
+        _labels, _values, _deltas = [], [], []
         for _, r in _dn.head(_top_n).iterrows():
             _nm = r[group_col]
             _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
             _values.append(float(r["거래액"]))
-        _rest = _dn.iloc[_top_n:]["거래액"].sum() if len(_dn) > _top_n else 0
-        if _rest > 0:
-            _labels.append(f"기타 ({len(_dn) - _top_n}개)")
-            _values.append(float(_rest))
+            _pv = float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else None
+            _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if (_pv is not None and r["전년거래액"] != 0) else None
+            _deltas.append({"prev": _pv, "yoy": _yv})
+
+        _rest_df = _dn.iloc[_top_n:] if len(_dn) > _top_n else None
+        if _rest_df is not None and len(_rest_df) > 0:
+            _rest_cur = float(_rest_df["거래액"].sum())
+            if _rest_cur > 0:
+                _rest_prev = float(_rest_df["전년거래액"].sum(skipna=True)) if _rest_df["전년거래액"].notna().any() else None
+                _rest_yoy = ((_rest_cur / _rest_prev) - 1) * 100 if (_rest_prev and _rest_prev != 0) else None
+                _labels.append(f"기타 ({len(_rest_df)}개)")
+                _values.append(_rest_cur)
+                _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy})
+
+        # 전체 합계 기준 전년비
+        _tot_cur = float(share_df["거래액"].sum())
+        _tot_prev = float(share_df["전년거래액"].sum(skipna=True)) if share_df["전년거래액"].notna().any() else None
+        if _tot_prev and _tot_prev != 0:
+            _tot_yoy = ((_tot_cur / _tot_prev) - 1) * 100
+            _center_sub = f"{_yoy_label_share} {_tot_yoy:+.1f}%"
+        else:
+            _center_sub = ""
 
         render_donut_chart(
             _labels, _values,
             center_title="총 거래액",
-            center_value=f"{share_df['거래액'].sum():,.0f}",
+            center_value=f"{_tot_cur:,.0f}",
+            center_sub=_center_sub,
+            deltas=_deltas,
+            delta_label=_yoy_label_share,
         )
 
-        with st.expander(f"📊 전년 대비 상세 보기 ({_yoy_label_share})", expanded=False):
+        with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
             st.markdown(
                 "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
                 "<span><span style='display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:2px;margin-right:4px;'></span>올해</span>"
