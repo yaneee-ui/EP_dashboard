@@ -199,3 +199,104 @@ def render_metric_insight(result, metric_name):
             f"border-top:1px dashed #e5e7eb;'>🤖 {insight}</div>",
             unsafe_allow_html=True,
         )
+
+
+def generate_ranking_insights(ranking_rows: list, context_label: str, cache_prefix: str):
+    """
+    카테고리/브랜드 랭킹용 인사이트 생성.
+    ranking_rows: [{"name":"남성", "current": 36329408, "prev": 39092344, "share": 32.9, "yoy": -7.0}, ...]
+    반환: {"overall_summary": str, "top_movers": [str, ...]} 또는 {"error": ...}
+    """
+    api_key = get_api_key()
+    if not api_key:
+        return {"error": "no_api_key"}
+
+    cache_key = f"{cache_prefix}_{_make_cache_key(ranking_rows, context_label)}"
+    if cache_key in st.session_state:
+        return st.session_state[cache_key]
+
+    try:
+        from google import genai
+        from google.genai import types
+
+        client = genai.Client(api_key=api_key)
+
+        lines = []
+        for r in ranking_rows:
+            yoy_txt = f"{r['yoy']:+.1f}%" if r.get("yoy") is not None else "비교불가"
+            lines.append(
+                f"- {r['name']}: 거래액 {r['current']:,.0f} (비중 {r.get('share',0):.1f}%, 전년比 {yoy_txt})"
+            )
+        rows_text = "\n".join(lines)
+
+        prompt = f"""아래는 이커머스 EP(가격비교) 채널의 거래액 랭킹 데이터입니다. 조건: {context_label}
+
+{rows_text}
+
+위 데이터를 분석해 다음 JSON 형식으로만 응답해주세요 (다른 텍스트 없이 JSON만):
+{{
+  "overall_summary": "전체 구성과 흐름을 2~3문장으로 요약. 상위 집중도, 성장/부진 항목, 주목할 변화를 포함.",
+  "top_movers": [
+    "가장 크게 성장한 항목과 그 시사점 (한 문장)",
+    "가장 크게 부진한 항목과 그 시사점 (한 문장)",
+    "그 외 눈여겨볼 포인트 하나 (한 문장)"
+  ]
+}}
+수치를 과장하지 말고 객관적으로, 마케터가 바로 실무에 쓸 수 있는 톤으로 작성하세요."""
+
+        response = None
+        _tried_errors = []
+        _models_to_try = _pick_available_models(client)
+        if not _models_to_try:
+            raise RuntimeError("사용 가능한 Gemini 모델을 찾지 못했습니다.")
+        for _model in _models_to_try:
+            try:
+                response = client.models.generate_content(
+                    model=_model,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.4,
+                        max_output_tokens=800,
+                    ),
+                )
+                break
+            except Exception as _e:
+                _msg = str(_e)
+                _tried_errors.append(f"[{_model}] {_msg[:120]}")
+                continue
+        if response is None:
+            raise RuntimeError("모든 모델 시도 실패 → " + " | ".join(_tried_errors))
+
+        result = json.loads(response.text)
+        st.session_state[cache_key] = result
+        return result
+    except Exception as e:
+        return {"error": str(e)}
+
+
+def render_ranking_insight_box(result):
+    """랭킹 인사이트를 박스로 표시."""
+    if result is None:
+        return
+    if result.get("error") == "no_api_key":
+        st.info("💡 AI 인사이트를 보려면 Gemini API 키를 등록해주세요.")
+        return
+    if "error" in result:
+        st.warning(f"AI 인사이트 생성 실패: {result['error']}")
+        with st.expander("🔍 내 API 키로 사용 가능한 모델 확인하기"):
+            st.code(list_available_models_text())
+        return
+
+    summary = result.get("overall_summary", "")
+    movers = result.get("top_movers", []) or []
+    movers_html = "".join(f"<li style='margin-bottom:3px;'>{m}</li>" for m in movers)
+    st.markdown(
+        f"<div style='background:linear-gradient(135deg,#eef2ff,#f5f3ff);border:1px solid #ddd6fe;"
+        f"border-radius:10px;padding:14px 18px;margin:8px 0 16px 0;'>"
+        f"<div style='font-size:0.78rem;color:#7c3aed;font-weight:700;margin-bottom:4px;'>🤖 AI 인사이트</div>"
+        f"<div style='font-size:0.88rem;color:#374151;line-height:1.5;margin-bottom:8px;'>{summary}</div>"
+        f"<ul style='font-size:0.82rem;color:#4b5563;margin:0;padding-left:18px;'>{movers_html}</ul>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
