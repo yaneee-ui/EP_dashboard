@@ -56,6 +56,14 @@ def render_sidebar():
     st.sidebar.caption("업로드가 반영 안 될 때 눌러주세요.")
     refresh = st.sidebar.button("다시 읽기", use_container_width=True)
 
+    st.sidebar.divider()
+    st.sidebar.markdown("**🤖 AI 인사이트**")
+    st.sidebar.caption(
+        "실적 요약 화면의 'AI 인사이트' 버튼으로 자동 요약을 볼 수 있어요. "
+        "Streamlit Cloud의 Settings → Secrets에 `GEMINI_API_KEY`를 등록하면 활성화돼요 "
+        "(aistudio.google.com에서 무료 발급)."
+    )
+
     return {
         "view_unit": view_unit,
         "page": page,
