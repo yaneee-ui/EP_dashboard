@@ -68,8 +68,8 @@ def generate_insights(metrics_payload: list, context_label: str, cache_prefix: s
 지표명은 위에 나열된 이름을 정확히 그대로 사용하세요. 수치를 과장하지 말고 객관적으로 작성하세요."""
 
         response = None
-        last_err = None
-        for _model in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+        _tried_errors = []
+        for _model in ["gemini-2.5-flash", "gemini-2.5-flash-lite", "gemini-2.0-flash"]:
             try:
                 response = client.models.generate_content(
                     model=_model,
@@ -82,10 +82,10 @@ def generate_insights(metrics_payload: list, context_label: str, cache_prefix: s
                 )
                 break
             except Exception as _e:
-                last_err = _e
+                _tried_errors.append(f"[{_model}] {_e}")
                 continue
         if response is None:
-            raise last_err
+            raise RuntimeError(" | ".join(_tried_errors))
         result = json.loads(response.text)
         st.session_state[cache_key] = result
         return result
