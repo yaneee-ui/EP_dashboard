@@ -10,6 +10,7 @@ import datetime as _dt
 import io
 
 from data_loader import load_data, load_traffic_data, load_category_data, load_brand_names
+from ai_insights import generate_insights, render_overall_summary_box, render_metric_insight
 from sidebar import render_sidebar
 from filters import filter_by_combo
 from kpi import render_kpi_cards
@@ -718,24 +719,53 @@ if side["page"].startswith("1"):
             ("CR", "구매전환율(%)"),
             ("객단가", "객단가"),
         ]
-
-        kpi_cols = st.columns(5)
         all_items = TRAFFIC_METRICS
 
+        # 1단계: 값/증감 먼저 계산 (AI 인사이트용 payload 구성)
+        _kpi_computed = {}
+        for col_name, display_name in all_items:
+            s = tr_combo.set_index("날짜")[col_name].sort_index()
+            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            if unit == "주별":
+                series.index = series.index - pd.Timedelta(days=6)
+            elif unit == "월마감":
+                if not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+            if not series.empty:
+                series = series[series.index <= selected_period_date]
+            stats = compute_kpi_deltas(series, unit)
+            _kpi_computed[display_name] = (col_name, stats)
+
+        # 2단계: AI 인사이트 버튼 + 종합 요약
+        _ai_col1, _ai_col2 = st.columns([5, 1])
+        with _ai_col2:
+            _ai_clicked_ep = st.button("🤖 AI 인사이트", key="ai_btn_ep_summary", use_container_width=True)
+        _ai_context_ep = f"실적요약 · {bpu} · {segment} · {unit} · 기준 {period_label}"
+        _ai_payload_ep = []
+        cfg = UNIT_CONFIG[unit]
+        for display_name, (col_name, stats) in _kpi_computed.items():
+            if stats:
+                _is_pct_tmp = col_name == "CR"
+                _val_str_tmp = f"{stats['current']:.1f}%" if _is_pct_tmp else f"{stats['current']:,.0f}"
+                _ai_payload_ep.append({
+                    "name": display_name, "value": _val_str_tmp,
+                    "prev_label": cfg["prev_label"], "prev_delta": stats["prev_delta"] or 0,
+                    "yoy_label": cfg["yoy_label"], "yoy_delta": stats["yoy_delta"] or 0,
+                })
+        _ai_result_ep = None
+        if _ai_clicked_ep:
+            with st.spinner("AI 인사이트 생성 중..."):
+                _ai_result_ep = generate_insights(_ai_payload_ep, _ai_context_ep, "ep_summary")
+                st.session_state["ai_result_ep_latest"] = _ai_result_ep
+        elif "ai_result_ep_latest" in st.session_state:
+            _ai_result_ep = st.session_state["ai_result_ep_latest"]
+        render_overall_summary_box(_ai_result_ep)
+
+        # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
+        kpi_cols = st.columns(5)
         for i, (col_name, display_name) in enumerate(all_items):
             with kpi_cols[i]:
-                s = tr_combo.set_index("날짜")[col_name].sort_index()
-                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감":
-                    if not series.empty and s.index.max() < series.index[-1]:
-                        series = series.iloc[:-1]
-                # 월마감에서 특정 월 선택 시, 그 월까지로 자르기
-                if not series.empty:
-                    series = series[series.index <= selected_period_date]
-
-                stats = compute_kpi_deltas(series, unit)
+                _, stats = _kpi_computed[display_name]
                 if stats:
                     _is_pct = col_name == "CR"
                     if _is_pct:
@@ -757,6 +787,7 @@ if side["page"].startswith("1"):
                         f"</div></div>",
                         unsafe_allow_html=True,
                     )
+                    render_metric_insight(_ai_result_ep, display_name)
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
