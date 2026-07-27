@@ -1119,7 +1119,7 @@ if side["page"].startswith("2"):
             cat_bpu_df = cat_bpu_df[cat_bpu_df["회원구분"] == cat_segment]
 
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
-        if bpu == "Total" and not cat_combo.empty:
+        if (bpu == "Total" or bpu in BPU_GROUPS) and not cat_combo.empty:
             cat_combo = cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
             cat_combo["CR"] = (cat_combo["구매객수"] / cat_combo["트래픽"] * 100).where(cat_combo["트래픽"] > 0, 0)
             cat_combo["객단가"] = (cat_combo["거래액"] / cat_combo["구매객수"]).where(cat_combo["구매객수"] > 0, 0)
@@ -1273,7 +1273,7 @@ if side["page"].startswith("2"):
 
         # --- 카테고리별 거래액 비중 (브랜드=전체 기준, 선택 시점까지) ---
         _share_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
-        if bpu == "Total":
+        if bpu == "Total" or bpu in BPU_GROUPS:
             _share_df = _share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
         render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준")
 
@@ -1290,7 +1290,7 @@ if side["page"].startswith("2"):
             _brand_subtitle = f"{bpu} · {selected_cat} 카테고리 기준"
         if _has_segment:
             _brand_share_df = _brand_share_df[_brand_share_df["회원구분"] == "전체"]
-        if bpu == "Total":
+        if bpu == "Total" or bpu in BPU_GROUPS:
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
         render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle, label_map=BRAND_LABELS, hide_zero=True)
 
@@ -1459,7 +1459,7 @@ if side["page"].startswith("4"):
             _cum_cat_df = _cum_cat_df[_cum_cat_df["회원구분"] == cum_segment]
 
         _cum_cat_combo = _cum_cat_df[(_cum_cat_df["카테고리"] == selected_cat) & (_cum_cat_df["브랜드"] == selected_brand)]
-        if bpu == "Total" and not _cum_cat_combo.empty:
+        if (bpu == "Total" or bpu in BPU_GROUPS) and not _cum_cat_combo.empty:
             _cum_cat_combo = _cum_cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
             _cum_cat_combo["CR"] = (_cum_cat_combo["구매객수"] / _cum_cat_combo["트래픽"] * 100).where(_cum_cat_combo["트래픽"] > 0, 0)
             _cum_cat_combo["객단가"] = (_cum_cat_combo["거래액"] / _cum_cat_combo["구매객수"]).where(_cum_cat_combo["구매객수"] > 0, 0)
