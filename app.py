@@ -147,10 +147,10 @@ def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드
     )
 
 
-def render_bpu_comparison_table(df_traffic, selected_period_date=None):
+def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=None):
     """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
-    지표(EP UV/회원UV/거래액/구매객수/구매전환율/객단가) x 각각 [값/전일비/전주평균비/전년동요일비].
-    selected_period_date가 주어지면 그 날짜까지의 데이터로 값/증감을 계산한다(상단 '기준 시점' 반영)."""
+    상단의 '조회 단위'(일별/주별/월별/월마감)와 '기준 시점'을 그대로 따른다.
+    → 위 KPI 카드/요약표와 동일한 집계 방식이므로 Total 열은 KPI 카드 값과 일치한다."""
     BPU_COLS = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
     METRICS = [
         ("트래픽", "전체", "EP UV", False),
@@ -160,6 +160,7 @@ def render_bpu_comparison_table(df_traffic, selected_period_date=None):
         ("CR", "전체", "구매전환율(%)", True),
         ("객단가", "전체", "객단가", False),
     ]
+    cfg = UNIT_CONFIG[unit]
 
     def _series_for(bpu_key, metric, member="전체"):
         if bpu_key in BPU_GROUPS:
@@ -168,7 +169,14 @@ def render_bpu_comparison_table(df_traffic, selected_period_date=None):
             sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == member)]
         if sub.empty:
             return pd.Series(dtype="float64")
-        series = sub.set_index("날짜")[metric].sort_index().resample("D").mean()
+        # KPI 카드와 동일한 집계 로직 (조회 단위 반영)
+        s = sub.set_index("날짜")[metric].sort_index()
+        series = s.resample(cfg["rule"]).mean()
+        if unit == "주별":
+            series.index = series.index - pd.Timedelta(days=6)
+        elif unit == "월마감":
+            if not series.empty and s.index.max() < series.index[-1]:
+                series = series.iloc[:-1]
         if selected_period_date is not None and not series.empty:
             series = series[series.index <= selected_period_date]
         return series
@@ -178,7 +186,7 @@ def render_bpu_comparison_table(df_traffic, selected_period_date=None):
         row_val, row_prev, row_avg, row_yoy = [], [], [], []
         for bpu_key in BPU_COLS:
             series = _series_for(bpu_key, metric_key, member)
-            stats = compute_kpi_deltas(series, "일별")
+            stats = compute_kpi_deltas(series, unit)
             if stats is None:
                 row_val.append("<td>-</td>")
                 row_prev.append("<td>-</td>")
@@ -197,9 +205,9 @@ def render_bpu_comparison_table(df_traffic, selected_period_date=None):
             f"<tr>{header_html}</tr></thead>"
             "<tbody>"
             f"<tr><td class='m'>값</td>{''.join(row_val)}</tr>"
-            f"<tr><td class='m'>전일비</td>{''.join(row_prev)}</tr>"
-            f"<tr><td class='m'>전주평균비</td>{''.join(row_avg)}</tr>"
-            f"<tr><td class='m'>전년동요일비</td>{''.join(row_yoy)}</tr>"
+            f"<tr><td class='m'>{cfg['prev_label']}</td>{''.join(row_prev)}</tr>"
+            f"<tr><td class='m'>{cfg['avg_label']}</td>{''.join(row_avg)}</tr>"
+            f"<tr><td class='m'>{cfg['yoy_label']}</td>{''.join(row_yoy)}</tr>"
             "</tbody></table>"
         )
         st.markdown(table_html, unsafe_allow_html=True)
@@ -1119,24 +1127,14 @@ if side["page"].startswith("1"):
 
     st.markdown("---")
     st.markdown("### 🏢 사업부별 실적 비교", unsafe_allow_html=True)
-
-    # 이 표는 항상 '일별' 기준이므로, 상단에서 선택한 기준시점(주/월 라벨)을
-    # 그 기간의 실제 마지막 날짜로 변환해서 컷오프로 사용 (미완성 기간은 최신 데이터까지)
-    if unit == "일별":
-        _bpu_table_cutoff = selected_period_date
-    elif unit == "주별":
-        _bpu_table_cutoff = min(selected_period_date + pd.Timedelta(days=6), last_date_tr)
-    elif unit == "월마감":
-        _bpu_table_cutoff = selected_period_date + pd.offsets.MonthEnd(0)
-    else:  # 월별
-        _month_end = selected_period_date + pd.offsets.MonthEnd(0)
-        _bpu_table_cutoff = min(_month_end, last_date_tr)
-
+    _bpu_cfg = UNIT_CONFIG[unit]
     st.markdown(
-        f"<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · 일별 기준(상단 기준시점까지: {_bpu_table_cutoff.strftime('%Y-%m-%d')}) · 값·전일비·전주평균비·전년동요일비</div>",
+        f"<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · "
+        f"<b>{unit}</b> 기준 · 기준시점: <b>{period_label}</b> · "
+        f"값·{_bpu_cfg['prev_label']}·{_bpu_cfg['avg_label']}·{_bpu_cfg['yoy_label']}</div>",
         unsafe_allow_html=True,
     )
-    render_bpu_comparison_table(df_traffic, selected_period_date=_bpu_table_cutoff)
+    render_bpu_comparison_table(df_traffic, unit=unit, selected_period_date=selected_period_date)
 
 
 if side["page"].startswith("2"):
