@@ -19,8 +19,11 @@ def get_api_key():
 
 
 def _make_cache_key(metrics_payload: list, context_label: str) -> str:
-    """동일 데이터 재호출 방지용 캐시 키."""
-    raw = context_label + json.dumps(metrics_payload, sort_keys=True, ensure_ascii=False)
+    """동일 데이터 재호출 방지용 캐시 키.
+    pandas/numpy 스칼라(np.float32 등)는 JSON 직렬화가 안 되므로 default=str로 안전 처리."""
+    raw = context_label + json.dumps(
+        metrics_payload, sort_keys=True, ensure_ascii=False, default=str
+    )
     return hashlib.md5(raw.encode("utf-8")).hexdigest()
 
 
