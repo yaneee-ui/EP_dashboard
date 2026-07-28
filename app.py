@@ -150,6 +150,24 @@ def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드
     )
 
 
+def _truncate_by_range(series, cum_start, cum_end, cum_unit):
+    """누적 데이터의 시작일/종료일 필터를 적용.
+    월별/월마감은 리샘플 라벨이 '그 달의 말일'이라, 종료일이 월중(예: 7/27)이면
+    라벨(7/31)이 종료일보다 커서 그 달 전체가 잘못 걸러지는 문제가 있었음.
+    → 월 단위(연-월)로 비교해 종료월이 포함되면 살리도록 수정.
+    """
+    if series.empty:
+        return series
+    start_ts = pd.Timestamp(cum_start)
+    end_ts = pd.Timestamp(cum_end)
+    if cum_unit in ("월별", "월마감"):
+        mask = (series.index.to_period("M") >= start_ts.to_period("M")) & \
+               (series.index.to_period("M") <= end_ts.to_period("M"))
+    else:
+        mask = (series.index >= start_ts) & (series.index <= end_ts)
+    return series[mask]
+
+
 def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=None):
     """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
     상단의 '조회 단위'(일별/주별/월별/월마감)와 '기준 시점'을 그대로 따른다.
@@ -216,10 +234,11 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         st.markdown(table_html, unsafe_allow_html=True)
 
 
-def render_line_chart(chart_df, height=350):
-    """줌/팬이 비활성화된 라인 차트.
+def render_line_chart(chart_df, height=350, unit="일별"):
+    """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
-    Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)"""
+    Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)
+    unit이 '월별'/'월마감'이면 x축을 월 단위(연-월)로 표시한다."""
     import altair as alt
 
     if chart_df is None or chart_df.empty:
@@ -234,11 +253,22 @@ def render_line_chart(chart_df, height=350):
     long_df = _df.reset_index().melt("날짜", var_name="구분", value_name="값")
     long_df = long_df.dropna(subset=["값"])
 
+    _is_monthly = unit in ("월별", "월마감")
+    if _is_monthly:
+        x_enc = alt.X(
+            "날짜:T", title=None, timeUnit="yearmonth",
+            axis=alt.Axis(format="%Y-%m", labelAngle=0),
+        )
+        _date_fmt = "%Y-%m"
+    else:
+        x_enc = alt.X("날짜:T", title=None, axis=alt.Axis(format="%m/%d", labelAngle=0))
+        _date_fmt = "%Y-%m-%d"
+
     chart = (
         alt.Chart(long_df)
-        .mark_line(strokeWidth=2)
+        .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True, opacity=1))
         .encode(
-            x=alt.X("날짜:T", title=None, axis=alt.Axis(format="%m/%d", labelAngle=0)),
+            x=x_enc,
             y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
             color=alt.Color(
                 "구분:N",
@@ -246,7 +276,7 @@ def render_line_chart(chart_df, height=350):
                 legend=alt.Legend(orient="bottom", title=None),
             ),
             tooltip=[
-                alt.Tooltip("날짜:T", title="날짜", format="%Y-%m-%d"),
+                alt.Tooltip("날짜:T", title="날짜", format=_date_fmt),
                 alt.Tooltip("구분:N", title="구분"),
                 alt.Tooltip("값:Q", title="값", format=",.0f"),
             ],
@@ -1183,9 +1213,9 @@ if side["page"].startswith("1"):
 
         # 금년=진한 파랑, 전년=하늘색
         if yoy_col_name and show_tr_yoy:
-            render_line_chart(chart_df, height=350)
+            render_line_chart(chart_df, height=350, unit=unit)
         else:
-            render_line_chart(chart_df, height=350)
+            render_line_chart(chart_df, height=350, unit=unit)
 
         _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
         _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
@@ -1414,9 +1444,9 @@ if side["page"].startswith("1"):
 
         ep_cols = list(ep_trend.columns)
         if len(ep_cols) > 1:
-            render_line_chart(ep_trend, height=350)
+            render_line_chart(ep_trend, height=350, unit=unit)
         else:
-            render_line_chart(ep_trend, height=350)
+            render_line_chart(ep_trend, height=350, unit=unit)
 
         st.markdown(
             f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준"
@@ -1638,9 +1668,9 @@ if side["page"].startswith("2"):
                         yoy_vals.append(cat_full.loc[cand[-1]] if len(cand) else None)
                 yoy_label_cat = UNIT_CONFIG[unit]["yoy_label"]
                 cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
-                render_line_chart(cat_chart_df, height=350)
+                render_line_chart(cat_chart_df, height=350, unit=unit)
             else:
-                render_line_chart(cat_chart_df, height=350)
+                render_line_chart(cat_chart_df, height=350, unit=unit)
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -1740,7 +1770,7 @@ if side["page"].startswith("3"):
                 series.index = series.index - pd.Timedelta(days=6)
             elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                 series = series.iloc[:-1]
-            series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+            series = _truncate_by_range(series, cum_start, cum_end, cum_unit)
             base_series[base_metric] = series
             tr_table_rows[base_metric] = series
 
@@ -1754,7 +1784,7 @@ if side["page"].startswith("3"):
                 series_sum.index = series_sum.index - pd.Timedelta(days=6)
             elif cum_unit == "월마감" and not series_sum.empty and s.index.max() < series_sum.index[-1]:
                 series_sum = series_sum.iloc[:-1]
-            series_sum = series_sum[(series_sum.index >= pd.Timestamp(cum_start)) & (series_sum.index <= pd.Timestamp(cum_end))]
+            series_sum = _truncate_by_range(series_sum, cum_start, cum_end, cum_unit)
             _sum_series[base_metric] = series_sum
         tr_table_rows["CR"] = (_sum_series["구매객수"] / _sum_series["트래픽"] * 100).replace([float("inf")], None)
         tr_table_rows["객단가"] = (_sum_series["거래액"] / _sum_series["구매객수"]).replace([float("inf")], None)
@@ -1777,7 +1807,7 @@ if side["page"].startswith("3"):
                 series.index = series.index - pd.Timedelta(days=6)
             elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                 series = series.iloc[:-1]
-            series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+            series = _truncate_by_range(series, cum_start, cum_end, cum_unit)
             ep_table_rows[base_metric] = series
 
         # 원부매칭율/최저가율은 일평균/누적 모드와 무관하게 항상 기간 합계 기반으로 재계산
@@ -1789,7 +1819,7 @@ if side["page"].startswith("3"):
                 series_sum.index = series_sum.index - pd.Timedelta(days=6)
             elif cum_unit == "월마감" and not series_sum.empty and s.index.max() < series_sum.index[-1]:
                 series_sum = series_sum.iloc[:-1]
-            series_sum = series_sum[(series_sum.index >= pd.Timestamp(cum_start)) & (series_sum.index <= pd.Timestamp(cum_end))]
+            series_sum = _truncate_by_range(series_sum, cum_start, cum_end, cum_unit)
             ep_base_sum[base_metric] = series_sum
         ep_table_rows["원부매칭율(%)"] = (ep_base_sum["평균 원부매칭 상품수"] / ep_base_sum["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
         ep_table_rows["최저가율(%)"] = (ep_base_sum["평균 최저가 상품수"] / ep_base_sum["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
@@ -1893,7 +1923,7 @@ if side["page"].startswith("4"):
                     series.index = series.index - pd.Timedelta(days=6)
                 elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                     series = series.iloc[:-1]
-                series = series[(series.index >= pd.Timestamp(cum_start)) & (series.index <= pd.Timestamp(cum_end))]
+                series = _truncate_by_range(series, cum_start, cum_end, cum_unit)
                 cat_table_rows[base_metric] = series
 
             # CR/객단가는 일평균/누적 모드와 무관하게 항상 기간 합계 기반으로 재계산
@@ -1905,7 +1935,7 @@ if side["page"].startswith("4"):
                     series_sum.index = series_sum.index - pd.Timedelta(days=6)
                 elif cum_unit == "월마감" and not series_sum.empty and s.index.max() < series_sum.index[-1]:
                     series_sum = series_sum.iloc[:-1]
-                series_sum = series_sum[(series_sum.index >= pd.Timestamp(cum_start)) & (series_sum.index <= pd.Timestamp(cum_end))]
+                series_sum = _truncate_by_range(series_sum, cum_start, cum_end, cum_unit)
                 cat_base_sum[base_metric] = series_sum
             cat_table_rows["CR"] = (cat_base_sum["구매객수"] / cat_base_sum["트래픽"] * 100).replace([float("inf")], None)
             cat_table_rows["객단가"] = (cat_base_sum["거래액"] / cat_base_sum["구매객수"]).replace([float("inf")], None)
