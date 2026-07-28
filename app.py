@@ -259,9 +259,12 @@ def render_line_chart(chart_df, height=350):
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
                        deltas=None, delta_label="", center_sub=""):
-    """순수 SVG 도넛 차트 (외부 라이브러리 없음 → 렌더링 안정적, 휠 줌 없음).
-    deltas가 주어지면 범례에 항목별 전년비 증감(▲/▼)을 함께 표시한다."""
+    """클릭 가능한 SVG 도넛 차트.
+    - 조각이나 범례를 클릭하면 해당 항목이 강조되고 나머지는 흐려진다(다시 클릭하면 해제).
+    - deltas가 주어지면 범례에 항목별 전년 거래액/전년비 증감을 함께 표시한다.
+    - JS 동작이 필요하므로 components.html(iframe)로 렌더링한다."""
     import math
+    import html as _html
 
     total = sum(v for v in values if v and v > 0)
     if total <= 0:
@@ -282,20 +285,29 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
 
     paths = []
     start = 0.0
+    visible_idx = []
     for i, (lab, val) in enumerate(zip(labels, values)):
         if not val or val <= 0:
             continue
+        visible_idx.append(i)
         frac = val / total
         end = start + frac * 360
-        # 100%짜리 한 조각이면 원 두 개로 그린다(단일 arc는 그려지지 않음)
+        mid = (start + end) / 2
+        # 선택 시 바깥으로 살짝 튀어나오는 오프셋
+        _mrad = math.radians(mid - 90)
+        pop = f"translate({math.cos(_mrad) * 9:.2f}px, {math.sin(_mrad) * 9:.2f}px)"
+        tip = _html.escape(f"{lab}: {val:,.0f} ({frac * 100:.1f}%)")
+        color = palette[i % len(palette)]
+
         if frac >= 0.9999:
             paths.append(
-                f"<circle cx='{cx}' cy='{cy}' r='{(r_outer + r_inner) / 2:.2f}' "
-                f"fill='none' stroke='{palette[i % len(palette)]}' stroke-width='{r_outer - r_inner:.2f}'>"
-                f"<title>{lab}: {val:,.0f} ({frac * 100:.1f}%)</title></circle>"
+                f"<circle class='seg' data-i='{i}' data-pop='{pop}' cx='{cx}' cy='{cy}' "
+                f"r='{(r_outer + r_inner) / 2:.2f}' fill='none' stroke='{color}' "
+                f"stroke-width='{r_outer - r_inner:.2f}'><title>{tip}</title></circle>"
             )
             start = end
             continue
+
         large = 1 if (end - start) > 180 else 0
         x1, y1 = _pt(r_outer, start)
         x2, y2 = _pt(r_outer, end)
@@ -306,8 +318,8 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             f"L {x3:.2f} {y3:.2f} A {r_inner:.2f} {r_inner:.2f} 0 {large} 0 {x4:.2f} {y4:.2f} Z"
         )
         paths.append(
-            f"<path d='{d}' fill='{palette[i % len(palette)]}' stroke='#fff' stroke-width='1.5'>"
-            f"<title>{lab}: {val:,.0f} ({frac * 100:.1f}%)</title></path>"
+            f"<path class='seg' data-i='{i}' data-pop='{pop}' d='{d}' fill='{color}' "
+            f"stroke='#fff' stroke-width='1.5'><title>{tip}</title></path>"
         )
         start = end
 
@@ -315,28 +327,37 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     if center_title or center_value or center_sub:
         _cy_base = cy - 14 if center_sub else cy - 6
         center_html = (
-            f"<text x='{cx}' y='{_cy_base}' text-anchor='middle' font-size='11' fill='#6b7280'>{center_title}</text>"
-            f"<text x='{cx}' y='{_cy_base + 20}' text-anchor='middle' font-size='15' font-weight='700' fill='#111827'>{center_value}</text>"
+            f"<text x='{cx}' y='{_cy_base}' text-anchor='middle' font-size='11' fill='#6b7280' "
+            f"style='pointer-events:none'>{_html.escape(center_title)}</text>"
+            f"<text x='{cx}' y='{_cy_base + 20}' text-anchor='middle' font-size='15' font-weight='700' "
+            f"fill='#111827' style='pointer-events:none'>{_html.escape(center_value)}</text>"
         )
         if center_sub:
             center_html += (
-                f"<text x='{cx}' y='{_cy_base + 38}' text-anchor='middle' font-size='10.5' fill='#6b7280'>{center_sub}</text>"
+                f"<text x='{cx}' y='{_cy_base + 38}' text-anchor='middle' font-size='10.5' "
+                f"fill='#6b7280' style='pointer-events:none'>{_html.escape(center_sub)}</text>"
             )
 
     _has_delta = deltas is not None
     header_html = ""
     if _has_delta:
         header_html = (
-            "<div style='display:flex;align-items:center;font-size:0.7rem;color:#9ca3af;"
-            "border-bottom:1px solid #f1f2f4;padding-bottom:4px;margin-bottom:6px;'>"
+            "<div class='lg-head'>"
             "<span style='width:17px;flex-shrink:0;'></span>"
             "<span style='flex:1;'>항목</span>"
             "<span style='width:96px;text-align:right;'>올해</span>"
             "<span style='width:44px;text-align:right;'>비중</span>"
             "<span style='width:96px;text-align:right;'>작년</span>"
-            f"<span style='width:70px;text-align:right;'>{delta_label or '전년비'}</span>"
+            f"<span style='width:70px;text-align:right;'>{_html.escape(delta_label or '전년비')}</span>"
             "</div>"
         )
+
+    def _delta_span(v):
+        if v is None:
+            return "<span style='color:#9ca3af'>-</span>"
+        color = "#16a34a" if v >= 0 else "#dc2626"
+        arrow = "▲" if v >= 0 else "▼"
+        return f"<span style='color:{color};font-weight:600'>{arrow} {abs(v):.1f}%</span>"
 
     legend_items = []
     for i, (lab, val) in enumerate(zip(labels, values)):
@@ -344,22 +365,20 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             continue
         pct = val / total * 100
         row = (
-            f"<div style='display:flex;align-items:center;margin-bottom:5px;font-size:0.78rem;'>"
-            f"<span style='display:inline-block;width:10px;height:10px;border-radius:2px;"
-            f"background:{palette[i % len(palette)]};margin-right:7px;flex-shrink:0;'></span>"
-            f"<span style='flex:1;color:#374151;'>{lab}</span>"
+            f"<div class='lg' data-i='{i}'>"
+            f"<span class='dot' style='background:{palette[i % len(palette)]};'></span>"
+            f"<span style='flex:1;color:#374151;'>{_html.escape(str(lab))}</span>"
         )
         if _has_delta:
             _d = deltas[i] if i < len(deltas) else None
             _prev_val = _d.get("prev") if isinstance(_d, dict) else None
             _yoy_val = _d.get("yoy") if isinstance(_d, dict) else None
             _prev_str = f"{_prev_val:,.0f}" if _prev_val is not None else "-"
-            _yoy_html = format_delta_html(_yoy_val) if _yoy_val is not None else "<span style='color:#9ca3af'>-</span>"
             row += (
                 f"<span style='color:#374151;width:96px;text-align:right;'>{val:,.0f}</span>"
                 f"<span style='color:#9ca3af;width:44px;text-align:right;'>{pct:.1f}%</span>"
                 f"<span style='color:#9ca3af;width:96px;text-align:right;'>{_prev_str}</span>"
-                f"<span style='width:70px;text-align:right;'>{_yoy_html}</span>"
+                f"<span style='width:70px;text-align:right;'>{_delta_span(_yoy_val)}</span>"
             )
         else:
             row += (
@@ -369,15 +388,66 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         row += "</div>"
         legend_items.append(row)
 
-    st.markdown(
-        f"<div style='display:flex;align-items:center;gap:24px;flex-wrap:wrap;"
-        f"background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
-        f"<svg width='{size}' height='{size}' viewBox='0 0 {size} {size}' style='flex-shrink:0;'>"
-        f"{''.join(paths)}{center_html}</svg>"
-        f"<div style='flex:1;min-width:{440 if _has_delta else 260}px;'>{header_html}{''.join(legend_items)}</div>"
-        f"</div>",
-        unsafe_allow_html=True,
-    )
+    n_rows = len(legend_items)
+    frame_h = int(max(size + 46, 70 + n_rows * 25 + (24 if _has_delta else 0)))
+    legend_min = 440 if _has_delta else 260
+
+    doc = f"""
+<!DOCTYPE html><html><head><meta charset='utf-8'><style>
+  * {{ box-sizing:border-box; }}
+  body {{ margin:0; font-family:'Source Sans Pro','Apple SD Gothic Neo','Malgun Gothic',sans-serif; }}
+  .wrap {{ display:flex; align-items:center; gap:24px; flex-wrap:wrap;
+          background:#fff; border:1px solid #e5e7eb; border-radius:10px; padding:16px 20px; }}
+  svg {{ flex-shrink:0; }}
+  .seg {{ cursor:pointer; transition:opacity .15s ease, transform .15s ease; }}
+  .seg.dim {{ opacity:.22; }}
+  .legend {{ flex:1; min-width:{legend_min}px; }}
+  .lg-head {{ display:flex; align-items:center; font-size:11px; color:#9ca3af;
+              border-bottom:1px solid #f1f2f4; padding-bottom:4px; margin-bottom:6px; }}
+  .lg {{ display:flex; align-items:center; margin-bottom:4px; font-size:12.5px;
+         cursor:pointer; border-radius:5px; padding:2px 5px; transition:opacity .15s, background .15s; }}
+  .lg:hover {{ background:#f8fafc; }}
+  .lg.sel {{ background:#eef2ff; font-weight:600; }}
+  .lg.dim {{ opacity:.4; }}
+  .dot {{ display:inline-block; width:10px; height:10px; border-radius:2px;
+          margin-right:7px; flex-shrink:0; }}
+  .hint {{ font-size:10.5px; color:#9ca3af; margin-top:8px; }}
+</style></head><body>
+<div class='wrap'>
+  <svg width='{size}' height='{size}' viewBox='0 0 {size} {size}'>{''.join(paths)}{center_html}</svg>
+  <div class='legend'>{header_html}{''.join(legend_items)}
+    <div class='hint'>💡 조각이나 항목을 클릭하면 해당 항목만 강조됩니다 (다시 클릭하면 해제)</div>
+  </div>
+</div>
+<script>
+(function() {{
+  var sel = null;
+  var segs = Array.prototype.slice.call(document.querySelectorAll('.seg'));
+  var lgs  = Array.prototype.slice.call(document.querySelectorAll('.lg'));
+  function apply() {{
+    segs.forEach(function(s) {{
+      var i = parseInt(s.getAttribute('data-i'), 10);
+      if (sel === null) {{ s.classList.remove('dim'); s.style.transform = ''; }}
+      else if (i === sel) {{ s.classList.remove('dim'); s.style.transform = s.getAttribute('data-pop'); }}
+      else {{ s.classList.add('dim'); s.style.transform = ''; }}
+    }});
+    lgs.forEach(function(l) {{
+      var i = parseInt(l.getAttribute('data-i'), 10);
+      l.classList.toggle('sel', sel === i);
+      l.classList.toggle('dim', sel !== null && i !== sel);
+    }});
+  }}
+  function toggle(i) {{ sel = (sel === i) ? null : i; apply(); }}
+  segs.forEach(function(s) {{
+    s.addEventListener('click', function() {{ toggle(parseInt(s.getAttribute('data-i'), 10)); }});
+  }});
+  lgs.forEach(function(l) {{
+    l.addEventListener('click', function() {{ toggle(parseInt(l.getAttribute('data-i'), 10)); }});
+  }});
+}})();
+</script></body></html>
+"""
+    components.html(doc, height=frame_h, scrolling=False)
 
 
 def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False):
@@ -457,7 +527,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                     "current": float(r["거래액"]) if pd.notna(r["거래액"]) else 0.0,
                     "prev": float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else 0.0,
                     "share": float(r["비중"]),
-                    "yoy": round(_yv, 1) if _yv is not None else None,
+                    "yoy": round(float(_yv), 1) if _yv is not None else None,
                 })
             with st.spinner("AI 인사이트 생성 중..."):
                 _ai_rank_result = generate_ranking_insights(
@@ -1012,8 +1082,8 @@ if side["page"].startswith("1"):
                 _val_str_tmp = f"{stats['current']:.1f}%" if _is_pct_tmp else f"{stats['current']:,.0f}"
                 _ai_payload_ep.append({
                     "name": display_name, "value": _val_str_tmp,
-                    "prev_label": cfg["prev_label"], "prev_delta": stats["prev_delta"] or 0,
-                    "yoy_label": cfg["yoy_label"], "yoy_delta": stats["yoy_delta"] or 0,
+                    "prev_label": cfg["prev_label"], "prev_delta": float(stats["prev_delta"] or 0),
+                    "yoy_label": cfg["yoy_label"], "yoy_delta": float(stats["yoy_delta"] or 0),
                 })
         _ai_result_ep = None
         if _ai_clicked_ep:
@@ -1466,8 +1536,8 @@ if side["page"].startswith("2"):
                     _ai_payload_cat.append({
                         "name": display_name,
                         "value": f"{stats['current']:.1f}%" if _is_pct_c else f"{stats['current']:,.0f}",
-                        "prev_label": _cfg_cat["prev_label"], "prev_delta": stats["prev_delta"] or 0,
-                        "yoy_label": _cfg_cat["yoy_label"], "yoy_delta": stats["yoy_delta"] or 0,
+                        "prev_label": _cfg_cat["prev_label"], "prev_delta": float(stats["prev_delta"] or 0),
+                        "yoy_label": _cfg_cat["yoy_label"], "yoy_delta": float(stats["yoy_delta"] or 0),
                     })
             _ai_result_cat = None
             if _ai_clicked_cat:
