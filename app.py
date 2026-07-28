@@ -1125,10 +1125,12 @@ if side["page"].startswith("1"):
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # 지표 추이 차트 (트래픽 지표)
-        h1, h2 = st.columns([2, 3])
-        h1.markdown("**EP 실적 추이**")
+        st.markdown("**EP 실적 추이**")
         tr_metric_options = ["트래픽", "거래액", "구매객수", "CR", "객단가"]
-        tr_metric = h2.selectbox("지표 선택", tr_metric_options, index=0, key="tr_metric", label_visibility="collapsed")
+        tr_metric = st.radio(
+            "지표 선택", tr_metric_options, index=0, key="tr_metric",
+            horizontal=True, label_visibility="collapsed",
+        )
 
         # 리샘플 (전체 기간 — 전년 비교선용)
         s_raw = tr_combo.set_index("날짜")[tr_metric].sort_index()
@@ -1374,10 +1376,12 @@ if side["page"].startswith("1"):
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # EP 채널 지표 추이
-        h1, h2 = st.columns([2, 3])
-        h1.markdown("**EP 채널 추이**")
+        st.markdown("**EP 채널 추이**")
         ep_metrics_list = [m for m, _ in EP_CHANNEL_METRICS]
-        ep_metric = h2.selectbox("지표", ep_metrics_list, index=0, key="ep_metric", label_visibility="collapsed")
+        ep_metric = st.radio(
+            "지표", ep_metrics_list, index=0, key="ep_metric",
+            horizontal=True, label_visibility="collapsed",
+        )
 
         _ep_latest_year = int(last_date_ep.year)
         if unit == "일별":
@@ -1583,11 +1587,10 @@ if side["page"].startswith("2"):
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
             # --- 추이 차트 (전년 비교선 포함) ---
-            h1, h2 = st.columns([2, 3])
-            h1.markdown("**카테고리 실적 추이**")
-            cat_metric = h2.selectbox(
+            st.markdown("**카테고리 실적 추이**")
+            cat_metric = st.radio(
                 "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
-                index=1, key="cat_metric", label_visibility="collapsed",
+                index=1, key="cat_metric", horizontal=True, label_visibility="collapsed",
             )
 
             s_raw = cat_combo.set_index("날짜")[cat_metric].sort_index()
