@@ -514,11 +514,12 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     official_total: (현재값, 작년값) 튜플이 주어지면, 도넛 중앙의 '총 거래액'을
     개별 항목 합산이 아니라 이 값으로 표시한다. (카테고리/브랜드가 여러 개 겹치는 거래는
     개별 항목 합산이 실제 전체보다 커질 수 있어, KPI 카드와 항상 일치시키기 위함)
-    """
-    """group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
+
+    group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
     label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명).
     hide_zero=True면 올해/작년 거래액이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외.
-    ai_key가 주어지면 'AI 인사이트' 버튼과 결과 박스를 함께 표시한다."""
+    ai_key가 주어지면 'AI 인사이트' 버튼과 결과 박스를 함께 표시한다.
+    """
     rows = []
     for name in sorted(sub_df[group_col].unique()):
         s_full = sub_df[sub_df[group_col] == name].set_index("날짜")["거래액"].sort_index()
