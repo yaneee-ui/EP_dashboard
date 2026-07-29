@@ -1596,12 +1596,12 @@ if side["page"].startswith("2"):
                         val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
                         cfg = UNIT_CONFIG[unit]
                         st.markdown(
-                            f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:160px;'>"
+                            f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                             f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
                             f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{val_str}</div>"
                             f"<div style='font-size:0.76rem;margin-top:6px;'>"
-                            f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}<br/>"
-                            f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}"
+                            f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
+                            f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}"
                             f"</div></div>",
                             unsafe_allow_html=True,
                         )
