@@ -480,7 +480,41 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     components.html(doc, height=frame_h, scrolling=False)
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False):
+def compute_official_total(df_scope, unit, selected_period_date):
+    """df_scope(보통 카테고리='전체'&브랜드='전체' 등으로 필터된 단일 그룹)의
+    거래액을 조회단위로 리샘플하여 (현재값, 전년동기값) 튜플로 반환.
+    도넛 중앙에 표시할 '진짜 전체값'을 개별 항목 합산과 별개로 정확히 구하기 위함."""
+    if df_scope.empty:
+        return None, None
+    s_full = df_scope.set_index("날짜")["거래액"].sort_index()
+    series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).mean()
+    if unit == "주별":
+        series_full.index = series_full.index - pd.Timedelta(days=6)
+    elif unit == "월마감" and not series_full.empty and s_full.index.max() < series_full.index[-1]:
+        series_full = series_full.iloc[:-1]
+    series = series_full[series_full.index <= selected_period_date] if not series_full.empty else series_full
+    if series.empty:
+        return None, None
+    cur_val = series.iloc[-1]
+    cur_date = series.index[-1]
+    if unit == "월마감":
+        prev_date = cur_date - pd.DateOffset(years=1)
+    else:
+        prev_date = cur_date - pd.Timedelta(days=364)
+    if prev_date in series_full.index:
+        prev_val = series_full.loc[prev_date]
+    else:
+        cand = series_full.index[series_full.index <= prev_date]
+        prev_val = series_full.loc[cand[-1]] if len(cand) else None
+    return cur_val, prev_val
+
+
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None):
+    """
+    official_total: (현재값, 작년값) 튜플이 주어지면, 도넛 중앙의 '총 거래액'을
+    개별 항목 합산이 아니라 이 값으로 표시한다. (카테고리/브랜드가 여러 개 겹치는 거래는
+    개별 항목 합산이 실제 전체보다 커질 수 있어, KPI 카드와 항상 일치시키기 위함)
+    """
     """group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
     label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명).
     hide_zero=True면 올해/작년 거래액이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외.
@@ -623,9 +657,15 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 _values.append(_rest_cur)
                 _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy})
 
-        # 전체 합계 기준 전년비
-        _tot_cur = float(share_df["거래액"].sum())
-        _tot_prev = float(share_df["전년거래액"].sum(skipna=True)) if share_df["전년거래액"].notna().any() else None
+        # 전체 합계 기준 전년비 — official_total(카테고리=전체 등 진짜 전체값)이 있으면 그걸 우선 사용.
+        # (개별 항목을 단순 합산하면, 여러 카테고리에 걸친 거래가 중복 집계되어
+        #  KPI 카드의 진짜 전체값보다 커질 수 있음 — 그래서 중앙 표시는 항상 official_total과 일치시킴)
+        if official_total is not None:
+            _tot_cur, _tot_prev = official_total
+            _tot_cur = float(_tot_cur) if _tot_cur is not None else float(share_df["거래액"].sum())
+        else:
+            _tot_cur = float(share_df["거래액"].sum())
+            _tot_prev = float(share_df["전년거래액"].sum(skipna=True)) if share_df["전년거래액"].notna().any() else None
         if _tot_prev and _tot_prev != 0:
             _tot_yoy = ((_tot_cur / _tot_prev) - 1) * 100
             _center_sub = f"{_yoy_label_share} {_tot_yoy:+.1f}%"
@@ -640,6 +680,12 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             deltas=_deltas,
             delta_label=_yoy_label_share,
         )
+        if official_total is not None:
+            st.caption(
+                "ℹ️ 중앙 '총 거래액'은 KPI카드와 동일한 전체 집계값이에요. "
+                "여러 카테고리/브랜드에 걸친 거래가 있으면, 아래 항목별 값을 다 더한 합계는 "
+                "이 값과 정확히 일치하지 않을 수 있어요(항목 간 중복 집계 가능)."
+            )
 
         with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
             st.markdown(
@@ -1715,8 +1761,16 @@ if side["page"].startswith("2"):
         _share_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _share_df = _share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+
+        # 진짜 전체값(카테고리=전체&브랜드=전체) — 개별 카테고리 합산이 아니라 이걸로 중앙에 표시
+        _official_all_df = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] == "전체")]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _official_all_df = _official_all_df.groupby("날짜", as_index=False)["거래액"].sum()
+        _official_cat_total = compute_official_total(_official_all_df, unit, selected_period_date)
+
         render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준",
-                               donut=True, ai_key="cat_share", ai_context=f"카테고리별 거래액 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}")
+                               donut=True, official_total=_official_cat_total,
+                               ai_key="cat_share", ai_context=f"카테고리별 거래액 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}")
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -1733,9 +1787,19 @@ if side["page"].startswith("2"):
             _brand_share_df = _brand_share_df[_brand_share_df["회원구분"] == "전체"]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
+
+        # 진짜 전체값(선택한 카테고리 범위 기준, 브랜드=전체) — 브랜드 합산이 아니라 이걸로 중앙에 표시
+        _official_brand_scope_df = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] == "전체")]
+        if _has_segment:
+            _official_brand_scope_df = _official_brand_scope_df[_official_brand_scope_df["회원구분"] == "전체"]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _official_brand_scope_df = _official_brand_scope_df.groupby("날짜", as_index=False)["거래액"].sum()
+        _official_brand_total = compute_official_total(_official_brand_scope_df, unit, selected_period_date)
+
         render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle,
                                label_map=BRAND_LABELS, hide_zero=True,
-                               donut=True, ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}")
+                               donut=True, official_total=_official_brand_total,
+                               ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}")
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
