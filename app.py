@@ -2271,14 +2271,19 @@ if side["page"].startswith("5"):
             st.markdown("**월별 쿠폰할인 · 비용률 추이**")
             import altair as alt
             _trend_df = _combined.reset_index().rename(columns={"index": "연월"})
-            _base = alt.Chart(_trend_df).encode(x=alt.X("연월:T", title=None, timeUnit="yearmonth", axis=alt.Axis(format="%Y-%m", labelAngle=-40)))
+            _trend_df["연월_label"] = _trend_df["연월"].dt.strftime("%Y-%m")
+            _month_order = _trend_df["연월_label"].tolist()
+            # x축을 날짜(timeUnit) 대신 월 라벨 순서(ordinal)로 고정 → 막대/선이 같은 위치에 정확히 정렬됨
+            _base = alt.Chart(_trend_df).encode(
+                x=alt.X("연월_label:O", title=None, sort=_month_order, axis=alt.Axis(labelAngle=-40))
+            )
             _bar = _base.mark_bar(color="#93c5fd", size=18).encode(
                 y=alt.Y("쿠폰할인:Q", title="쿠폰할인", axis=alt.Axis(format="~s")),
-                tooltip=[alt.Tooltip("연월:T", title="연월", format="%Y-%m"), alt.Tooltip("쿠폰할인:Q", title="쿠폰할인", format=",.0f")],
+                tooltip=[alt.Tooltip("연월_label:N", title="연월"), alt.Tooltip("쿠폰할인:Q", title="쿠폰할인", format=",.0f")],
             )
             _line = _base.mark_line(color="#dc2626", strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True)).encode(
                 y=alt.Y("비용률:Q", title="비용률(%)", axis=alt.Axis(format=".1f")),
-                tooltip=[alt.Tooltip("연월:T", title="연월", format="%Y-%m"), alt.Tooltip("비용률:Q", title="비용률", format=".2f")],
+                tooltip=[alt.Tooltip("연월_label:N", title="연월"), alt.Tooltip("비용률:Q", title="비용률", format=".2f")],
             )
             _chart = alt.layer(_bar, _line).resolve_scale(y="independent").properties(height=350)
             st.altair_chart(_chart, use_container_width=True)
@@ -2306,16 +2311,80 @@ if side["page"].startswith("5"):
                 if _detail_sub.empty:
                     st.info("해당 조건의 쿠폰 상세 데이터가 없습니다.")
                 else:
-                    _rank = _detail_sub.groupby(["쿠폰명", "쿠폰유형"], as_index=False)["쿠폰할인"].sum()
+                    _rank = _detail_sub.groupby(["쿠폰ID", "쿠폰명", "쿠폰유형"], as_index=False)["쿠폰할인"].sum()
                     _rank = _rank.sort_values("쿠폰할인", ascending=False).head(15).reset_index(drop=True)
                     _rank_html = "".join(
-                        f"<tr><td>{i+1}</td><td>{r['쿠폰명']}</td><td>{r['쿠폰유형']}</td>"
+                        f"<tr><td>{i+1}</td><td>{r['쿠폰ID']}</td><td>{r['쿠폰명']}</td><td>{r['쿠폰유형']}</td>"
                         f"<td style='text-align:right;'>{r['쿠폰할인']:,.0f}</td></tr>"
                         for i, r in _rank.iterrows()
                     )
                     st.markdown(
                         "<table class='summary-table'><thead><tr>"
-                        "<th>#</th><th>쿠폰명</th><th>유형</th><th style='text-align:right;'>할인액</th>"
+                        "<th>#</th><th>쿠폰번호</th><th>쿠폰명</th><th>유형</th><th style='text-align:right;'>할인액</th>"
                         "</tr></thead><tbody>" + _rank_html + "</tbody></table>",
                         unsafe_allow_html=True,
                     )
+
+            st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+            # --- 월별 전년비 비교표 (거래액/쿠폰할인/비용률) ---
+            st.markdown("**월별 전년비 비교**")
+            _yoy_rows = []
+            for _m in sorted(_combined.index, reverse=True):
+                _py = _m - pd.DateOffset(years=1)
+                _cur_gmv_m = _combined.loc[_m, "거래액"]
+                _cur_coupon_m = _combined.loc[_m, "쿠폰할인"]
+                _cur_rate_m = _combined.loc[_m, "비용률"]
+                if _py in _combined.index:
+                    _py_gmv = _combined.loc[_py, "거래액"]
+                    _py_coupon = _combined.loc[_py, "쿠폰할인"]
+                    _py_rate = _combined.loc[_py, "비용률"]
+                else:
+                    _py_gmv = _py_coupon = _py_rate = None
+                _gmv_yoy = ((_cur_gmv_m / _py_gmv) - 1) * 100 if _py_gmv else None
+                _coupon_yoy = ((_cur_coupon_m / _py_coupon) - 1) * 100 if _py_coupon else None
+                _rate_yoy_pt = (_cur_rate_m - _py_rate) if (_py_rate is not None and pd.notna(_py_rate) and pd.notna(_cur_rate_m)) else None
+                _yoy_rows.append({
+                    "연월": _m, "거래액": _cur_gmv_m, "작년거래액": _py_gmv, "거래액증감": _gmv_yoy,
+                    "쿠폰할인": _cur_coupon_m, "작년쿠폰할인": _py_coupon, "쿠폰할인증감": _coupon_yoy,
+                    "비용률": _cur_rate_m, "작년비용률": _py_rate, "비용률증감": _rate_yoy_pt,
+                })
+
+            def _fmt_num(v):
+                return f"{v:,.0f}" if v is not None and pd.notna(v) else "-"
+
+            def _fmt_pct(v):
+                return f"{v:.2f}%" if v is not None and pd.notna(v) else "-"
+
+            _yoy_body = ""
+            for r in _yoy_rows:
+                _yoy_body += (
+                    f"<tr><td class='m'>{r['연월'].strftime('%Y년 %m월')}</td>"
+                    f"<td style='text-align:right;'>{_fmt_num(r['거래액'])}</td>"
+                    f"<td style='text-align:right;color:#9ca3af;'>{_fmt_num(r['작년거래액'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['거래액증감'])}</td>"
+                    f"<td style='text-align:right;'>{_fmt_num(r['쿠폰할인'])}</td>"
+                    f"<td style='text-align:right;color:#9ca3af;'>{_fmt_num(r['작년쿠폰할인'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['쿠폰할인증감'])}</td>"
+                    f"<td style='text-align:right;'>{_fmt_pct(r['비용률'])}</td>"
+                    f"<td style='text-align:right;color:#9ca3af;'>{_fmt_pct(r['작년비용률'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['비용률증감'])}</td></tr>"
+                )
+            st.markdown(
+                "<div style='overflow-x:auto;'><table class='summary-table'>"
+                "<thead><tr><th>연월</th>"
+                "<th colspan='3' style='text-align:center;background:#eef2ff;'>거래액</th>"
+                "<th colspan='3' style='text-align:center;background:#fef3c7;'>쿠폰할인</th>"
+                "<th colspan='3' style='text-align:center;background:#fce7f3;'>비용률</th>"
+                "</tr><tr><th></th>"
+                "<th style='text-align:right;'>올해</th><th style='text-align:right;'>작년</th><th style='text-align:right;'>증감</th>"
+                "<th style='text-align:right;'>올해</th><th style='text-align:right;'>작년</th><th style='text-align:right;'>증감</th>"
+                "<th style='text-align:right;'>올해</th><th style='text-align:right;'>작년</th><th style='text-align:right;'>증감</th>"
+                "</tr></thead>"
+                f"<tbody>{_yoy_body}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+
+            _yoy_export = pd.DataFrame(_yoy_rows)
+            _yoy_export["연월"] = _yoy_export["연월"].dt.strftime("%Y-%m")
+            render_excel_download(_yoy_export, f"쿠폰비용_전년비교_{coupon_bpu}_{coupon_type_sel}.xlsx")
