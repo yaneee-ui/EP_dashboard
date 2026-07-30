@@ -30,7 +30,7 @@ def render_sidebar():
     st.sidebar.markdown("**메뉴**")
     page = st.sidebar.radio(
         "메뉴",
-        ["1. 실적 요약", "2. 카테고리 실적 요약", "3. 누적 데이터", "4. 누적 데이터 (카테고리)"],
+        ["1. 실적 요약", "2. 카테고리 실적 요약", "3. 누적 데이터", "4. 누적 데이터 (카테고리)", "5. 쿠폰 비용 분석"],
         label_visibility="collapsed",
     )
 
@@ -51,6 +51,14 @@ def render_sidebar():
         "카테고리별 (ep_category.csv)", type=["csv"],
         key="ep_category_upload",
     )
+    ep_coupon_file = st.sidebar.file_uploader(
+        "쿠폰 집계 (ep_coupon.csv)", type=["csv"],
+        key="ep_coupon_upload",
+    )
+    ep_coupon_detail_file = st.sidebar.file_uploader(
+        "쿠폰 상세 (ep_coupon_detail.csv)", type=["csv"],
+        key="ep_coupon_detail_upload",
+    )
 
     st.sidebar.markdown("**🔄 새로고침**")
     st.sidebar.caption("업로드가 반영 안 될 때 눌러주세요.")
@@ -70,6 +78,8 @@ def render_sidebar():
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
         "ep_category_file": ep_category_file,
+        "ep_coupon_file": ep_coupon_file,
+        "ep_coupon_detail_file": ep_coupon_detail_file,
         "refresh": refresh,
     }
 
