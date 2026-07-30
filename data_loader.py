@@ -88,32 +88,42 @@ def load_brand_names() -> dict:
     return dict(zip(df["코드"], df["브랜드명"]))
 
 
-COUPON_DATA_PATH = "ep_coupon.csv"
-COUPON_DETAIL_PATH = "ep_coupon_detail.csv"
+# 자사/입점 합산용 BPU 그룹 (app.py의 BPU_GROUPS와 동일한 정의를 여기서도 사용)
+_COUPON_BPU_GROUPS = {
+    "자사": ["e-영업1", "e-영업2"],
+    "입점": ["e-영업3", "e-영업4"],
+}
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_coupon_data() -> pd.DataFrame:
-    """쿠폰할인 집계 데이터 로드 (연월/BPU/쿠폰유형별)."""
-    import os
-    if not os.path.exists(COUPON_DATA_PATH):
-        return pd.DataFrame(columns=["연월", "자사입점구분", "BPU", "쿠폰유형", "쿠폰할인"])
-    df = pd.read_csv(COUPON_DATA_PATH)
-    df["연월"] = pd.to_datetime(df["연월"])
-    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
-    return df.sort_values("연월").reset_index(drop=True)
+def build_coupon_monthly(df_daily: pd.DataFrame) -> pd.DataFrame:
+    """일자별 쿠폰 데이터(ep_coupon_daily.csv, e-영업1~4)에서 월별 BPU 집계
+    (Total/자사/입점/e-영업1~4)를 파생한다. 예전 ep_coupon.csv를 대체."""
+    if df_daily.empty:
+        return pd.DataFrame(columns=["연월", "BPU", "쿠폰유형", "쿠폰할인"])
+    d = df_daily.copy()
+    d["연월"] = d["날짜"].dt.to_period("M").dt.to_timestamp()
+    base = d.groupby(["연월", "BPU", "쿠폰유형"], as_index=False)["쿠폰할인"].sum()
+    parts = [base]
+    for label, members in _COUPON_BPU_GROUPS.items():
+        sub = base[base["BPU"].isin(members)].groupby(["연월", "쿠폰유형"], as_index=False)["쿠폰할인"].sum()
+        sub["BPU"] = label
+        parts.append(sub)
+    total = base.groupby(["연월", "쿠폰유형"], as_index=False)["쿠폰할인"].sum()
+    total["BPU"] = "Total"
+    parts.append(total)
+    result = pd.concat(parts, ignore_index=True)
+    return result.sort_values(["연월", "쿠폰유형", "BPU"]).reset_index(drop=True)
 
 
-@st.cache_data(ttl=3600, show_spinner=False)
-def load_coupon_detail() -> pd.DataFrame:
-    """쿠폰명별 상세 할인 데이터 로드."""
-    import os
-    if not os.path.exists(COUPON_DETAIL_PATH):
-        return pd.DataFrame(columns=["연월", "자사입점구분", "BPU", "쿠폰명", "쿠폰ID", "쿠폰유형", "쿠폰할인"])
-    df = pd.read_csv(COUPON_DETAIL_PATH)
-    df["연월"] = pd.to_datetime(df["연월"])
-    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
-    return df.sort_values("연월").reset_index(drop=True)
+def build_coupon_monthly_detail(df_daily: pd.DataFrame) -> pd.DataFrame:
+    """일자별 쿠폰 데이터에서 월별 쿠폰명별 상세(e-영업1~4)를 파생한다.
+    예전 ep_coupon_detail.csv를 대체 (Total/자사/입점은 화면에서 BPU_GROUPS로 즉석 합산)."""
+    if df_daily.empty:
+        return pd.DataFrame(columns=["연월", "BPU", "쿠폰명", "쿠폰ID", "쿠폰유형", "쿠폰할인"])
+    d = df_daily.copy()
+    d["연월"] = d["날짜"].dt.to_period("M").dt.to_timestamp()
+    result = d.groupby(["연월", "BPU", "쿠폰ID", "쿠폰명", "쿠폰유형"], as_index=False)["쿠폰할인"].sum()
+    return result.sort_values(["연월", "쿠폰유형", "쿠폰할인"], ascending=[True, True, False]).reset_index(drop=True)
 
 
 COUPON_DAILY_PATH = "ep_coupon_daily.csv"
