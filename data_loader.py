@@ -86,3 +86,31 @@ def load_brand_names() -> dict:
         return {}
     df = pd.read_csv(BRAND_NAMES_PATH)
     return dict(zip(df["코드"], df["브랜드명"]))
+
+
+COUPON_DATA_PATH = "ep_coupon.csv"
+COUPON_DETAIL_PATH = "ep_coupon_detail.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_coupon_data() -> pd.DataFrame:
+    """쿠폰할인 집계 데이터 로드 (연월/BPU/쿠폰유형별)."""
+    import os
+    if not os.path.exists(COUPON_DATA_PATH):
+        return pd.DataFrame(columns=["연월", "자사입점구분", "BPU", "쿠폰유형", "쿠폰할인"])
+    df = pd.read_csv(COUPON_DATA_PATH)
+    df["연월"] = pd.to_datetime(df["연월"])
+    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
+    return df.sort_values("연월").reset_index(drop=True)
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_coupon_detail() -> pd.DataFrame:
+    """쿠폰명별 상세 할인 데이터 로드."""
+    import os
+    if not os.path.exists(COUPON_DETAIL_PATH):
+        return pd.DataFrame(columns=["연월", "자사입점구분", "BPU", "쿠폰명", "쿠폰ID", "쿠폰유형", "쿠폰할인"])
+    df = pd.read_csv(COUPON_DETAIL_PATH)
+    df["연월"] = pd.to_datetime(df["연월"])
+    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
+    return df.sort_values("연월").reset_index(drop=True)
