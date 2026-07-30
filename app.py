@@ -9,7 +9,10 @@ import pandas as pd
 import datetime as _dt
 import io
 
-from data_loader import load_data, load_traffic_data, load_category_data, load_brand_names, load_coupon_data, load_coupon_detail, load_coupon_daily
+from data_loader import (
+    load_data, load_traffic_data, load_category_data, load_brand_names,
+    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail,
+)
 from ai_insights import (
     generate_insights, render_overall_summary_box, render_metric_insight,
     generate_ranking_insights, render_ranking_insight_box,
@@ -44,17 +47,15 @@ if side["refresh"]:
     load_data.clear()
     load_traffic_data.clear()
     load_category_data.clear()
-    load_coupon_data.clear()
-    load_coupon_detail.clear()
     load_coupon_daily.clear()
 
 # --- 데이터 로드 ---
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
 df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
-df_coupon = load_coupon_data()  # 쿠폰할인 집계 데이터
-df_coupon_detail = load_coupon_detail()  # 쿠폰명별 상세 할인 데이터
-df_coupon_daily = load_coupon_daily()  # 쿠폰명별 일자별 상세 할인 데이터 (있으면 일/주별 조회 가능)
+df_coupon_daily = load_coupon_daily()  # 쿠폰명별 일자별 상세 할인 데이터 (BPU: e-영업1~4)
+df_coupon = build_coupon_monthly(df_coupon_daily)  # 월별 BPU 집계(Total/자사/입점/e-영업1~4) - daily에서 파생
+df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)  # 월별 쿠폰명별 상세 - daily에서 파생
 BRAND_NAMES = load_brand_names()  # 브랜드 코드 -> 한글 브랜드명
 
 
@@ -89,26 +90,14 @@ if side["ep_category_file"] is not None:
     df_category["날짜"] = pd.to_datetime(df_category["날짜"])
     st.sidebar.success(f"카테고리 데이터 업로드 완료 ({df_category['카테고리'].nunique()}개 카테고리)")
 
-# 쿠폰 집계 업로드
-if side["ep_coupon_file"] is not None:
-    _cpf = side["ep_coupon_file"]
-    df_coupon = pd.read_csv(_cpf)
-    df_coupon["연월"] = pd.to_datetime(df_coupon["연월"])
-    st.sidebar.success("쿠폰 집계 데이터 업로드 완료")
-
-# 쿠폰 상세 업로드
-if side["ep_coupon_detail_file"] is not None:
-    _cpdf = side["ep_coupon_detail_file"]
-    df_coupon_detail = pd.read_csv(_cpdf)
-    df_coupon_detail["연월"] = pd.to_datetime(df_coupon_detail["연월"])
-    st.sidebar.success("쿠폰 상세 데이터 업로드 완료")
-
-# 쿠폰 일자별 업로드 (선택)
+# 쿠폰 데이터 업로드 (일자별 원본 하나로 통합 - 월별 집계/상세는 여기서 자동 파생)
 if side["ep_coupon_daily_file"] is not None:
     _cpddf = side["ep_coupon_daily_file"]
     df_coupon_daily = pd.read_csv(_cpddf)
     df_coupon_daily["날짜"] = pd.to_datetime(df_coupon_daily["날짜"])
-    st.sidebar.success(f"쿠폰 일자별 데이터 업로드 완료 ({df_coupon_daily['날짜'].min().strftime('%Y-%m-%d')} ~ {df_coupon_daily['날짜'].max().strftime('%Y-%m-%d')})")
+    df_coupon = build_coupon_monthly(df_coupon_daily)
+    df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)
+    st.sidebar.success(f"쿠폰 데이터 업로드 완료 ({df_coupon_daily['날짜'].min().strftime('%Y-%m-%d')} ~ {df_coupon_daily['날짜'].max().strftime('%Y-%m-%d')})")
 
 
 unit = side["view_unit"]
@@ -2151,7 +2140,7 @@ if side["page"].startswith("5"):
     _has_daily = not df_coupon_daily.empty
 
     if df_coupon.empty:
-        st.info("쿠폰 데이터가 없습니다. 사이드바에서 ep_coupon.csv를 업로드해주세요.")
+        st.info("쿠폰 데이터가 없습니다. 사이드바에서 ep_coupon_daily.csv를 업로드해주세요.")
     else:
         _cp_bpu_options = [b for b in ["Total", "자사", "입점", "e-영업1", "e-영업2", "e-영업3", "e-영업4"] if b in df_coupon["BPU"].unique()]
         _cp_c1, _cp_c2, _cp_c3 = st.columns([1, 1, 1.4])
@@ -2181,7 +2170,7 @@ if side["page"].startswith("5"):
                 return df_traffic[(df_traffic["BPU"] == bpu_val) & (df_traffic["회원구분"] == "전체")]
 
         # ============================================================
-        # 월별 조회: 기존 월간 집계(ep_coupon.csv) 사용 — 2025년부터 있어 전년비교 가능
+        # 월별 조회: ep_coupon_daily.csv에서 파생된 월별 집계(df_coupon) 사용 — 2025년부터 있어 전년비교 가능
         # ============================================================
         if coupon_unit == "월별":
             _cp_sub = df_coupon[df_coupon["BPU"] == coupon_bpu].copy()
@@ -2201,7 +2190,8 @@ if side["page"].startswith("5"):
             _prev_label, _has_yoy = "전월비", True
 
         # ============================================================
-        # 일별/주별 조회: 일자별 상세(ep_coupon_daily.csv) 사용 — 2026년만 있어 전년비교 불가
+        # 일별/주별 조회: 일자별 상세(ep_coupon_daily.csv) 사용
+        # 참고: 이제 원본에 25년치도 있지만, 일/주별 전년비교 로직은 아직 미구현 상태(항상 _has_yoy=False)
         # ============================================================
         else:
             if coupon_bpu in BPU_GROUPS:
@@ -2256,7 +2246,7 @@ if side["page"].startswith("5"):
             else:
                 _yoy_coupon = _yoy_gmv = _yoy_rate = None
 
-            _yoy_note = "" if _has_yoy else " · <span style='color:#9ca3af'>일별/주별은 2026년 데이터만 있어 전년비교 불가</span>"
+            _yoy_note = "" if _has_yoy else " · <span style='color:#9ca3af'>일별/주별 전년비교는 아직 지원 예정 기능이에요</span>"
             st.markdown(
                 f"<div class='chart-caption'>{coupon_bpu} · {coupon_type_sel} · {coupon_unit} · 기준: {_period_fmt(_latest)}{_yoy_note}</div>",
                 unsafe_allow_html=True,
@@ -2372,7 +2362,7 @@ if side["page"].startswith("5"):
             st.markdown(f"**쿠폰명별 할인액 랭킹 · {_period_fmt(_latest)} 기준**")
             if coupon_unit == "월별":
                 if df_coupon_detail.empty:
-                    st.info("쿠폰 상세 데이터가 없습니다. 사이드바에서 ep_coupon_detail.csv를 업로드해주세요.")
+                    st.info("쿠폰 상세 데이터가 없습니다. 사이드바에서 ep_coupon_daily.csv를 업로드해주세요.")
                     _detail_sub = None
                 else:
                     _detail_sub = df_coupon_detail[df_coupon_detail["연월"] == _latest]
@@ -2415,7 +2405,7 @@ if side["page"].startswith("5"):
 
             st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
-            # 전년비 비교표는 월별 조회에서만 (일/주별은 2026년만 있어 전년비교 불가)
+            # 전년비 비교표는 월별 조회에서만 (일/주별 전년비교는 아직 미구현)
             if _has_yoy:
                 st.markdown("**월별 전년비 비교**")
                 _yoy_rows = []
@@ -2478,4 +2468,4 @@ if side["page"].startswith("5"):
                 _yoy_export["연월"] = _yoy_export["연월"].dt.strftime("%Y-%m")
                 render_excel_download(_yoy_export, f"쿠폰비용_전년비교_{coupon_bpu}_{coupon_type_sel}.xlsx")
             else:
-                st.caption("ℹ️ 전년비 비교표는 월별 조회에서만 제공돼요 (일별/주별 원본은 2026년 데이터만 있어요).")
+                st.caption("ℹ️ 전년비 비교표는 월별 조회에서만 제공돼요 (일별/주별 전년비교는 아직 지원 예정 기능이에요).")
