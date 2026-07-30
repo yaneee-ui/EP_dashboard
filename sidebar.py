@@ -51,17 +51,10 @@ def render_sidebar():
         "카테고리별 (ep_category.csv)", type=["csv"],
         key="ep_category_upload",
     )
-    ep_coupon_file = st.sidebar.file_uploader(
-        "쿠폰 집계 (ep_coupon.csv)", type=["csv"],
-        key="ep_coupon_upload",
-    )
-    ep_coupon_detail_file = st.sidebar.file_uploader(
-        "쿠폰 상세 (ep_coupon_detail.csv)", type=["csv"],
-        key="ep_coupon_detail_upload",
-    )
     ep_coupon_daily_file = st.sidebar.file_uploader(
-        "쿠폰 일자별 (ep_coupon_daily.csv, 선택)", type=["csv"],
+        "쿠폰 데이터 (ep_coupon_daily.csv)", type=["csv"],
         key="ep_coupon_daily_upload",
+        help="일자별 쿠폰 원본 하나로 월별/일별/주별 조회가 모두 계산돼요.",
     )
 
     st.sidebar.markdown("**🔄 새로고침**")
@@ -82,8 +75,6 @@ def render_sidebar():
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
         "ep_category_file": ep_category_file,
-        "ep_coupon_file": ep_coupon_file,
-        "ep_coupon_detail_file": ep_coupon_detail_file,
         "ep_coupon_daily_file": ep_coupon_daily_file,
         "refresh": refresh,
     }
