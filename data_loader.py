@@ -114,3 +114,18 @@ def load_coupon_detail() -> pd.DataFrame:
     df["연월"] = pd.to_datetime(df["연월"])
     df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
     return df.sort_values("연월").reset_index(drop=True)
+
+
+COUPON_DAILY_PATH = "ep_coupon_daily.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_coupon_daily() -> pd.DataFrame:
+    """쿠폰명별 일자별 상세 할인 데이터 로드 (있으면 일/주별 조회 가능)."""
+    import os
+    if not os.path.exists(COUPON_DAILY_PATH):
+        return pd.DataFrame(columns=["날짜", "BPU", "쿠폰ID", "쿠폰명", "쿠폰유형", "쿠폰할인"])
+    df = pd.read_csv(COUPON_DAILY_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
+    return df.sort_values("날짜").reset_index(drop=True)
