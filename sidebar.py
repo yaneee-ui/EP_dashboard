@@ -80,6 +80,29 @@ def render_sidebar():
     }
 
 
+def render_sidebar_data_status(items):
+    """사이드바 맨 아래에 데이터셋별 반영 현황(기간·일수)을 표시한다.
+    items: (라벨, 시작일str 또는 None, 종료일str 또는 None, 일수 또는 None) 튜플 리스트.
+    시작일이 None이면 '데이터 없음'으로 표시한다.
+    """
+    st.sidebar.divider()
+    st.sidebar.markdown("**📅 데이터 반영 현황**")
+    rows_html = ""
+    for label, d_min, d_max, n_days in items:
+        if d_min is None:
+            rows_html += (
+                f"<div style='font-size:0.74rem;color:#9ca3af;margin-bottom:3px;'>"
+                f"{label}: 데이터 없음</div>"
+            )
+        else:
+            day_txt = f" · {n_days:,}일" if n_days is not None else ""
+            rows_html += (
+                f"<div style='font-size:0.74rem;color:#374151;margin-bottom:3px;'>"
+                f"{label}: {d_min} ~ {d_max}{day_txt}</div>"
+            )
+    st.sidebar.markdown(rows_html, unsafe_allow_html=True)
+
+
 def render_combo_filter(df, bpu, key_prefix=""):
     """원부매칭여부 / 최저가여부만 선택 (BPU는 메뉴에서 이미 결정됨)."""
     from utils import COL_MATCH, COL_LOWEST
