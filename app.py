@@ -336,7 +336,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     import math
     import html as _html
 
-    total = sum(v for v in values if v and v > 0)
+    total = sum(abs(v) for v in values if v)
     if total <= 0:
         st.info("표시할 데이터가 없습니다.")
         return
@@ -353,21 +353,25 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         rad = math.radians(ang - 90)
         return cx + r * math.cos(rad), cy + r * math.sin(rad)
 
+    NEG_COLOR = "#ef4444"  # 마이너스(반품 등) 항목은 팔레트 대신 이 색으로 고정해 시각적으로 구분
+
     paths = []
     start = 0.0
     visible_idx = []
     for i, (lab, val) in enumerate(zip(labels, values)):
-        if not val or val <= 0:
+        if not val:
             continue
+        is_neg = val < 0
         visible_idx.append(i)
-        frac = val / total
+        frac = abs(val) / total
         end = start + frac * 360
         mid = (start + end) / 2
         # 선택 시 바깥으로 살짝 튀어나오는 오프셋
         _mrad = math.radians(mid - 90)
         pop = f"translate({math.cos(_mrad) * 9:.2f}px, {math.sin(_mrad) * 9:.2f}px)"
-        tip = _html.escape(f"{lab}: {val:,.0f} ({frac * 100:.1f}%)")
-        color = palette[i % len(palette)]
+        _tip_note = " · 마이너스(반품 등), 크기는 절대값 기준" if is_neg else ""
+        tip = _html.escape(f"{lab}: {val:,.0f}{_tip_note} ({frac * 100:.1f}%)")
+        color = NEG_COLOR if is_neg else palette[i % len(palette)]
 
         if frac >= 0.9999:
             paths.append(
@@ -387,9 +391,10 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             f"M {x1:.2f} {y1:.2f} A {r_outer:.2f} {r_outer:.2f} 0 {large} 1 {x2:.2f} {y2:.2f} "
             f"L {x3:.2f} {y3:.2f} A {r_inner:.2f} {r_inner:.2f} 0 {large} 0 {x4:.2f} {y4:.2f} Z"
         )
+        _dash = " stroke-dasharray='4,3'" if is_neg else ""
         paths.append(
             f"<path class='seg' data-i='{i}' data-pop='{pop}' d='{d}' fill='{color}' "
-            f"stroke='#fff' stroke-width='1.5'><title>{tip}</title></path>"
+            f"stroke='#fff' stroke-width='1.5'{_dash}><title>{tip}</title></path>"
         )
         start = end
 
@@ -431,12 +436,14 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
 
     legend_items = []
     for i, (lab, val) in enumerate(zip(labels, values)):
-        if not val or val <= 0:
+        if not val:
             continue
+        is_neg = val < 0
         pct = val / total * 100
+        _dot_color = NEG_COLOR if is_neg else palette[i % len(palette)]
         row = (
             f"<div class='lg' data-i='{i}'>"
-            f"<span class='dot' style='background:{palette[i % len(palette)]};'></span>"
+            f"<span class='dot' style='background:{_dot_color};'></span>"
             f"<span style='flex:1;color:#374151;'>{_html.escape(str(lab))}</span>"
         )
         if _has_delta:
@@ -678,9 +685,10 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     # --- 도넛 차트 모드: 구성비를 한눈에 + 전년비 상세는 접이식 ---
     if donut:
         _top_n = 10
-        _dn = share_df[share_df["거래액"] > 0].copy()
+        _dn_pos = share_df[share_df["거래액"] > 0].copy()
+        _dn_neg = share_df[share_df["거래액"] < 0].copy()
         _labels, _values, _deltas = [], [], []
-        for _, r in _dn.head(_top_n).iterrows():
+        for _, r in _dn_pos.head(_top_n).iterrows():
             _nm = r[group_col]
             _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
             _values.append(float(r["거래액"]))
@@ -688,7 +696,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if (_pv is not None and r["전년거래액"] != 0) else None
             _deltas.append({"prev": _pv, "yoy": _yv})
 
-        _rest_df = _dn.iloc[_top_n:] if len(_dn) > _top_n else None
+        _rest_df = _dn_pos.iloc[_top_n:] if len(_dn_pos) > _top_n else None
         if _rest_df is not None and len(_rest_df) > 0:
             _rest_cur = float(_rest_df["거래액"].sum())
             if _rest_cur > 0:
@@ -697,6 +705,17 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 _labels.append(f"기타 ({len(_rest_df)}개)")
                 _values.append(_rest_cur)
                 _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy})
+
+        # 거래액이 마이너스인 항목(반품 등으로 순거래액이 음수)도 도넛에 그대로 포함시킨다.
+        # top_n/기타 묶음과는 무관하게 항상 개별 조각으로 넣어서 묻히지 않게 함
+        # (render_donut_chart 쪽에서 절대값 크기로 조각을 그리고 빨간 점선으로 구분해서 보여줌).
+        for _, r in _dn_neg.sort_values("거래액").iterrows():
+            _nm = r[group_col]
+            _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
+            _values.append(float(r["거래액"]))
+            _pv = float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else None
+            _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if (_pv is not None and r["전년거래액"] != 0) else None
+            _deltas.append({"prev": _pv, "yoy": _yv})
 
         # 전체 합계 기준 전년비 — official_total(카테고리=전체 등 진짜 전체값)이 있으면 그걸 우선 사용.
         # (개별 항목을 단순 합산하면, 여러 카테고리에 걸친 거래가 중복 집계되어
@@ -727,25 +746,10 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 "여러 카테고리/브랜드에 걸친 거래가 있으면, 아래 항목별 값을 다 더한 합계는 "
                 "이 값과 정확히 일치하지 않을 수 있어요(항목 간 중복 집계 가능)."
             )
-
-        # 거래액이 마이너스인 항목(반품 등으로 순거래액이 음수)은 도넛(파이) 구조상 슬라이스로
-        # 표현할 수 없어 위 차트에선 제외됨. 조용히 사라지면 안 되니 바로 아래에 눈에 띄게 보여준다.
-        _neg_df = share_df[share_df["거래액"] < 0].sort_values("거래액")
-        if len(_neg_df) > 0:
-            _neg_rows_html = "".join(
-                "<div style='display:flex;justify-content:space-between;font-size:0.8rem;color:#7f1d1d;padding:3px 0;'>"
-                f"<span>{label_map.get(r[group_col], r[group_col]) if label_map else r[group_col]}</span>"
-                f"<span style='font-weight:600;'>{r['거래액']:,.0f}</span>"
-                "</div>"
-                for _, r in _neg_df.iterrows()
-            )
-            st.markdown(
-                "<div style='margin-top:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;'>"
-                f"<div style='font-size:0.8rem;color:#991b1b;font-weight:700;margin-bottom:6px;'>"
-                f"⚠️ 거래액이 마이너스인 항목 {len(_neg_df)}개 (반품 등으로 환불이 매출보다 많은 경우) — "
-                "도넛 차트엔 표시가 안 돼서 따로 보여드려요</div>"
-                f"{_neg_rows_html}</div>",
-                unsafe_allow_html=True,
+        if len(_dn_neg) > 0:
+            st.caption(
+                f"🔴 점선 테두리 조각은 거래액이 마이너스인 항목이에요(반품 등으로 환불이 매출보다 많은 경우). "
+                f"조각 크기는 절대값 기준이고, 실제 값은 마이너스로 표시돼요."
             )
 
         with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
