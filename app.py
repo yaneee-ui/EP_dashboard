@@ -728,6 +728,26 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 "이 값과 정확히 일치하지 않을 수 있어요(항목 간 중복 집계 가능)."
             )
 
+        # 거래액이 마이너스인 항목(반품 등으로 순거래액이 음수)은 도넛(파이) 구조상 슬라이스로
+        # 표현할 수 없어 위 차트에선 제외됨. 조용히 사라지면 안 되니 바로 아래에 눈에 띄게 보여준다.
+        _neg_df = share_df[share_df["거래액"] < 0].sort_values("거래액")
+        if len(_neg_df) > 0:
+            _neg_rows_html = "".join(
+                "<div style='display:flex;justify-content:space-between;font-size:0.8rem;color:#7f1d1d;padding:3px 0;'>"
+                f"<span>{label_map.get(r[group_col], r[group_col]) if label_map else r[group_col]}</span>"
+                f"<span style='font-weight:600;'>{r['거래액']:,.0f}</span>"
+                "</div>"
+                for _, r in _neg_df.iterrows()
+            )
+            st.markdown(
+                "<div style='margin-top:10px;padding:10px 14px;background:#fef2f2;border:1px solid #fecaca;border-radius:8px;'>"
+                f"<div style='font-size:0.8rem;color:#991b1b;font-weight:700;margin-bottom:6px;'>"
+                f"⚠️ 거래액이 마이너스인 항목 {len(_neg_df)}개 (반품 등으로 환불이 매출보다 많은 경우) — "
+                "도넛 차트엔 표시가 안 돼서 따로 보여드려요</div>"
+                f"{_neg_rows_html}</div>",
+                unsafe_allow_html=True,
+            )
+
         with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
             st.markdown(
                 "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
@@ -783,14 +803,84 @@ with _sticky:
     }
 
     # ========================================================
-    # 페이지 5: 쿠폰 비용 분석은 자체 필터를 페이지 본문에서 처리하므로,
-    # 여기서는 간단한 제목만 표시하고 1~4 전용 로직은 건너뜀
+    # 페이지 5: 쿠폰 비용 분석 — 매체/쿠폰유형/기준일자(또는 기준시점)를
+    # 1·2번 페이지와 동일하게 상단 고정 필터로 올림
     # ========================================================
     if _page_num == "5":
-        st.markdown(
-            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
-            unsafe_allow_html=True,
+        _cp_bpu_options_top = (
+            [b for b in ["Total", "자사", "입점", "e-영업1", "e-영업2", "e-영업3", "e-영업4"] if b in df_coupon["BPU"].unique()]
+            if not df_coupon.empty else []
         )
+        coupon_unit = "월별" if unit in ("월별", "월마감") else unit
+
+        if not _cp_bpu_options_top:
+            st.markdown(
+                f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+                unsafe_allow_html=True,
+            )
+        else:
+            # 기준 시점 옵션: 매체/쿠폰유형 선택과 무관하게, 존재하는 날짜 전체를 기준으로 산출
+            # (페이지1/2도 매체 선택 전에 Total 기준으로 기간 옵션부터 만드는 것과 동일한 방식)
+            if coupon_unit == "월별":
+                _cp_period_s = df_coupon.groupby("연월")["쿠폰할인"].sum().sort_index()
+            else:
+                _cp_rule_preview = "D" if coupon_unit == "일별" else "W-SUN"
+                _cp_period_s = df_coupon_daily.groupby("날짜")["쿠폰할인"].sum().resample(_cp_rule_preview).sum()
+                if coupon_unit == "주별":
+                    _cp_period_s.index = _cp_period_s.index - pd.Timedelta(days=6)
+
+            if coupon_unit == "일별":
+                _cp_min_d = _cp_period_s.index.min().date()
+                _cp_max_d = _cp_period_s.index.max().date()
+                _cp_prev_date = st.session_state.get("coupon_ref_date", _cp_max_d)
+                try:
+                    _cp_ref_preview = pd.Timestamp(_cp_prev_date).strftime("%Y-%m-%d")
+                except Exception:
+                    _cp_ref_preview = _cp_max_d.strftime("%Y-%m-%d")
+            else:
+                _cp_period_labels = [
+                    (d.strftime("%Y년 %m월") if coupon_unit == "월별" else f"{d.strftime('%Y-%m-%d')} 주")
+                    for d in _cp_period_s.index
+                ]
+                _cp_default_label = _cp_period_labels[-1] if _cp_period_labels else ""
+                _cp_prev_label_sel = st.session_state.get("coupon_ref_period", _cp_default_label)
+                _cp_ref_preview = _cp_prev_label_sel if _cp_prev_label_sel in _cp_period_labels else _cp_default_label
+
+            st.markdown(
+                f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
+                f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>"
+                f"<span style='font-size:0.8rem;color:#6b7280;'>조회 단위: <b>{coupon_unit}</b> · 기준: <b>{_cp_ref_preview}</b></span>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 1, 5])
+            with fc1:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
+                coupon_bpu = st.selectbox("매체", _cp_bpu_options_top, index=0, key="coupon_bpu", label_visibility="collapsed")
+            with fc2:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>쿠폰 유형</div>", unsafe_allow_html=True)
+                coupon_type_sel = st.radio(
+                    "쿠폰유형", ["합산", "플러스", "일반"], horizontal=True, key="coupon_type_sel", label_visibility="collapsed",
+                )
+            with fc3:
+                _cp_label3 = "기준 일자" if coupon_unit == "일별" else "기준 시점"
+                st.markdown(f"<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>{_cp_label3}</div>", unsafe_allow_html=True)
+                if coupon_unit == "일별":
+                    _cp_sel_date = st.date_input(
+                        "기준 일자", value=_cp_max_d, min_value=_cp_min_d, max_value=_cp_max_d,
+                        label_visibility="collapsed", key="coupon_ref_date",
+                    )
+                    coupon_ref_ts = pd.Timestamp(_cp_sel_date)
+                    if coupon_ref_ts not in _cp_period_s.index:
+                        _cand = _cp_period_s.index[_cp_period_s.index <= coupon_ref_ts]
+                        coupon_ref_ts = _cand[-1] if len(_cand) else _cp_period_s.index[-1]
+                else:
+                    _cp_sel_label = st.selectbox(
+                        "기준 시점", _cp_period_labels, index=len(_cp_period_labels) - 1,
+                        label_visibility="collapsed", key="coupon_ref_period",
+                    )
+                    coupon_ref_ts = _cp_period_s.index[_cp_period_labels.index(_cp_sel_label)]
 
     # ========================================================
     # 페이지 1 / 2: 매체필터 + 기준시점 (+카테고리/브랜드)
@@ -2162,29 +2252,14 @@ if side["page"].startswith("4"):
 # ============================================================
 if side["page"].startswith("5"):
     st.markdown("---")
-    st.markdown("### 🎟️ 쿠폰 비용 분석")
 
     _has_daily = not df_coupon_daily.empty
 
     if df_coupon.empty:
         st.info("쿠폰 데이터가 없습니다. 사이드바에서 ep_coupon_daily.csv를 업로드해주세요.")
     else:
-        _cp_bpu_options = [b for b in ["Total", "자사", "입점", "e-영업1", "e-영업2", "e-영업3", "e-영업4"] if b in df_coupon["BPU"].unique()]
-        _cp_c1, _cp_c2 = st.columns([1, 1.4])
-        with _cp_c1:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
-            coupon_bpu = st.selectbox("매체", _cp_bpu_options, index=0, key="coupon_bpu", label_visibility="collapsed")
-        with _cp_c2:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>쿠폰 유형</div>", unsafe_allow_html=True)
-            coupon_type_sel = st.radio(
-                "쿠폰유형", ["합산", "플러스", "일반"], horizontal=True, key="coupon_type_sel", label_visibility="collapsed",
-            )
-
-        # 조회 단위는 이 페이지에 따로 두지 않고, 사이드바의 전역 조회 단위를 그대로 따른다.
-        # (사이드바: 일별/주별/월별/월마감) 쿠폰 쪽은 월마감 구분이 없어 월별로 합쳐서 쓴다.
-        # 참고: df_coupon(월별집계)는 df_coupon_daily에서 파생되므로, 여기 도달했다는 건
-        # df_coupon_daily도 항상 존재한다는 뜻 (일별/주별 데이터 없음 케이스는 신경 안 써도 됨).
-        coupon_unit = "월별" if unit in ("월별", "월마감") else unit
+        # 매체(coupon_bpu)·쿠폰유형(coupon_type_sel)·조회단위(coupon_unit)·기준시점(coupon_ref_ts)은
+        # 모두 상단 고정 필터(사이드바 바로 아래)에서 이미 정해져서 넘어온다.
 
         def _bpu_gmv_source(bpu_val):
             if bpu_val in BPU_GROUPS:
@@ -2252,35 +2327,19 @@ if side["page"].startswith("5"):
             st.warning("해당 조건에 데이터가 없습니다.")
         else:
             # ============================================================
-            # 상단 필터탭: 기간 설정 (시작일/종료일)
-            # KPI 카드·쿠폰명 랭킹·전년비 비교표가 모두 이 구간 기준으로 표시됨.
-            # 기본값은 전체 기간이라 안 건드리면 기존과 동일하게 동작.
+            # 상단 고정 필터의 기준일자/기준시점(coupon_ref_ts)까지만 사용.
+            # KPI 카드·쿠폰명 랭킹·전년비 비교표가 모두 "그 시점 기준"으로 표시됨.
+            # 전기간비/전년비는 그 이전 데이터를 찾아야 하므로 _combined_full을 그대로 쓴다.
             # ============================================================
-            _cp_min_d = _combined_full.index.min().date()
-            _cp_max_d = _combined_full.index.max().date()
-            st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
-            _cp_c4, _cp_c5, _cp_c_spacer = st.columns([1, 1, 2.4])
-            with _cp_c4:
-                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>시작일</div>", unsafe_allow_html=True)
-                _cp_period_start = st.date_input(
-                    "시작일", value=_cp_min_d, min_value=_cp_min_d, max_value=_cp_max_d,
-                    label_visibility="collapsed", key=f"coupon_period_start_{coupon_unit}",
-                )
-            with _cp_c5:
-                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>종료일</div>", unsafe_allow_html=True)
-                _cp_period_end = st.date_input(
-                    "종료일", value=_cp_max_d, min_value=_cp_min_d, max_value=_cp_max_d,
-                    label_visibility="collapsed", key=f"coupon_period_end_{coupon_unit}",
-                )
-
-            _combined = _combined_full[
-                (_combined_full.index >= pd.Timestamp(_cp_period_start)) & (_combined_full.index <= pd.Timestamp(_cp_period_end))
-            ]
+            _latest = coupon_ref_ts
+            if _latest not in _combined_full.index:
+                _cp_cand = _combined_full.index[_combined_full.index <= _latest]
+                _latest = _cp_cand[-1] if len(_cp_cand) else _combined_full.index[-1]
+            _combined = _combined_full[_combined_full.index <= _latest]
 
             if _combined.empty:
-                st.warning("선택한 기간에 데이터가 없습니다. 시작일/종료일을 확인해주세요.")
+                st.warning("선택한 기준일자에 데이터가 없습니다.")
             else:
-                _latest = _combined.index.max()
                 _prev_period = _latest - _step
                 _prev_year = _latest - pd.DateOffset(years=1)
 
