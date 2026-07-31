@@ -2170,7 +2170,7 @@ if side["page"].startswith("5"):
         st.info("쿠폰 데이터가 없습니다. 사이드바에서 ep_coupon_daily.csv를 업로드해주세요.")
     else:
         _cp_bpu_options = [b for b in ["Total", "자사", "입점", "e-영업1", "e-영업2", "e-영업3", "e-영업4"] if b in df_coupon["BPU"].unique()]
-        _cp_c1, _cp_c2, _cp_c3 = st.columns([1, 1, 1.4])
+        _cp_c1, _cp_c2 = st.columns([1, 1.4])
         with _cp_c1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
             coupon_bpu = st.selectbox("매체", _cp_bpu_options, index=0, key="coupon_bpu", label_visibility="collapsed")
@@ -2179,14 +2179,12 @@ if side["page"].startswith("5"):
             coupon_type_sel = st.radio(
                 "쿠폰유형", ["합산", "플러스", "일반"], horizontal=True, key="coupon_type_sel", label_visibility="collapsed",
             )
-        with _cp_c3:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 단위</div>", unsafe_allow_html=True)
-            _cp_unit_options = ["일별", "주별", "월별"] if _has_daily else ["월별"]
-            coupon_unit = st.radio(
-                "조회 단위", _cp_unit_options, horizontal=True, key="coupon_unit", label_visibility="collapsed",
-            )
-            if not _has_daily:
-                st.caption("ℹ️ 일자별 원본(ep_coupon_daily.csv)을 올리면 일별/주별 조회도 가능해요.")
+
+        # 조회 단위는 이 페이지에 따로 두지 않고, 사이드바의 전역 조회 단위를 그대로 따른다.
+        # (사이드바: 일별/주별/월별/월마감) 쿠폰 쪽은 월마감 구분이 없어 월별로 합쳐서 쓴다.
+        # 참고: df_coupon(월별집계)는 df_coupon_daily에서 파생되므로, 여기 도달했다는 건
+        # df_coupon_daily도 항상 존재한다는 뜻 (일별/주별 데이터 없음 케이스는 신경 안 써도 됨).
+        coupon_unit = "월별" if unit in ("월별", "월마감") else unit
 
         def _bpu_gmv_source(bpu_val):
             if bpu_val in BPU_GROUPS:
