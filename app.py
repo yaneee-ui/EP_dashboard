@@ -336,7 +336,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     import math
     import html as _html
 
-    total = sum(abs(v) for v in values if v)
+    total = sum(v for v in values if v and v > 0)
     if total <= 0:
         st.info("표시할 데이터가 없습니다.")
         return
@@ -345,6 +345,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         "#2563eb", "#3b82f6", "#60a5fa", "#93c5fd", "#7dd3fc",
         "#38bdf8", "#0ea5e9", "#0284c7", "#a5b4fc", "#c7d2fe", "#e2e8f0",
     ]
+    NEG_COLOR = "#ef4444"  # 마이너스(반품 등) 항목은 도넛 조각엔 안 넣지만, 범례엔 이 색으로 표시
     cx = cy = size / 2
     r_outer = size / 2 - 6
     r_inner = r_outer * 0.62
@@ -353,25 +354,21 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         rad = math.radians(ang - 90)
         return cx + r * math.cos(rad), cy + r * math.sin(rad)
 
-    NEG_COLOR = "#ef4444"  # 마이너스(반품 등) 항목은 팔레트 대신 이 색으로 고정해 시각적으로 구분
-
     paths = []
     start = 0.0
     visible_idx = []
     for i, (lab, val) in enumerate(zip(labels, values)):
-        if not val:
+        if not val or val <= 0:
             continue
-        is_neg = val < 0
         visible_idx.append(i)
-        frac = abs(val) / total
+        frac = val / total
         end = start + frac * 360
         mid = (start + end) / 2
         # 선택 시 바깥으로 살짝 튀어나오는 오프셋
         _mrad = math.radians(mid - 90)
         pop = f"translate({math.cos(_mrad) * 9:.2f}px, {math.sin(_mrad) * 9:.2f}px)"
-        _tip_note = " · 마이너스(반품 등), 크기는 절대값 기준" if is_neg else ""
-        tip = _html.escape(f"{lab}: {val:,.0f}{_tip_note} ({frac * 100:.1f}%)")
-        color = NEG_COLOR if is_neg else palette[i % len(palette)]
+        tip = _html.escape(f"{lab}: {val:,.0f} ({frac * 100:.1f}%)")
+        color = palette[i % len(palette)]
 
         if frac >= 0.9999:
             paths.append(
@@ -391,10 +388,9 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             f"M {x1:.2f} {y1:.2f} A {r_outer:.2f} {r_outer:.2f} 0 {large} 1 {x2:.2f} {y2:.2f} "
             f"L {x3:.2f} {y3:.2f} A {r_inner:.2f} {r_inner:.2f} 0 {large} 0 {x4:.2f} {y4:.2f} Z"
         )
-        _dash = " stroke-dasharray='4,3'" if is_neg else ""
         paths.append(
             f"<path class='seg' data-i='{i}' data-pop='{pop}' d='{d}' fill='{color}' "
-            f"stroke='#fff' stroke-width='1.5'{_dash}><title>{tip}</title></path>"
+            f"stroke='#fff' stroke-width='1.5'><title>{tip}</title></path>"
         )
         start = end
 
@@ -748,8 +744,8 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             )
         if len(_dn_neg) > 0:
             st.caption(
-                f"🔴 점선 테두리 조각은 거래액이 마이너스인 항목이에요(반품 등으로 환불이 매출보다 많은 경우). "
-                f"조각 크기는 절대값 기준이고, 실제 값은 마이너스로 표시돼요."
+                "🔴 빨간 점 항목은 거래액이 마이너스예요(반품 등으로 환불이 매출보다 많은 경우). "
+                "도넛 조각으로는 표시되지 않고, 오른쪽 목록에 실제 마이너스 값 그대로 표시돼요."
             )
 
         with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
