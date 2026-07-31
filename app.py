@@ -17,7 +17,7 @@ from ai_insights import (
     generate_insights, render_overall_summary_box, render_metric_insight,
     generate_ranking_insights, render_ranking_insight_box,
 )
-from sidebar import render_sidebar
+from sidebar import render_sidebar, render_sidebar_data_status
 from filters import filter_by_combo
 from kpi import render_kpi_cards
 from charts import main_trend_data
@@ -99,6 +99,23 @@ if side["ep_coupon_daily_file"] is not None:
     df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)
     st.sidebar.success(f"쿠폰 데이터 업로드 완료 ({df_coupon_daily['날짜'].min().strftime('%Y-%m-%d')} ~ {df_coupon_daily['날짜'].max().strftime('%Y-%m-%d')})")
 
+# --- 사이드바 하단: 데이터셋별 반영 현황(기간/일수) ---
+def _status_entry(df, date_col):
+    if df is None or df.empty or date_col not in df.columns:
+        return None, None, None
+    _dmin = df[date_col].min()
+    _dmax = df[date_col].max()
+    _n = df[date_col].nunique()
+    return _dmin.strftime("%Y-%m-%d"), _dmax.strftime("%Y-%m-%d"), _n
+
+_status_items = [
+    ("EP채널", *_status_entry(df_ep, COL_DATE)),
+    ("EP실적", *_status_entry(df_traffic, "날짜")),
+    ("카테고리", *_status_entry(df_category, "날짜")),
+    ("쿠폰(일자별)", *_status_entry(df_coupon_daily, "날짜")),
+]
+render_sidebar_data_status(_status_items)
+
 
 unit = side["view_unit"]
 
@@ -107,6 +124,13 @@ BPU_GROUPS = {
     "자사": ["e-영업1", "e-영업2"],
     "입점": ["e-영업3", "e-영업4"],
 }
+
+
+def _reset_date_range(_state_key, _value):
+    """'최근으로' 버튼용 콜백. on_click으로 넘겨서 위젯이 다시 그려지기 전에
+    session_state를 먼저 갱신한다 (버튼 클릭 처리 중 위젯이 이미 인스턴스화된
+    뒤에 st.session_state[key]=... 를 직접 대입하면 StreamlitAPIException이 남)."""
+    st.session_state[_state_key] = _value
 
 
 def aggregate_traffic(df, bpus, member="전체"):
@@ -1252,22 +1276,23 @@ if side["page"].startswith("1"):
         if unit == "일별":
             _default_start = max(tr_series.index.min().date(), tr_series.index.max().date() - _dt.timedelta(days=30))
             _tr_range_key = f"tr_range_{bpu}_{segment}"
-            col_d, col_reset, col_y = st.columns([3.2, 0.9, 1])
+            col_d, col_reset, col_y = st.columns([3, 1, 1])
             with col_d:
                 dr = st.date_input("기간", value=(_default_start, tr_series.index.max().date()),
                                    min_value=tr_series.index.min().date(), max_value=tr_series.index.max().date(),
                                    key=_tr_range_key)
             with col_reset:
                 st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
-                if st.button("🔄 최근으로", key=f"tr_range_reset_{bpu}_{segment}", use_container_width=True):
-                    st.session_state[_tr_range_key] = (_default_start, tr_series.index.max().date())
-                    st.rerun()
+                st.button(
+                    "🔄 최근으로", key=f"tr_range_reset_{bpu}_{segment}", use_container_width=True,
+                    on_click=_reset_date_range, args=(_tr_range_key, (_default_start, tr_series.index.max().date())),
+                )
             with col_y:
                 show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
             if isinstance(dr, tuple) and len(dr) == 2:
                 tr_series = tr_series[(tr_series.index >= pd.Timestamp(dr[0])) & (tr_series.index <= pd.Timestamp(dr[1]))]
         else:
-            col_sp, col_y = st.columns([5, 1])
+            _sp1, _sp2, col_y = st.columns([3, 1, 1])
             with col_y:
                 show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
 
@@ -1499,7 +1524,7 @@ if side["page"].startswith("1"):
             _ep_min_d = _dt.date(_ep_latest_year, 1, 1)
             _ep_default_start = max(_ep_min_d, _ep_max_d - _dt.timedelta(days=30))
             _ep_range_key = f"ep_range_{bpu}_{match_status}_{lowest_status}"
-            col_ed, col_ereset, col_ey = st.columns([3.2, 0.9, 1])
+            col_ed, col_ereset, col_ey = st.columns([3, 1, 1])
             with col_ed:
                 ep_dr = st.date_input(
                     "기간", value=(_ep_default_start, _ep_max_d),
@@ -1507,9 +1532,10 @@ if side["page"].startswith("1"):
                 )
             with col_ereset:
                 st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
-                if st.button("🔄 최근으로", key=f"ep_range_reset_{bpu}_{match_status}_{lowest_status}", use_container_width=True):
-                    st.session_state[_ep_range_key] = (_ep_default_start, _ep_max_d)
-                    st.rerun()
+                st.button(
+                    "🔄 최근으로", key=f"ep_range_reset_{bpu}_{match_status}_{lowest_status}", use_container_width=True,
+                    on_click=_reset_date_range, args=(_ep_range_key, (_ep_default_start, _ep_max_d)),
+                )
             with col_ey:
                 show_ep_yoy = st.checkbox("전년 비교선 표시", value=True, key="ep_yoy_cb")
             if isinstance(ep_dr, tuple) and len(ep_dr) == 2:
@@ -1517,7 +1543,7 @@ if side["page"].startswith("1"):
             else:
                 _ep_date_start, _ep_date_end = _ep_default_start, _ep_max_d
         else:
-            col_esp, col_ey = st.columns([5, 1])
+            _esp1, _esp2, col_ey = st.columns([3, 1, 1])
             with col_ey:
                 show_ep_yoy = st.checkbox("전년 비교선 표시", value=True, key="ep_yoy_cb")
             _ep_date_start = _dt.date(_ep_latest_year, 1, 1)
@@ -1765,7 +1791,7 @@ if side["page"].startswith("2"):
                 # 기간이 이어서 남지 않도록 함(예전엔 키가 고정돼 있어 다른 카테고리 선택시에도
                 # 이전에 봤던 기간이 그대로 남아있는 문제가 있었음)
                 _cat_range_key = f"cat_range_{bpu}_{selected_cat}_{selected_brand}"
-                col_cd, col_reset, col_cy = st.columns([3.2, 0.9, 1])
+                col_cd, col_reset, col_cy = st.columns([3, 1, 1])
                 with col_cd:
                     cat_dr = st.date_input(
                         "기간", value=(_cat_default_start, _cat_max_d),
@@ -1773,15 +1799,16 @@ if side["page"].startswith("2"):
                     )
                 with col_reset:
                     st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
-                    if st.button("🔄 최근으로", key=f"cat_range_reset_{bpu}_{selected_cat}_{selected_brand}", use_container_width=True):
-                        st.session_state[_cat_range_key] = (_cat_default_start, _cat_max_d)
-                        st.rerun()
+                    st.button(
+                        "🔄 최근으로", key=f"cat_range_reset_{bpu}_{selected_cat}_{selected_brand}", use_container_width=True,
+                        on_click=_reset_date_range, args=(_cat_range_key, (_cat_default_start, _cat_max_d)),
+                    )
                 with col_cy:
                     show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
                 if isinstance(cat_dr, tuple) and len(cat_dr) == 2:
                     cat_series = cat_series[(cat_series.index >= pd.Timestamp(cat_dr[0])) & (cat_series.index <= pd.Timestamp(cat_dr[1]))]
             else:
-                col_csp, col_cy = st.columns([5, 1])
+                _csp1, _csp2, col_cy = st.columns([3, 1, 1])
                 with col_cy:
                     show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
 
@@ -2376,7 +2403,7 @@ if side["page"].startswith("5"):
                         _combined.index.min().date(), _combined.index.max().date() - _dt.timedelta(days=30)
                     )
                     _cp_chart_key = f"coupon_chart_range_{coupon_bpu}_{coupon_type_sel}"
-                    _cc1, _cc2 = st.columns([3.2, 0.9])
+                    _cc1, _cc2 = st.columns([2, 1])
                     with _cc1:
                         st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>그래프 기간</div>", unsafe_allow_html=True)
                         _cp_chart_dr = st.date_input(
@@ -2387,9 +2414,10 @@ if side["page"].startswith("5"):
                         )
                     with _cc2:
                         st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
-                        if st.button("🔄 최근으로", key=f"{_cp_chart_key}_reset", use_container_width=True):
-                            st.session_state[_cp_chart_key] = (_cp_chart_default_start, _combined.index.max().date())
-                            st.rerun()
+                        st.button(
+                            "🔄 최근으로", key=f"{_cp_chart_key}_reset", use_container_width=True,
+                            on_click=_reset_date_range, args=(_cp_chart_key, (_cp_chart_default_start, _combined.index.max().date())),
+                        )
                     if isinstance(_cp_chart_dr, tuple) and len(_cp_chart_dr) == 2:
                         _chart_series = _combined[
                             (_combined.index >= pd.Timestamp(_cp_chart_dr[0])) & (_combined.index <= pd.Timestamp(_cp_chart_dr[1]))
