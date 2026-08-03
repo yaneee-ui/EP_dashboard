@@ -1063,10 +1063,21 @@ with _sticky:
 
         with gc3:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
-            cum_agg_mode = st.selectbox(
-                "집계 방식", ["일평균", "누적"],
-                label_visibility="collapsed", key="cum_agg_mode",
-            )
+            if cum_unit == "월마감":
+                # 월마감은 '완료된 달의 총 실적'을 보는 기준이라 일평균은 의미가 없어서 누적으로 고정.
+                # (일별/주별/월별에서는 그대로 일평균/누적 토글 가능)
+                cum_agg_mode = "누적"
+                st.markdown(
+                    "<div style='padding:0.4rem 0.6rem;background:#f3f4f6;border-radius:6px;"
+                    "font-size:0.85rem;color:#374151;'>누적 <span style='color:#9ca3af;font-size:0.72rem;'>"
+                    "(월마감은 항상 누적)</span></div>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                cum_agg_mode = st.selectbox(
+                    "집계 방식", ["일평균", "누적"],
+                    label_visibility="collapsed", key="cum_agg_mode",
+                )
 
         # 데이터 있는 전체 날짜 범위 (트래픽 데이터 기준)
         _cum_min_d = df_traffic["날짜"].min().date()
