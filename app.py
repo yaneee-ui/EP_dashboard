@@ -223,6 +223,10 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
     ]
     cfg = UNIT_CONFIG[unit]
 
+    # 절대값(합산 가능) 지표만 월마감일 때 합계로 바꾼다. CR/객단가는 비율 지표라
+    # 날짜별 값을 그대로 합치면 안 되므로(무의미) 항상 평균을 유지한다.
+    SUMMABLE_METRICS = {"트래픽", "거래액", "구매객수"}
+
     def _series_for(bpu_key, metric, member="전체"):
         if bpu_key in BPU_GROUPS:
             sub = aggregate_traffic(df_traffic, BPU_GROUPS[bpu_key], member)
@@ -232,7 +236,8 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
             return pd.Series(dtype="float64")
         # KPI 카드와 동일한 집계 로직 (조회 단위 반영)
         s = sub.set_index("날짜")[metric].sort_index()
-        series = s.resample(cfg["rule"]).mean()
+        _agg = "sum" if (unit == "월마감" and metric in SUMMABLE_METRICS) else "mean"
+        series = s.resample(cfg["rule"]).agg(_agg)
         if unit == "주별":
             series.index = series.index - pd.Timedelta(days=6)
         elif unit == "월마감":
@@ -530,7 +535,8 @@ def compute_official_total(df_scope, unit, selected_period_date):
     if df_scope.empty:
         return None, None
     s_full = df_scope.set_index("날짜")["거래액"].sort_index()
-    series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).mean()
+    _agg = "sum" if unit == "월마감" else "mean"
+    series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
     if unit == "주별":
         series_full.index = series_full.index - pd.Timedelta(days=6)
     elif unit == "월마감" and not series_full.empty and s_full.index.max() < series_full.index[-1]:
@@ -566,7 +572,8 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     rows = []
     for name in sorted(sub_df[group_col].unique()):
         s_full = sub_df[sub_df[group_col] == name].set_index("날짜")["거래액"].sort_index()
-        series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).mean()
+        _agg = "sum" if unit == "월마감" else "mean"
+        series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
         if unit == "주별":
             series_full.index = series_full.index - pd.Timedelta(days=6)
         elif unit == "월마감" and not series_full.empty and s_full.index.max() < series_full.index[-1]:
@@ -1287,7 +1294,9 @@ if side["page"].startswith("1"):
         _kpi_computed = {}
         for col_name, display_name in all_items:
             s = tr_combo.set_index("날짜")[col_name].sort_index()
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            # 절대값 지표(트래픽/거래액/구매객수)는 월마감이면 합계, 비율 지표(CR/객단가)는 항상 평균
+            _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
+            series = s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
             if unit == "주별":
                 series.index = series.index - pd.Timedelta(days=6)
             elif unit == "월마감":
@@ -1363,7 +1372,8 @@ if side["page"].startswith("1"):
 
         # 리샘플 (전체 기간 — 전년 비교선용)
         s_raw = tr_combo.set_index("날짜")[tr_metric].sort_index()
-        tr_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
+        _agg = "sum" if (unit == "월마감" and tr_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
+        tr_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
         if unit == "주별":
             tr_full.index = tr_full.index - pd.Timedelta(days=6)
         elif unit == "월마감" and not tr_full.empty and s_raw.index.max() < tr_full.index[-1]:
@@ -1443,7 +1453,8 @@ if side["page"].startswith("1"):
         prev_label = yoy_label = None
         for col_name, display_name in all_items:
             s = tr_combo.set_index("날짜")[col_name].sort_index()
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
+            series = s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
             if unit == "주별":
                 series.index = series.index - pd.Timedelta(days=6)
             elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
@@ -1467,7 +1478,8 @@ if side["page"].startswith("1"):
         # 회원UV 행 추가 (선택된 세그먼트와 무관하게 항상 표시)
         if not tr_member.empty:
             s_mem = tr_member.set_index("날짜")["트래픽"].sort_index()
-            series_mem = s_mem.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            _agg_mem = "sum" if unit == "월마감" else "mean"
+            series_mem = s_mem.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg_mem)
             if unit == "주별":
                 series_mem.index = series_mem.index - pd.Timedelta(days=6)
             elif unit == "월마감" and not series_mem.empty and s_mem.index.max() < series_mem.index[-1]:
@@ -1801,7 +1813,8 @@ if side["page"].startswith("2"):
             _cat_computed = {}
             for col_name, display_name in CAT_METRICS:
                 s = cat_combo.set_index("날짜")[col_name].sort_index()
-                series = s.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
+                series = s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
                 if unit == "주별":
                     series.index = series.index - pd.Timedelta(days=6)
                 elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
@@ -1875,7 +1888,8 @@ if side["page"].startswith("2"):
             )
 
             s_raw = cat_combo.set_index("날짜")[cat_metric].sort_index()
-            cat_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).mean()
+            _agg = "sum" if (unit == "월마감" and cat_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
+            cat_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
             if unit == "주별":
                 cat_full.index = cat_full.index - pd.Timedelta(days=6)
             elif unit == "월마감" and not cat_full.empty and s_raw.index.max() < cat_full.index[-1]:
@@ -1944,7 +1958,8 @@ if side["page"].startswith("2"):
             cat_prev_label = cat_yoy_label = None
             for col_name, display_name in CAT_METRICS:
                 s2 = cat_combo.set_index("날짜")[col_name].sort_index()
-                series2 = s2.resample(UNIT_CONFIG[unit]["rule"]).mean()
+                _agg2 = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
+                series2 = s2.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg2)
                 if unit == "주별":
                     series2.index = series2.index - pd.Timedelta(days=6)
                 elif unit == "월마감" and not series2.empty and s2.index.max() < series2.index[-1]:
