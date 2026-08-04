@@ -714,7 +714,9 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
 def compute_official_total(df_scope, unit, selected_period_date):
     """df_scope(보통 카테고리='전체'&브랜드='전체' 등으로 필터된 단일 그룹)의
     거래액을 조회단위로 리샘플하여 (현재값, 전년동기값) 튜플로 반환.
-    도넛 중앙에 표시할 '진짜 전체값'을 개별 항목 합산과 별개로 정확히 구하기 위함."""
+    도넛 중앙에 표시할 '진짜 전체값'을 개별 항목 합산과 별개로 정확히 구하기 위함.
+    compute_kpi_deltas를 그대로 재사용해서, 진행 중인(부분) 달/주에도 KPI 카드·요약표와
+    똑같은 기준(같은 날짜 수만큼 동요일 매칭)으로 전년비가 계산되도록 한다."""
     if df_scope.empty:
         return None, None
     s_full = df_scope.set_index("날짜")["거래액"].sort_index()
@@ -727,18 +729,11 @@ def compute_official_total(df_scope, unit, selected_period_date):
     series = series_full[series_full.index <= selected_period_date] if not series_full.empty else series_full
     if series.empty:
         return None, None
-    cur_val = series.iloc[-1]
-    cur_date = series.index[-1]
-    if unit == "월마감":
-        prev_date = cur_date - pd.DateOffset(years=1)
-    else:
-        prev_date = cur_date - pd.Timedelta(days=364)
-    if prev_date in series_full.index:
-        prev_val = series_full.loc[prev_date]
-    else:
-        cand = series_full.index[series_full.index <= prev_date]
-        prev_val = series_full.loc[cand[-1]] if len(cand) else None
-    return cur_val, prev_val
+    _s_raw = s_full[s_full.index <= selected_period_date] if selected_period_date is not None else s_full
+    stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+    if stats is None:
+        return None, None
+    return stats["current"], stats.get("yoy_value")
 
 
 def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None):
@@ -764,18 +759,13 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         series = series_full[series_full.index <= selected_period_date] if not series_full.empty else series_full
         if series.empty:
             continue
-        cur_val = series.iloc[-1]
-        cur_date = series.index[-1]
-
-        if unit == "월마감":
-            prev_date = cur_date - pd.DateOffset(years=1)
-        else:
-            prev_date = cur_date - pd.Timedelta(days=364)
-        if prev_date in series_full.index:
-            prev_val = series_full.loc[prev_date]
-        else:
-            cand = series_full.index[series_full.index <= prev_date]
-            prev_val = series_full.loc[cand[-1]] if len(cand) else None
+        _s_raw = s_full[s_full.index <= selected_period_date] if selected_period_date is not None else s_full
+        # compute_kpi_deltas 재사용 — KPI 카드·요약표와 동일 기준(부분월이면 동요일 매칭)으로 전년비 계산
+        _stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+        if _stats is None:
+            continue
+        cur_val = _stats["current"]
+        prev_val = _stats.get("yoy_value")
 
         if hide_zero:
             _cur_zero = pd.isna(cur_val) or abs(cur_val) < 0.5
