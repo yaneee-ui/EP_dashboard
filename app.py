@@ -2048,10 +2048,11 @@ if side["page"].startswith("2"):
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
-        # --- 카테고리별 요약표 (전일비/전주비/전년동요일비) ---
-        # 조회단위(일별/주별/월별)와 무관하게 항상 '가장 최근 날짜' 기준 일 단위 비교.
+        # --- 카테고리별 요약표 (조회 단위에 맞춰 전기간비/평균비/전년비) ---
+        # 사이드바 조회단위(일별/주별/월별/월마감)를 그대로 따라간다 — KPI 카드와 같은
+        # compute_kpi_deltas를 재사용해서 라벨(전일비/전주비/전월비 등)도 자동으로 맞춰짐.
         # 카테고리 선택 필터와 무관하게 전체 카테고리를 대상으로 함 (개요용 표라서).
-        st.markdown(f"**카테고리별 요약**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · 거래액 기준</span>", unsafe_allow_html=True)
+        st.markdown(f"**카테고리별 요약**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · 거래액 기준 · {unit}</span>", unsafe_allow_html=True)
 
         _cat_daily_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
         if bpu == "Total" or bpu in BPU_GROUPS:
@@ -2062,36 +2063,25 @@ if side["page"].startswith("2"):
         if _cat_daily_df.empty:
             st.info("표시할 카테고리 데이터가 없습니다.")
         else:
-            _cat_pivot = _cat_daily_df.pivot_table(index="날짜", columns="카테고리", values="거래액", aggfunc="sum")
-            _cat_pivot.index = pd.to_datetime(_cat_pivot.index)
-            _cat_pivot = _cat_pivot.sort_index()
-            _cat_latest_d = _cat_pivot.index.max()
-            _cat_prev_d = _cat_latest_d - pd.Timedelta(days=1)
-            _cat_week_d = _cat_latest_d - pd.Timedelta(days=7)
-            _cat_year_d = _cat_latest_d - pd.Timedelta(days=364)
-
-            def _cat_get(date_, col):
-                if date_ in _cat_pivot.index and col in _cat_pivot.columns:
-                    v = _cat_pivot.loc[date_, col]
-                    return None if pd.isna(v) else float(v)
-                return None
-
-            def _cat_pct(cur, ref):
-                if cur is None or ref is None or ref == 0:
-                    return None
-                return (cur / ref - 1) * 100
+            _cat_cfg = UNIT_CONFIG[unit]
+            _cat_rule = _cat_cfg["rule"]
+            # 거래액은 절대값(합산 가능) 지표라 월마감이면 합계, 그 외에는 일평균 (다른 페이지와 동일 규칙)
+            _cat_agg = "sum" if unit == "월마감" else "mean"
 
             _cat_summary_rows = []
-            for cat_name in _cat_pivot.columns:
-                cur = _cat_get(_cat_latest_d, cat_name)
-                if not cur:  # None 또는 0(거래액 없음)인 카테고리는 제외
+            for cat_name, g in _cat_daily_df.groupby("카테고리"):
+                s = g.set_index("날짜")["거래액"].sort_index()
+                series = s.resample(_cat_rule).agg(_cat_agg)
+                if unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]  # 미완성 달 제외
+                stats = compute_kpi_deltas(series, unit)
+                if stats is None or not stats["current"]:  # None 또는 0(거래액 없음)인 카테고리는 제외
                     continue
-                prev_v = _cat_get(_cat_prev_d, cat_name)
-                week_v = _cat_get(_cat_week_d, cat_name)
-                year_v = _cat_get(_cat_year_d, cat_name)
                 _cat_summary_rows.append({
-                    "카테고리": cat_name, "거래액": cur,
-                    "전일비": _cat_pct(cur, prev_v), "전주비": _cat_pct(cur, week_v), "전년동요일비": _cat_pct(cur, year_v),
+                    "카테고리": cat_name, "거래액": stats["current"],
+                    "prev": stats["prev_delta"], "avg": stats["avg_delta"], "yoy": stats["yoy_delta"],
                 })
 
             if not _cat_summary_rows:
@@ -2101,23 +2091,21 @@ if side["page"].startswith("2"):
                 _cat_summary_body = "".join(
                     f"<tr><td class='m'>{r['카테고리']}</td>"
                     f"<td class='v' style='text-align:right;'>{r['거래액']:,.0f}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(r['전일비'])}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(r['전주비'])}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(r['전년동요일비'])}</td></tr>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['prev'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['avg'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['yoy'])}</td></tr>"
                     for r in _cat_summary_rows
                 )
                 st.markdown(
                     "<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>"
                     "<th>카테고리</th><th style='text-align:right;'>거래액</th>"
-                    "<th style='text-align:right;'>전일비</th><th style='text-align:right;'>전주비</th>"
-                    "<th style='text-align:right;'>전년동요일비</th>"
+                    f"<th style='text-align:right;'>{_cat_cfg['prev_label']}</th>"
+                    f"<th style='text-align:right;'>{_cat_cfg['avg_label']}</th>"
+                    f"<th style='text-align:right;'>{_cat_cfg['yoy_label']}</th>"
                     "</tr></thead><tbody>" + _cat_summary_body + "</tbody></table></div>",
                     unsafe_allow_html=True,
                 )
-                st.caption(
-                    f"ℹ️ 기준일: {_cat_latest_d.strftime('%Y-%m-%d')} (데이터상 가장 최근 날짜, 조회 단위와 무관). "
-                    "거래액이 있는 카테고리만 표시돼요."
-                )
+                st.caption(f"ℹ️ 기준: {period_label} · 거래액이 있는 카테고리만 표시돼요.")
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
