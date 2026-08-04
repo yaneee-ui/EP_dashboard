@@ -672,6 +672,8 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     # --- AI 인사이트 (요청 시) ---
     if ai_key:
         _ai_rank_result = None
+        _rk_ctx_key = f"ai_rank_ctx_{ai_key}"
+        _rk_cur_ctx = ai_context or subtitle
         if _rk_clicked:
             _rank_payload = []
             for _, r in share_df.iterrows():
@@ -692,8 +694,17 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                     _rank_payload, ai_context or subtitle, f"rank_{ai_key}"
                 )
                 st.session_state[f"ai_rank_result_{ai_key}"] = _ai_rank_result
-        elif f"ai_rank_result_{ai_key}" in st.session_state:
+                st.session_state[_rk_ctx_key] = _rk_cur_ctx
+        elif (
+            f"ai_rank_result_{ai_key}" in st.session_state
+            and st.session_state.get(_rk_ctx_key) == _rk_cur_ctx
+        ):
             _ai_rank_result = st.session_state[f"ai_rank_result_{ai_key}"]
+        else:
+            # 매체/세그먼트/조회단위 등 조회 조건이 바뀌어서 이전 인사이트가 더 이상
+            # 맞지 않으므로 캐시를 지운다 (버튼을 다시 눌러야 새 조건으로 재생성됨).
+            st.session_state.pop(f"ai_rank_result_{ai_key}", None)
+            st.session_state.pop(_rk_ctx_key, None)
         render_ranking_insight_box(_ai_rank_result)
 
     bar_rows_html = []
@@ -1064,6 +1075,20 @@ with _sticky:
                 if _has_segment and selected_brand != "전체":
                     st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
 
+            # 핏플랍(FF) 제외 — FF 브랜드 데이터가 실제로 있을 때만 노출
+            if (df_category["브랜드"] == "FF").any():
+                st.markdown("<div style='margin-top:4px;'></div>", unsafe_allow_html=True)
+                _ff_exclude = st.checkbox(
+                    "핏플랍(FF) 제외",
+                    value=False, key="cat_ff_exclude",
+                    help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
+                         "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
+                )
+            else:
+                _ff_exclude = False
+        else:
+            _ff_exclude = False
+
         # 페이지1(실적요약)일 때는 EP실적용 세그먼트(고객 구분) 필터 노출
         if _page_num == "1":
             _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
@@ -1386,8 +1411,16 @@ if side["page"].startswith("1"):
             with st.spinner("AI 인사이트 생성 중..."):
                 _ai_result_ep = generate_insights(_ai_payload_ep, _ai_context_ep, "ep_summary")
                 st.session_state["ai_result_ep_latest"] = _ai_result_ep
-        elif "ai_result_ep_latest" in st.session_state:
+                st.session_state["ai_result_ep_ctx"] = _ai_context_ep
+        elif (
+            "ai_result_ep_latest" in st.session_state
+            and st.session_state.get("ai_result_ep_ctx") == _ai_context_ep
+        ):
             _ai_result_ep = st.session_state["ai_result_ep_latest"]
+        else:
+            # 매체/세그먼트/조회단위 등이 바뀌어서 이전 인사이트가 더 이상 맞지 않음 -> 캐시 초기화
+            st.session_state.pop("ai_result_ep_latest", None)
+            st.session_state.pop("ai_result_ep_ctx", None)
         render_overall_summary_box(_ai_result_ep)
 
         # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -1827,12 +1860,7 @@ if side["page"].startswith("2"):
     if df_category.empty:
         st.info("카테고리 데이터가 없습니다. 사이드바에서 ep_category.csv를 업로드해주세요.")
     else:
-        _ff_exclude = st.checkbox(
-            "핏플랍(FF) 제외",
-            value=False, key="cat_ff_exclude",
-            help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
-                 "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
-        )
+        # 핏플랍(FF) 제외 여부(_ff_exclude)는 상단 고정 필터에서 이미 정해져서 넘어온다.
 
         # 매체필터(bpu)에 맞춰 카테고리 데이터 필터링 (자사/입점은 합산)
         if bpu in BPU_GROUPS:
@@ -1906,17 +1934,26 @@ if side["page"].startswith("2"):
                         "prev_label": _cfg_cat["prev_label"], "prev_delta": float(stats["prev_delta"] or 0),
                         "yoy_label": _cfg_cat["yoy_label"], "yoy_delta": float(stats["yoy_delta"] or 0),
                     })
+            _ai_context_cat = (
+                f"카테고리 실적 · {bpu} · {selected_cat}/{brand_label(selected_brand)} · {cat_segment} · "
+                f"{unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else "")
+            )
             _ai_result_cat = None
             if _ai_clicked_cat:
                 with st.spinner("AI 인사이트 생성 중..."):
-                    _ai_result_cat = generate_insights(
-                        _ai_payload_cat,
-                        f"카테고리 실적 · {bpu} · {selected_cat}/{brand_label(selected_brand)} · {cat_segment} · {unit} · 기준 {period_label}",
-                        "cat_summary",
-                    )
+                    _ai_result_cat = generate_insights(_ai_payload_cat, _ai_context_cat, "cat_summary")
                     st.session_state["ai_result_cat_latest"] = _ai_result_cat
-            elif "ai_result_cat_latest" in st.session_state:
+                    st.session_state["ai_result_cat_ctx"] = _ai_context_cat
+            elif (
+                "ai_result_cat_latest" in st.session_state
+                and st.session_state.get("ai_result_cat_ctx") == _ai_context_cat
+            ):
                 _ai_result_cat = st.session_state["ai_result_cat_latest"]
+            else:
+                # 카테고리/브랜드/세그먼트/핏플랍제외 등 조건이 바뀌어서 이전 인사이트가
+                # 더 이상 맞지 않음 -> 캐시 초기화
+                st.session_state.pop("ai_result_cat_latest", None)
+                st.session_state.pop("ai_result_cat_ctx", None)
             render_overall_summary_box(_ai_result_cat)
 
             # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -2069,7 +2106,7 @@ if side["page"].startswith("2"):
 
         render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준",
                                donut=True, official_total=_official_cat_total,
-                               ai_key="cat_share", ai_context=f"카테고리별 거래액 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}")
+                               ai_key="cat_share", ai_context=f"카테고리별 거래액 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -2098,7 +2135,7 @@ if side["page"].startswith("2"):
         render_revenue_ranking(_brand_share_df, "브랜드", unit, selected_period_date, "브랜드별 거래액 랭킹", _brand_subtitle,
                                label_map=BRAND_LABELS, hide_zero=True,
                                donut=True, official_total=_official_brand_total,
-                               ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}")
+                               ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
