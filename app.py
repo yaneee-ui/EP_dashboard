@@ -219,96 +219,46 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
     return agg
 
 
-def _export_period_days(unit, sel_date, all_dates):
-    """조회 기준(단위/기준시점)에 해당하는 '현재 집계 일자들'과 '전년 동요일(364일 전)
-    일자들'을 반환. 월별은 진행 중인 달이면 있는 날짜까지만(예: 8/1~3) 잡힌다."""
-    d = pd.Timestamp(sel_date)
-    all_dates = pd.DatetimeIndex(sorted(pd.unique(all_dates)))
-    if unit == "일별":
-        cur = all_dates[all_dates == d]
-        if len(cur) == 0:
-            _le = all_dates[all_dates <= d]
-            cur = _le[-1:] if len(_le) else all_dates[:0]
-    elif unit == "주별":
-        cur = all_dates[(all_dates >= d) & (all_dates <= d + pd.Timedelta(days=6))]
-    else:  # 월별/월마감: sel_date는 해당 월의 월말 라벨
-        start = d.replace(day=1)
-        cur = all_dates[(all_dates >= start) & (all_dates <= d)]
-    prior = pd.DatetimeIndex([x - pd.Timedelta(days=364) for x in cur])
-    return cur, prior
-
-
-def build_yoy_summary_excel(unit, sel_date, df_traffic, df_category):
-    """전년동요일 기준 요약 엑셀(bytes) 생성.
-    - 시트1 'BPU별': 지표(트래픽/거래액/구매객수/CR/객단가) × BPU(전체/e-영업1~4)
-    - 시트2 '카테고리별(거래액)': BPU(e-영업1~4) × 카테고리(전체+거래액 있는 카테고리)
-    트래픽/거래액/구매객수는 기간 합계, CR·객단가는 합계 성분에서 재계산(비율 지표 원칙)."""
-    all_dates = df_traffic["날짜"].unique() if not df_traffic.empty else df_category["날짜"].unique()
-    cur_days, prior_days = _export_period_days(unit, sel_date, all_dates)
-    cur_year = pd.Timestamp(sel_date).year
+def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_category, cat_segment, ff_exclude):
+    """주간보고용 엑셀(bytes) 생성.
+    - 시트1 'BPU별': compute_bpu_comparison_rows() 그대로 사용 → 1번 페이지 비교표와 100% 동일 로직/숫자
+    - 시트2 '카테고리별(거래액)': compute_category_yoy_rows() 그대로 사용(BPU=e-영업1~4 각각)
+      → 2번 페이지 '카테고리별 요약'표와 동일한 세그먼트 필터·핏플랍 제외 규칙 적용
+    별도로 값을 재계산하지 않고 두 페이지가 쓰는 함수를 그대로 호출하므로, 화면에 보이는 표와
+    엑셀 숫자가 어긋날 일이 없다."""
+    cur_year = pd.Timestamp(selected_period_date).year
     prev_year = cur_year - 1
     col_prev, col_cur = f"{prev_year}년", f"{cur_year}년"
 
-    def _sums(daily_df, group_col, group_val, days):
-        m = daily_df[(daily_df["날짜"].isin(days)) & (daily_df[group_col] == group_val)]
-        return {k: float(m[k].sum()) for k in ("트래픽", "거래액", "구매객수")}
-
-    def _yoy(cur, prev):
-        return round((cur / prev - 1) * 100, 1) if prev else None
-
-    # --- 시트1: BPU별 ---
-    tr = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
-    bpu_rows_def = [("전체", "Total"), ("e-영업1", "e-영업1"), ("e-영업2", "e-영업2"),
-                    ("e-영업3", "e-영업3"), ("e-영업4", "e-영업4")]
-    bpu_rows_def = [(lbl, v) for lbl, v in bpu_rows_def if (tr["BPU"] == v).any()]
-
+    # --- 시트1: BPU별 (1번 페이지와 동일 함수) — 이미지 기준: 전체/e-영업1~4만 ---
+    _bpu_rows, cfg, BPU_COLS = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
+    _bpu_keep = {"Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"}
+    _bpu_label = {"Total": "전체"}
     left_rows = []
-    for metric in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
-        for lbl, bv in bpu_rows_def:
-            c = _sums(tr, "BPU", bv, cur_days)
-            p = _sums(tr, "BPU", bv, prior_days)
-            if metric in ("트래픽", "거래액", "구매객수"):
-                cv, pv = c[metric], p[metric]
-            elif metric == "CR":
-                cv = (c["구매객수"] / c["트래픽"] * 100) if c["트래픽"] else 0
-                pv = (p["구매객수"] / p["트래픽"] * 100) if p["트래픽"] else 0
-            else:  # 객단가
-                cv = (c["거래액"] / c["구매객수"]) if c["구매객수"] else 0
-                pv = (p["거래액"] / p["구매객수"]) if p["구매객수"] else 0
-            left_rows.append({
-                "지표": metric, "구분": lbl,
-                col_prev: round(pv, 1) if metric in ("CR",) else round(pv),
-                col_cur: round(cv, 1) if metric in ("CR",) else round(cv),
-                "전년비(%)": _yoy(cv, pv),
-            })
+    for r in _bpu_rows:
+        if r["bpu"] not in _bpu_keep:
+            continue
+        stats = r["stats"]
+        if stats is None:
+            continue
+        is_pct = r["is_pct"]
+        left_rows.append({
+            "지표": r["metric_label"], "구분": _bpu_label.get(r["bpu"], r["bpu"]),
+            col_prev: round(stats["yoy_value"], 1) if is_pct else round(stats["yoy_value"]) if stats.get("yoy_value") is not None else None,
+            col_cur: round(stats["current"], 1) if is_pct else round(stats["current"]),
+            "전년비(%)": round(stats["yoy_delta"], 1) if stats.get("yoy_delta") is not None else None,
+        })
     left_df = pd.DataFrame(left_rows)
 
-    # --- 시트2: 카테고리별 (거래액) ---
-    cat = df_category
-    if "회원구분" in cat.columns:
-        cat = cat[cat["회원구분"] == "전체"]
-    cat = cat[cat["브랜드"] == "전체"]
+    # --- 시트2: 카테고리별 (거래액, e-영업1~4 각각) — 2번 페이지와 동일 함수 ---
     right_rows = []
     for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        sub = cat[cat["BPU"] == bv]
-        if sub.empty:
-            continue
-        # 전체 먼저, 그다음 거래액 있는 카테고리 (현재 기준 거래액 큰 순)
-        cats = ["전체"] + [c for c in sorted(sub["카테고리"].unique()) if c != "전체"]
-        _cat_vals = []
-        for cv_name in cats:
-            c_sum = sub[(sub["날짜"].isin(cur_days)) & (sub["카테고리"] == cv_name)]["거래액"].sum()
-            p_sum = sub[(sub["날짜"].isin(prior_days)) & (sub["카테고리"] == cv_name)]["거래액"].sum()
-            if cv_name != "전체" and c_sum == 0 and p_sum == 0:
-                continue  # 거래액 없는 카테고리 제외
-            _cat_vals.append((cv_name, float(p_sum), float(c_sum)))
-        # 전체는 맨 위 고정, 나머지는 현재 거래액 큰 순
-        _head = [x for x in _cat_vals if x[0] == "전체"]
-        _rest = sorted([x for x in _cat_vals if x[0] != "전체"], key=lambda x: x[2], reverse=True)
-        for cv_name, p_sum, c_sum in _head + _rest:
+        for r in compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date):
             right_rows.append({
-                "BPU": bv, "카테고리": cv_name,
-                col_prev: round(p_sum), col_cur: round(c_sum), "전년비(%)": _yoy(c_sum, p_sum),
+                "BPU": bv, "카테고리": r["카테고리"],
+                col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
+                col_cur: round(r["current"]),
+                "전년비(%)": round(r["yoy_delta"], 1) if r.get("yoy_delta") is not None else None,
             })
     right_df = pd.DataFrame(right_rows)
 
@@ -320,7 +270,7 @@ def build_yoy_summary_excel(unit, sel_date, df_traffic, df_category):
             for _col in _ws.columns:
                 _w = max((len(str(c.value)) for c in _col if c.value is not None), default=8)
                 _ws.column_dimensions[_col[0].column_letter].width = min(_w + 3, 40)
-    return buf.getvalue(), (cur_days, prior_days)
+    return buf.getvalue(), left_df, right_df
 
 
 def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드"):
@@ -355,10 +305,11 @@ def _truncate_by_range(series, cum_start, cum_end, cum_unit):
     return series[mask]
 
 
-def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=None):
-    """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
-    상단의 '조회 단위'(일별/주별/월별/월마감)와 '기준 시점'을 그대로 따른다.
-    → 위 KPI 카드/요약표와 동일한 집계 방식이므로 Total 열은 KPI 카드 값과 일치한다."""
+def compute_bpu_comparison_rows(df_traffic, unit="일별", selected_period_date=None):
+    """render_bpu_comparison_table과 동일한 로직(집계 방식·월마감 규칙·부분기간 보정)으로
+    지표×BPU 조합별 compute_kpi_deltas 결과를 계산해 구조화된 리스트로 반환한다.
+    HTML 렌더링(render_bpu_comparison_table)과 엑셀 내보내기가 이 함수를 공유해서
+    두 군데 숫자가 어긋나지 않게 한다."""
     BPU_COLS = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
     METRICS = [
         ("트래픽", "전체", "EP UV", False),
@@ -368,11 +319,8 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         ("CR", "전체", "구매전환율(%)", True),
         ("객단가", "전체", "객단가", False),
     ]
-    cfg = UNIT_CONFIG[unit]
-
-    # 절대값(합산 가능) 지표만 월마감일 때 합계로 바꾼다. CR/객단가는 비율 지표라
-    # 날짜별 값을 그대로 합치면 안 되므로(무의미) 항상 평균을 유지한다.
     SUMMABLE_METRICS = {"트래픽", "거래액", "구매객수"}
+    cfg = UNIT_CONFIG[unit]
 
     def _series_for(bpu_key, metric, member="전체"):
         if bpu_key in BPU_GROUPS:
@@ -380,8 +328,7 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         else:
             sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == member)]
         if sub.empty:
-            return pd.Series(dtype="float64")
-        # KPI 카드와 동일한 집계 로직 (조회 단위 반영)
+            return pd.Series(dtype="float64"), pd.Series(dtype="float64")
         s = sub.set_index("날짜")[metric].sort_index()
         _agg = "sum" if (unit == "월마감" and metric in SUMMABLE_METRICS) else "mean"
         series = s.resample(cfg["rule"]).agg(_agg)
@@ -396,12 +343,32 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
             _s_raw = s[s.index <= selected_period_date]
         return series, _s_raw
 
+    rows = []
     for metric_key, member, metric_label, is_pct in METRICS:
-        header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
-        row_val, row_prev, row_avg, row_yoy = [], [], [], []
         for bpu_key in BPU_COLS:
             series, _s_raw = _series_for(bpu_key, metric_key, member)
             stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+            rows.append({"metric_label": metric_label, "is_pct": is_pct, "bpu": bpu_key, "stats": stats})
+    return rows, cfg, BPU_COLS
+
+
+def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=None):
+    """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
+    상단의 '조회 단위'(일별/주별/월별/월마감)와 '기준 시점'을 그대로 따른다.
+    → 위 KPI 카드/요약표와 동일한 집계 방식이므로 Total 열은 KPI 카드 값과 일치한다."""
+    rows, cfg, BPU_COLS = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
+
+    by_metric = {}
+    for r in rows:
+        by_metric.setdefault(r["metric_label"], {"is_pct": r["is_pct"], "cells": {}})
+        by_metric[r["metric_label"]]["cells"][r["bpu"]] = r["stats"]
+
+    for metric_label, info in by_metric.items():
+        is_pct = info["is_pct"]
+        header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
+        row_val, row_prev, row_avg, row_yoy = [], [], [], []
+        for bpu_key in BPU_COLS:
+            stats = info["cells"].get(bpu_key)
             if stats is None:
                 row_val.append("<td>-</td>")
                 row_prev.append("<td>-</td>")
@@ -414,6 +381,7 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
             row_avg.append(f"<td class='d'>{format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), is_pct)}</td>")
             row_yoy.append(f"<td class='d'>{format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), is_pct)}</td>")
 
+        cfg = UNIT_CONFIG[unit]
         table_html = (
             "<table class='summary-table' style='margin-bottom:14px;'>"
             f"<thead><tr><th colspan='{len(BPU_COLS)+1}' style='background:#eef2ff;color:#374151;font-weight:700;'>{metric_label}</th></tr>"
@@ -426,6 +394,44 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
             "</tbody></table>"
         )
         st.markdown(table_html, unsafe_allow_html=True)
+
+
+def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date):
+    """2번 페이지 '카테고리별 요약'표와 완전히 동일한 규칙(세그먼트 필터·핏플랍 제외·
+    compute_kpi_deltas)으로 특정 BPU 하나의 카테고리별 거래액 stats를 계산한다.
+    '전체' 카테고리 행도 포함해서 맨 위에 오도록 반환."""
+    d = df_category[df_category["BPU"] == bpu_value]
+    if d.empty:
+        return []
+    if "회원구분" in d.columns:
+        d = d[d["회원구분"] == cat_segment]
+    if ff_exclude:
+        d = exclude_ff_brand(d)
+    d = d[d["브랜드"] == "전체"][["날짜", "카테고리", "거래액"]]
+    if d.empty:
+        return []
+
+    cfg = UNIT_CONFIG[unit]
+    _agg = "sum" if unit == "월마감" else "mean"
+    rows = []
+    for cat_name, g in d.groupby("카테고리"):
+        s = g.set_index("날짜")["거래액"].sort_index()
+        series = s.resample(cfg["rule"]).agg(_agg)
+        if unit == "주별":
+            series.index = series.index - pd.Timedelta(days=6)
+        elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+            series = series.iloc[:-1]
+        if not series.empty:
+            series = series[series.index <= selected_period_date]
+        _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+        stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+        if stats is None or not stats["current"]:
+            continue
+        rows.append({"카테고리": cat_name, **stats})
+
+    _head = [r for r in rows if r["카테고리"] == "전체"]
+    _rest = sorted([r for r in rows if r["카테고리"] != "전체"], key=lambda r: r["current"], reverse=True)
+    return _head + _rest
 
 
 def render_line_chart(chart_df, height=350, unit="일별"):
@@ -1452,28 +1458,6 @@ components.html(
 
 if side["page"].startswith("1"):
     # ============================================================
-    # 전년동요일 요약 엑셀 다운로드 (BPU별 + 카테고리별)
-    # ============================================================
-    if not df_traffic.empty:
-        try:
-            _yoy_xlsx, (_xd_cur, _xd_prev) = build_yoy_summary_excel(unit, selected_period_date, df_traffic, df_category)
-            _cur_rng = f"{_xd_cur.min().strftime('%y.%m.%d')}~{_xd_cur.max().strftime('%m.%d')}" if len(_xd_cur) else "-"
-            _prev_rng = f"{_xd_prev.min().strftime('%y.%m.%d')}~{_xd_prev.max().strftime('%m.%d')}" if len(_xd_prev) else "-"
-            _dl_c1, _dl_c2 = st.columns([1.1, 4])
-            with _dl_c1:
-                st.download_button(
-                    "⬇️ 전년동요일 요약 다운로드",
-                    data=_yoy_xlsx,
-                    file_name=f"EP_전년동요일요약_{unit}_{pd.Timestamp(selected_period_date).strftime('%Y%m%d')}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                )
-            with _dl_c2:
-                st.caption(f"올해 {_cur_rng}  vs  전년 동요일 {_prev_rng}  ·  BPU별/카테고리별 2개 시트")
-        except Exception as _e:
-            st.caption(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
-
-    # ============================================================
     # 상단: EP 실적 (트래픽/거래액/구매객수/CR/객단가)
     # ============================================================
     st.markdown("---")
@@ -2075,8 +2059,14 @@ if side["page"].startswith("2"):
                 _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit, raw_daily=_s_raw))
 
                 _ff_stats = None
-                if _ff_note_df is not None:
+                # CR/객단가는 트래픽·구매객수·거래액에서 계산되는 값이라, FF 기여분을 따로
+                # 표기할 필요 없음(원본 3개 지표만 보면 충분) — 여기서 계산 자체를 건너뜀.
+                if _ff_note_df is not None and col_name in ("트래픽", "거래액", "구매객수"):
                     ff_s = _ff_note_df.set_index("날짜")[col_name].sort_index()
+                    # 메인 시리즈(s)와 날짜 범위를 맞춘다. FF는 매출 0인 날엔 원본에 행 자체가
+                    # 없을 수 있어서, 그대로 두면 FF 시리즈의 마지막 날짜가 메인보다 짧아져
+                    # '진행 중인 달' 판정(cur_days)이 메인과 어긋나는 문제가 있었음.
+                    ff_s = ff_s.reindex(s.index, fill_value=0)
                     ff_series = ff_s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
                     if unit == "주별":
                         ff_series.index = ff_series.index - pd.Timedelta(days=6)
@@ -3012,3 +3002,90 @@ if side["page"].startswith("5"):
                     render_excel_download(_yoy_export, f"쿠폰비용_전년비교_{coupon_bpu}_{coupon_type_sel}.xlsx")
                 else:
                     st.caption("ℹ️ 전년비 비교표는 월별 조회에서만 제공돼요 (일별/주별 전년비교는 아직 지원 예정 기능이에요).")
+
+
+# ============================================================
+# 페이지 6: 주간보고용 (전년동요일 요약 엑셀 다운로드)
+# ============================================================
+if side["page"].startswith("6"):
+    st.markdown("---")
+    st.markdown("### 📑 주간보고용 · 전년동요일 요약")
+
+    if df_traffic.empty and df_category.empty:
+        st.info("데이터가 없습니다. 사이드바에서 EP실적/카테고리 CSV를 업로드해주세요.")
+    else:
+        # 이 페이지는 항상 '월별' 기준으로 만든다 (사이드바 조회단위와 무관 — 예전 스크린샷과
+        # 동일하게 "진행 중인 달 1~N일" vs "작년 같은 날짜들"을 비교하는 게 목적이라서).
+        _wk_unit = "월별"
+
+        if not df_traffic.empty:
+            _wk_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")] \
+                if "회원구분" in df_traffic.columns else df_traffic[df_traffic["BPU"] == "Total"]
+            _all_dates = pd.DatetimeIndex(sorted(_wk_base["날짜"].unique()))
+        else:
+            _all_dates = pd.DatetimeIndex(sorted(df_category["날짜"].unique()))
+
+        # 카테고리 세그먼트/핏플랍 제외는 2번 페이지에서 지금 설정해둔 값을 그대로 가져온다
+        # (2번 페이지를 안 들렀으면 기본값: 전체 세그먼트, 핏플랍 포함)
+        _wk_cat_segment = st.session_state.get("cat_seg_filter", "전체")
+        _wk_ff_exclude = st.session_state.get("cat_ff_exclude", False)
+
+        _rule = UNIT_CONFIG[_wk_unit]["rule"]
+        _wk_s = pd.Series(1, index=_all_dates).resample(_rule).sum()
+        _wk_periods = list(_wk_s.index)
+        _wk_labels = [make_period_label(d, _wk_unit) for d in _wk_periods]
+        _wk_c1, _wk_c2 = st.columns([1, 3])
+        with _wk_c1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기준 시점(월)</div>", unsafe_allow_html=True)
+            _wk_sel_label = st.selectbox(
+                "기준 시점", _wk_labels, index=len(_wk_labels) - 1,
+                label_visibility="collapsed", key="wk_ref_period",
+            )
+        _wk_ref = _wk_periods[_wk_labels.index(_wk_sel_label)]
+        st.caption(
+            f"BPU별 상세는 **1. 실적 요약**과 동일한 로직, 카테고리별 거래액은 **2. 카테고리 실적 요약**과 "
+            f"동일한 로직(세그먼트: {_wk_cat_segment}"
+            + (", 핏플랍 제외 적용" if _wk_ff_exclude else "")
+            + ")을 그대로 재사용해서 만들어요."
+        )
+
+        try:
+            _wk_xlsx, _pv_left, _pv_right = build_weekly_report_excel(
+                _wk_unit, _wk_ref, df_traffic, df_category, _wk_cat_segment, _wk_ff_exclude
+            )
+
+            # 진행 중인 달이면 실제 집계된 날짜 범위를 보여준다 (예: 8/1~3 vs 작년 8/2~4)
+            _wk_month_start = pd.Timestamp(_wk_ref).replace(day=1)
+            _wk_cur_days = _all_dates[(_all_dates >= _wk_month_start) & (_all_dates <= _wk_ref)]
+            _wk_prev_days = pd.DatetimeIndex([d - pd.Timedelta(days=364) for d in _wk_cur_days])
+            _wk_cur_rng = f"{_wk_cur_days.min().strftime('%y.%m.%d')} ~ {_wk_cur_days.max().strftime('%m.%d')}" if len(_wk_cur_days) else "-"
+            _wk_prev_rng = f"{_wk_prev_days.min().strftime('%y.%m.%d')} ~ {_wk_prev_days.max().strftime('%m.%d')}" if len(_wk_prev_days) else "-"
+
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin:8px 0;'>"
+                f"<div style='font-size:0.85rem;color:#374151;'>📅 <b>올해</b> {_wk_cur_rng}"
+                f" &nbsp;vs&nbsp; <b>전년 동요일</b> {_wk_prev_rng}</div>"
+                f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>"
+                f"트래픽·거래액·구매객수는 기간 합계, CR·객단가는 합계에서 재계산 · 거래액 없는 카테고리 제외</div>"
+                f"</div>",
+                unsafe_allow_html=True,
+            )
+
+            st.download_button(
+                "⬇️ 전년동요일 요약 엑셀 다운로드",
+                data=_wk_xlsx,
+                file_name=f"EP_주간보고_전년동요일_{pd.Timestamp(_wk_ref).strftime('%Y%m')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                use_container_width=False,
+            )
+
+            st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+            _pc1, _pc2 = st.columns(2)
+            with _pc1:
+                st.markdown("**BPU별**")
+                st.dataframe(_pv_left, use_container_width=True, hide_index=True, height=360)
+            with _pc2:
+                st.markdown("**카테고리별 (거래액)**")
+                st.dataframe(_pv_right, use_container_width=True, hide_index=True, height=360)
+        except Exception as _e:
+            st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
