@@ -286,16 +286,18 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         elif unit == "월마감":
             if not series.empty and s.index.max() < series.index[-1]:
                 series = series.iloc[:-1]
+        _s_raw = s
         if selected_period_date is not None and not series.empty:
             series = series[series.index <= selected_period_date]
-        return series
+            _s_raw = s[s.index <= selected_period_date]
+        return series, _s_raw
 
     for metric_key, member, metric_label, is_pct in METRICS:
         header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
         row_val, row_prev, row_avg, row_yoy = [], [], [], []
         for bpu_key in BPU_COLS:
-            series = _series_for(bpu_key, metric_key, member)
-            stats = compute_kpi_deltas(series, unit)
+            series, _s_raw = _series_for(bpu_key, metric_key, member)
+            stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             if stats is None:
                 row_val.append("<td>-</td>")
                 row_prev.append("<td>-</td>")
@@ -1388,7 +1390,8 @@ if side["page"].startswith("1"):
                     series = series.iloc[:-1]
             if not series.empty:
                 series = series[series.index <= selected_period_date]
-            stats = compute_kpi_deltas(series, unit)
+            _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+            stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             _kpi_computed[display_name] = (col_name, stats)
 
         # 2단계: AI 인사이트 버튼 + 종합 요약
@@ -1553,7 +1556,8 @@ if side["page"].startswith("1"):
                 series = series.iloc[:-1]
             if not series.empty:
                 series = series[series.index <= selected_period_date]
-            stats = compute_kpi_deltas(series, unit)
+            _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+            stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             if stats is None:
                 body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
                 continue
@@ -1578,7 +1582,8 @@ if side["page"].startswith("1"):
                 series_mem = series_mem.iloc[:-1]
             if not series_mem.empty:
                 series_mem = series_mem[series_mem.index <= selected_period_date]
-            stats_mem = compute_kpi_deltas(series_mem, unit)
+            _s_mem_raw = s_mem[s_mem.index <= selected_period_date] if selected_period_date is not None else s_mem
+            stats_mem = compute_kpi_deltas(series_mem, unit, raw_daily=_s_mem_raw)
             if stats_mem is None:
                 body_rows.append("<tr><td>회원UV</td><td>-</td><td>-</td><td>-</td></tr>")
             else:
@@ -1696,7 +1701,9 @@ if side["page"].startswith("1"):
             with ep_cols[i]:
                 series = resample_series(df_ep_combo, metric_key, unit).dropna()
                 series = series[series.index <= selected_period_date]
-                stats = compute_kpi_deltas(series, unit)
+                _ep_raw = df_ep_combo.set_index(COL_DATE)[metric_key].sort_index()
+                _ep_raw = _ep_raw[_ep_raw.index <= selected_period_date]
+                stats = compute_kpi_deltas(series, unit, raw_daily=_ep_raw)
                 if stats:
                     _is_pct = "%" in metric_key or metric_key == "신규가입율"
                     val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
@@ -1781,7 +1788,9 @@ if side["page"].startswith("1"):
         for metric_key, display_name in EP_CHANNEL_METRICS:
             series = resample_series(df_ep_combo, metric_key, unit)
             series = series[series.index <= selected_period_date] if not series.empty else series
-            stats = compute_kpi_deltas(series, unit)
+            _ep_raw2 = df_ep_combo.set_index(COL_DATE)[metric_key].sort_index()
+            _ep_raw2 = _ep_raw2[_ep_raw2.index <= selected_period_date]
+            stats = compute_kpi_deltas(series, unit, raw_daily=_ep_raw2)
             if stats is None:
                 ep_body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
                 continue
@@ -1936,7 +1945,8 @@ if side["page"].startswith("2"):
                 elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                     series = series.iloc[:-1]
                 series = series[series.index <= selected_period_date] if not series.empty else series
-                _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit))
+                _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+                _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit, raw_daily=_s_raw))
 
                 _ff_stats = None
                 if _ff_note_df is not None:
@@ -1947,10 +1957,11 @@ if side["page"].startswith("2"):
                     elif unit == "월마감" and not ff_series.empty and ff_s.index.max() < ff_series.index[-1]:
                         ff_series = ff_series.iloc[:-1]
                     ff_series = ff_series[ff_series.index <= selected_period_date] if not ff_series.empty else ff_series
+                    _ff_s_raw = ff_s[ff_s.index <= selected_period_date] if selected_period_date is not None else ff_s
                     # compute_kpi_deltas를 그대로 재사용해서, 메인 지표와 정확히 같은 기준 시점
                     # (전기간/전년동기)의 FF 값을 뽑는다. 전년비교 기준연도(2025)에 FF가 활발했으므로,
                     # 지금(2026) 시점만 보면 0에 가깝지만 전년동기 쪽엔 값이 커질 수 있음.
-                    _ff_stats = compute_kpi_deltas(ff_series, unit)
+                    _ff_stats = compute_kpi_deltas(ff_series, unit, raw_daily=_ff_s_raw)
                 _ff_computed[display_name] = _ff_stats
 
             # 2단계: AI 인사이트 버튼 + 종합 요약
@@ -2120,7 +2131,8 @@ if side["page"].startswith("2"):
                 elif unit == "월마감" and not series2.empty and s2.index.max() < series2.index[-1]:
                     series2 = series2.iloc[:-1]
                 series2 = series2[series2.index <= selected_period_date] if not series2.empty else series2
-                stats2 = compute_kpi_deltas(series2, unit)
+                _s2_raw = s2[s2.index <= selected_period_date] if selected_period_date is not None else s2
+                stats2 = compute_kpi_deltas(series2, unit, raw_daily=_s2_raw)
                 if stats2 is None:
                     cat_summary_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
                     continue
@@ -2218,7 +2230,8 @@ if side["page"].startswith("2"):
                     series = series.iloc[:-1]  # 미완성 달 제외
                 if not series.empty:
                     series = series[series.index <= selected_period_date]
-                stats = compute_kpi_deltas(series, unit)
+                _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+                stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
                 if stats is None or not stats["current"]:  # None 또는 0(거래액 없음)인 카테고리는 제외
                     continue
                 _cat_summary_rows.append({
