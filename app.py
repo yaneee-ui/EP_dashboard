@@ -225,13 +225,23 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     - 시트2 '카테고리별(거래액)': compute_category_yoy_rows() 그대로 사용(BPU=e-영업1~4 각각)
       → 2번 페이지 '카테고리별 요약'표와 동일한 세그먼트 필터·핏플랍 제외 규칙 적용
     별도로 값을 재계산하지 않고 두 페이지가 쓰는 함수를 그대로 호출하므로, 화면에 보이는 표와
-    엑셀 숫자가 어긋날 일이 없다."""
+    엑셀 숫자가 어긋날 일이 없다.
+
+    두 시트는 원본이 다르다(ep_traffic.csv vs ep_category.csv). 한쪽 파일이 하루이틀 늦게
+    끊겨 있으면 '이번 달 진행 중인 며칠'의 날짜 범위(cur_days)가 시트마다 달라져서 전체
+    합계가 안 맞을 수 있다. 없는 날짜를 0으로 채우면 평균이 왜곡되므로(그 날 매출이 없는
+    게 아니라 그냥 데이터가 늦게 들어온 것), 대신 두 파일 중 더 짧은 쪽 마지막 날짜로
+    기준시점을 맞춰서 둘 다 '실제로 존재하는' 같은 날짜 범위만 보게 한다."""
     cur_year = pd.Timestamp(selected_period_date).year
     prev_year = cur_year - 1
     col_prev, col_cur = f"{prev_year}년", f"{cur_year}년"
 
+    _tr_max = df_traffic["날짜"].max() if not df_traffic.empty else None
+    _cat_max = df_category["날짜"].max() if not df_category.empty else None
+    _common_cutoff = min([d for d in [_tr_max, _cat_max, pd.Timestamp(selected_period_date)] if d is not None])
+
     # --- 시트1: BPU별 (1번 페이지와 동일 함수) — 이미지 기준: 전체/e-영업1~4만 ---
-    _bpu_rows, cfg, BPU_COLS = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
+    _bpu_rows, cfg, BPU_COLS = compute_bpu_comparison_rows(df_traffic, unit, _common_cutoff)
     _bpu_keep = {"Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"}
     _bpu_label = {"Total": "전체"}
     left_rows = []
@@ -253,7 +263,7 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     # --- 시트2: 카테고리별 (거래액, e-영업1~4 각각) — 2번 페이지와 동일 함수 ---
     right_rows = []
     for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        for r in compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date):
+        for r in compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, _common_cutoff):
             right_rows.append({
                 "BPU": bv, "카테고리": r["카테고리"],
                 col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
@@ -461,7 +471,25 @@ def render_line_chart(chart_df, height=350, unit="일별"):
         )
         _date_fmt = "%Y-%m"
     else:
-        x_enc = alt.X("날짜:T", title=None, axis=alt.Axis(format="%m/%d", labelAngle=0))
+        # temporal(T) 타입 x축은 Vega-Lite가 자체적으로 '보기 좋은' 틱 간격을 자동으로 골라서,
+        # 며칠 안 되는 좁은 구간에서도 하루에 여러 개의 틱(포맷은 %m/%d라 같은 날짜로 중복 표시)이
+        # 찍히는 문제가 있었음. 실제 데이터 포인트 날짜만 문자열 라벨(ordinal)로 써서 방지하고,
+        # 점이 많으면(20개 초과) 라벨을 적당히 솎아서 겹치지 않게 한다.
+        long_df["_date_label"] = long_df["날짜"].dt.strftime("%m/%d")
+        _uniq_dates = sorted(long_df["날짜"].unique())
+        _label_order = [pd.Timestamp(d).strftime("%m/%d") for d in _uniq_dates]
+        _n = len(_label_order)
+        if _n > 20:
+            _step = -(-_n // 20)  # ceil(n/20)
+            _tick_vals = _label_order[::_step]
+            if _label_order[-1] not in _tick_vals:
+                _tick_vals.append(_label_order[-1])
+        else:
+            _tick_vals = _label_order
+        x_enc = alt.X(
+            "_date_label:O", title=None, sort=_label_order,
+            axis=alt.Axis(labelAngle=0, values=_tick_vals),
+        )
         _date_fmt = "%Y-%m-%d"
 
     chart = (
@@ -3058,18 +3086,34 @@ if side["page"].startswith("6"):
             + (", 핏플랍 제외 적용" if _wk_ff_exclude else "")
             + ")을 그대로 재사용해서 만들어요."
         )
+        if _wk_ff_exclude:
+            st.caption(
+                "ℹ️ 핏플랍 제외는 **카테고리별 시트에만** 반영돼요 — EP실적 원본(ep_traffic.csv)엔 "
+                "브랜드 정보가 없어서 BPU별 시트에서는 애초에 제외할 수가 없어요. 그래서 이 상태로는 "
+                "두 시트의 '전체' 합계가 핏플랍 매출만큼 차이 날 수 있어요."
+            )
 
         try:
             _wk_xlsx, _pv_left, _pv_right = build_weekly_report_excel(
                 _wk_unit, _wk_ref, df_traffic, df_category, _wk_cat_segment, _wk_ff_exclude
             )
 
-            # 진행 중인 달이면 실제 집계된 날짜 범위를 보여준다 (예: 8/1~3 vs 작년 8/2~4)
+            # 실제 계산에 쓰인 공통 cutoff 기준으로 날짜 범위를 표시 (진행 중인 달이면 예: 8/1~3 vs 작년 8/2~4)
+            _wk_tr_max = df_traffic["날짜"].max() if not df_traffic.empty else None
+            _wk_cat_max = df_category["날짜"].max() if not df_category.empty else None
+            _wk_cutoff = min([d for d in [_wk_tr_max, _wk_cat_max, pd.Timestamp(_wk_ref)] if d is not None])
             _wk_month_start = pd.Timestamp(_wk_ref).replace(day=1)
-            _wk_cur_days = _all_dates[(_all_dates >= _wk_month_start) & (_all_dates <= _wk_ref)]
+            _wk_cur_days = _all_dates[(_all_dates >= _wk_month_start) & (_all_dates <= _wk_cutoff)]
             _wk_prev_days = pd.DatetimeIndex([d - pd.Timedelta(days=364) for d in _wk_cur_days])
             _wk_cur_rng = f"{_wk_cur_days.min().strftime('%y.%m.%d')} ~ {_wk_cur_days.max().strftime('%m.%d')}" if len(_wk_cur_days) else "-"
             _wk_prev_rng = f"{_wk_prev_days.min().strftime('%y.%m.%d')} ~ {_wk_prev_days.max().strftime('%m.%d')}" if len(_wk_prev_days) else "-"
+
+            if _wk_tr_max is not None and _wk_cat_max is not None and _wk_tr_max.normalize() != _wk_cat_max.normalize():
+                st.caption(
+                    f"⚠️ EP실적 원본은 {_wk_tr_max.strftime('%Y-%m-%d')}까지, 카테고리 원본은 "
+                    f"{_wk_cat_max.strftime('%Y-%m-%d')}까지 있어서, 더 짧은 쪽({_wk_cutoff.strftime('%Y-%m-%d')})에 "
+                    "맞춰서 두 표를 계산했어요 (그래야 BPU별/카테고리별 '전체' 합계가 일치해요)."
+                )
 
             st.markdown(
                 f"<div style='background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin:8px 0;'>"
