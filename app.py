@@ -304,9 +304,9 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
                 continue
             val_str = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
             row_val.append(f"<td class='v'>{val_str}</td>")
-            row_prev.append(f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>")
-            row_avg.append(f"<td class='d'>{format_delta_html(stats['avg_delta'])}</td>")
-            row_yoy.append(f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td>")
+            row_prev.append(f"<td class='d'>{format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), is_pct)}</td>")
+            row_avg.append(f"<td class='d'>{format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), is_pct)}</td>")
+            row_yoy.append(f"<td class='d'>{format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), is_pct)}</td>")
 
         table_html = (
             "<table class='summary-table' style='margin-bottom:14px;'>"
@@ -994,7 +994,7 @@ with _sticky:
 
         _is_cat_page = _page_num == "2"
         if _is_cat_page:
-            fc1, fc2, fc3, fc4, _fc_spacer = st.columns([1, 1, 1, 1, 6])
+            fc1, fc2, fc3, fc4, fc5, _fc_spacer = st.columns([1, 1, 1, 1, 1, 5])
         else:
             fc1, fc2, _fc_spacer = st.columns([1, 1, 8])
 
@@ -1058,6 +1058,19 @@ with _sticky:
                 _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
                 selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, format_func=brand_label, label_visibility="collapsed", key="brand_select")
 
+            # 핏플랍(FF) 제외 — 브랜드 필터 옆에 배치, FF 브랜드 데이터가 실제로 있을 때만 노출
+            with fc5:
+                if (df_category["브랜드"] == "FF").any():
+                    st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+                    _ff_exclude = st.checkbox(
+                        "핏플랍 제외",
+                        value=False, key="cat_ff_exclude",
+                        help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
+                             "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
+                    )
+                else:
+                    _ff_exclude = False
+
             # 세그먼트(고객 구분) — 카테고리 레벨(브랜드=전체)에서만 제공
             _has_segment = "회원구분" in df_category.columns
             if _has_segment and selected_brand == "전체":
@@ -1074,18 +1087,6 @@ with _sticky:
                 cat_segment = "전체"
                 if _has_segment and selected_brand != "전체":
                     st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
-
-            # 핏플랍(FF) 제외 — FF 브랜드 데이터가 실제로 있을 때만 노출
-            if (df_category["브랜드"] == "FF").any():
-                st.markdown("<div style='margin-top:4px;'></div>", unsafe_allow_html=True)
-                _ff_exclude = st.checkbox(
-                    "핏플랍(FF) 제외",
-                    value=False, key="cat_ff_exclude",
-                    help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
-                         "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
-                )
-            else:
-                _ff_exclude = False
         else:
             _ff_exclude = False
 
@@ -1562,8 +1563,8 @@ if side["page"].startswith("1"):
             val = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
             body_rows.append(
                 f"<tr><td class='m'>{display_name}</td><td class='v'>{val}</td>"
-                f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>"
-                f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td></tr>"
+                f"<td class='d'>{format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), is_pct)}</td>"
+                f"<td class='d'>{format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), is_pct)}</td></tr>"
             )
 
         # 회원UV 행 추가 (선택된 세그먼트와 무관하게 항상 표시)
@@ -1583,8 +1584,8 @@ if side["page"].startswith("1"):
             else:
                 body_rows.append(
                     f"<tr><td class='m'>회원UV</td><td class='v'>{stats_mem['current']:,.0f}</td>"
-                    f"<td class='d'>{format_delta_html(stats_mem['prev_delta'])}</td>"
-                    f"<td class='d'>{format_delta_html(stats_mem['yoy_delta'])}</td></tr>"
+                    f"<td class='d'>{format_delta_html(stats_mem['prev_delta'])}{_ref_str(stats_mem.get('prev_value'))}</td>"
+                    f"<td class='d'>{format_delta_html(stats_mem['yoy_delta'])}{_ref_str(stats_mem.get('yoy_value'))}</td></tr>"
                 )
 
         html = (
@@ -1790,8 +1791,8 @@ if side["page"].startswith("1"):
             val = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
             ep_body_rows.append(
                 f"<tr><td class='m'>{display_name}</td><td class='v'>{val}</td>"
-                f"<td class='d'>{format_delta_html(stats['prev_delta'])}</td>"
-                f"<td class='d'>{format_delta_html(stats['yoy_delta'])}</td></tr>"
+                f"<td class='d'>{format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}</td>"
+                f"<td class='d'>{format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}</td></tr>"
             )
         ep_summary_html = (
             "<table class='summary-table'>"
@@ -1879,7 +1880,9 @@ if side["page"].startswith("2"):
         if _has_segment:
             cat_bpu_df = cat_bpu_df[cat_bpu_df["회원구분"] == cat_segment]
 
+        _ff_only_df = None
         if _ff_exclude:
+            _ff_only_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "FF") & (cat_bpu_df["카테고리"] != "전체")]
             cat_bpu_df = exclude_ff_brand(cat_bpu_df)
             cat_bpu_df_all_seg = exclude_ff_brand(cat_bpu_df_all_seg)
 
@@ -1906,8 +1909,24 @@ if side["page"].startswith("2"):
                 ("객단가", "객단가"),
             ]
 
+            # 핏플랍 제외 중이고, 지금 보는 화면이 실제로 FF의 영향을 받는 범위(카테고리=전체/슈즈,
+            # 브랜드=전체)일 때만 'FF 기여분'을 계산해서 KPI 카드에 참고용으로 같이 보여준다.
+            _ff_note_df = None
+            if _ff_exclude and _ff_only_df is not None and not _ff_only_df.empty and selected_brand == "전체":
+                if selected_cat == "전체":
+                    _ff_scope = _ff_only_df
+                else:
+                    _ff_scope = _ff_only_df[_ff_only_df["카테고리"] == selected_cat]
+                if not _ff_scope.empty:
+                    _ff_note_df = _ff_scope.groupby("날짜", as_index=False).agg(
+                        {"트래픽": "sum", "거래액": "sum", "구매객수": "sum"}
+                    )
+                    _ff_note_df["CR"] = (_ff_note_df["구매객수"] / _ff_note_df["트래픽"] * 100).where(_ff_note_df["트래픽"] > 0)
+                    _ff_note_df["객단가"] = (_ff_note_df["거래액"] / _ff_note_df["구매객수"]).where(_ff_note_df["구매객수"] > 0)
+
             # 1단계: 값/증감 먼저 계산 (AI payload 구성용)
             _cat_computed = {}
+            _ff_computed = {}
             for col_name, display_name in CAT_METRICS:
                 s = cat_combo.set_index("날짜")[col_name].sort_index()
                 _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
@@ -1918,6 +1937,19 @@ if side["page"].startswith("2"):
                     series = series.iloc[:-1]
                 series = series[series.index <= selected_period_date] if not series.empty else series
                 _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit))
+
+                _ff_val = None
+                if _ff_note_df is not None:
+                    ff_s = _ff_note_df.set_index("날짜")[col_name].sort_index()
+                    ff_series = ff_s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
+                    if unit == "주별":
+                        ff_series.index = ff_series.index - pd.Timedelta(days=6)
+                    elif unit == "월마감" and not ff_series.empty and ff_s.index.max() < ff_series.index[-1]:
+                        ff_series = ff_series.iloc[:-1]
+                    ff_series = ff_series[ff_series.index <= selected_period_date] if not ff_series.empty else ff_series
+                    if not ff_series.empty and pd.notna(ff_series.iloc[-1]):
+                        _ff_val = float(ff_series.iloc[-1])
+                _ff_computed[display_name] = _ff_val
 
             # 2단계: AI 인사이트 버튼 + 종합 요약
             _cat_ai_c1, _cat_ai_c2 = st.columns([5, 1])
@@ -1965,6 +1997,15 @@ if side["page"].startswith("2"):
                         _is_pct = col_name == "CR"
                         val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
                         cfg = UNIT_CONFIG[unit]
+                        _ff_val = _ff_computed.get(display_name)
+                        if _ff_val is not None:
+                            _ff_val_str = f"{_ff_val:.1f}%" if _is_pct else f"{_ff_val:,.0f}"
+                            _ff_line = (
+                                f"<div style='font-size:0.72rem;color:#ef4444;margin-top:5px;'>"
+                                f"핏플랍 제외분: {_ff_val_str}</div>"
+                            )
+                        else:
+                            _ff_line = ""
                         st.markdown(
                             f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                             f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
@@ -1972,7 +2013,7 @@ if side["page"].startswith("2"):
                             f"<div style='font-size:0.76rem;margin-top:6px;'>"
                             f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
                             f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}"
-                            f"</div></div>",
+                            f"</div>{_ff_line}</div>",
                             unsafe_allow_html=True,
                         )
                         render_metric_insight(_ai_result_cat, display_name)
@@ -2081,8 +2122,8 @@ if side["page"].startswith("2"):
                 val2 = f"{stats2['current']:.1f}%" if _is_pct2 else f"{stats2['current']:,.0f}"
                 cat_summary_rows.append(
                     f"<tr><td class='m'>{display_name}</td><td class='v'>{val2}</td>"
-                    f"<td class='d'>{format_delta_html(stats2['prev_delta'])}</td>"
-                    f"<td class='d'>{format_delta_html(stats2['yoy_delta'])}</td></tr>"
+                    f"<td class='d'>{format_delta_html(stats2['prev_delta'])}{_ref_str(stats2.get('prev_value'), _is_pct2)}</td>"
+                    f"<td class='d'>{format_delta_html(stats2['yoy_delta'])}{_ref_str(stats2.get('yoy_value'), _is_pct2)}</td></tr>"
                 )
             cat_summary_html = (
                 "<table class='summary-table'>"
@@ -2566,37 +2607,46 @@ if side["page"].startswith("5"):
                 )
                 kc1, kc2, kc3 = st.columns(3)
                 with kc1:
-                    _yoy_line = f"전년동기비 {format_delta_html(_delta_pct(_cur_coupon, _yoy_coupon))}<br/>" if _has_yoy else ""
+                    _yoy_line = (
+                        f"전년동기비 {format_delta_html(_delta_pct(_cur_coupon, _yoy_coupon))}{_ref_str(_yoy_coupon)}<br/>"
+                        if _has_yoy else ""
+                    )
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:150px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>쿠폰할인</div>"
                         f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_coupon:,.0f}</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
-                        f"{_prev_label} {format_delta_html(_delta_pct(_cur_coupon, _prev_coupon))}<br/>"
+                        f"{_prev_label} {format_delta_html(_delta_pct(_cur_coupon, _prev_coupon))}{_ref_str(_prev_coupon)}<br/>"
                         f"{_yoy_line}"
                         f"</div></div>", unsafe_allow_html=True,
                     )
                 with kc2:
-                    _yoy_line2 = f"전년동기비 {format_delta_html(_delta_pct(_cur_gmv, _yoy_gmv))}<br/>" if _has_yoy else ""
+                    _yoy_line2 = (
+                        f"전년동기비 {format_delta_html(_delta_pct(_cur_gmv, _yoy_gmv))}{_ref_str(_yoy_gmv)}<br/>"
+                        if _has_yoy else ""
+                    )
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:150px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액(기존 대시보드 기준)</div>"
                         f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_gmv:,.0f}</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
-                        f"{_prev_label} {format_delta_html(_delta_pct(_cur_gmv, _prev_gmv))}<br/>"
+                        f"{_prev_label} {format_delta_html(_delta_pct(_cur_gmv, _prev_gmv))}{_ref_str(_prev_gmv)}<br/>"
                         f"{_yoy_line2}"
                         f"</div></div>", unsafe_allow_html=True,
                     )
                 with kc3:
                     _rate_prev_delta = (_cur_rate - _prev_rate) if (_prev_rate is not None and pd.notna(_prev_rate) and pd.notna(_cur_rate)) else None
                     _rate_yoy_delta = (_cur_rate - _yoy_rate) if (_has_yoy and _yoy_rate is not None and pd.notna(_yoy_rate) and pd.notna(_cur_rate)) else None
-                    _yoy_line3 = f"전년동기비 {format_delta_html(_rate_yoy_delta) if _rate_yoy_delta is not None else '-'}%p<br/>" if _has_yoy else ""
+                    _yoy_line3 = (
+                        f"전년동기비 {format_delta_html(_rate_yoy_delta) if _rate_yoy_delta is not None else '-'}%p{_ref_str(_yoy_rate, True)}<br/>"
+                        if _has_yoy else ""
+                    )
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:150px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>비용률 (쿠폰할인/거래액)</div>"
                         f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_rate:.2f}%</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
-                        f"{_prev_label} {format_delta_html(_rate_prev_delta) if _rate_prev_delta is not None else '-'}%p<br/>"
+                        f"{_prev_label} {format_delta_html(_rate_prev_delta) if _rate_prev_delta is not None else '-'}%p{_ref_str(_prev_rate, True)}<br/>"
                         f"{_yoy_line3}"
                         f"</div></div>", unsafe_allow_html=True,
                     )
