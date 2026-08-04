@@ -2076,12 +2076,15 @@ if side["page"].startswith("2"):
                     series.index = series.index - pd.Timedelta(days=6)
                 elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                     series = series.iloc[:-1]  # 미완성 달 제외
+                if not series.empty:
+                    series = series[series.index <= selected_period_date]
                 stats = compute_kpi_deltas(series, unit)
                 if stats is None or not stats["current"]:  # None 또는 0(거래액 없음)인 카테고리는 제외
                     continue
                 _cat_summary_rows.append({
                     "카테고리": cat_name, "거래액": stats["current"],
                     "prev": stats["prev_delta"], "avg": stats["avg_delta"], "yoy": stats["yoy_delta"],
+                    "prev_v": stats.get("prev_value"), "avg_v": stats.get("avg_value"), "yoy_v": stats.get("yoy_value"),
                 })
 
             if not _cat_summary_rows:
@@ -2091,9 +2094,9 @@ if side["page"].startswith("2"):
                 _cat_summary_body = "".join(
                     f"<tr><td class='m'>{r['카테고리']}</td>"
                     f"<td class='v' style='text-align:right;'>{r['거래액']:,.0f}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(r['prev'])}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(r['avg'])}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(r['yoy'])}</td></tr>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['prev'])}{_ref_str(r['prev_v'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['avg'])}{_ref_str(r['avg_v'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['yoy'])}{_ref_str(r['yoy_v'])}</td></tr>"
                     for r in _cat_summary_rows
                 )
                 st.markdown(
