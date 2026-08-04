@@ -219,6 +219,110 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
     return agg
 
 
+def _export_period_days(unit, sel_date, all_dates):
+    """조회 기준(단위/기준시점)에 해당하는 '현재 집계 일자들'과 '전년 동요일(364일 전)
+    일자들'을 반환. 월별은 진행 중인 달이면 있는 날짜까지만(예: 8/1~3) 잡힌다."""
+    d = pd.Timestamp(sel_date)
+    all_dates = pd.DatetimeIndex(sorted(pd.unique(all_dates)))
+    if unit == "일별":
+        cur = all_dates[all_dates == d]
+        if len(cur) == 0:
+            _le = all_dates[all_dates <= d]
+            cur = _le[-1:] if len(_le) else all_dates[:0]
+    elif unit == "주별":
+        cur = all_dates[(all_dates >= d) & (all_dates <= d + pd.Timedelta(days=6))]
+    else:  # 월별/월마감: sel_date는 해당 월의 월말 라벨
+        start = d.replace(day=1)
+        cur = all_dates[(all_dates >= start) & (all_dates <= d)]
+    prior = pd.DatetimeIndex([x - pd.Timedelta(days=364) for x in cur])
+    return cur, prior
+
+
+def build_yoy_summary_excel(unit, sel_date, df_traffic, df_category):
+    """전년동요일 기준 요약 엑셀(bytes) 생성.
+    - 시트1 'BPU별': 지표(트래픽/거래액/구매객수/CR/객단가) × BPU(전체/e-영업1~4)
+    - 시트2 '카테고리별(거래액)': BPU(e-영업1~4) × 카테고리(전체+거래액 있는 카테고리)
+    트래픽/거래액/구매객수는 기간 합계, CR·객단가는 합계 성분에서 재계산(비율 지표 원칙)."""
+    all_dates = df_traffic["날짜"].unique() if not df_traffic.empty else df_category["날짜"].unique()
+    cur_days, prior_days = _export_period_days(unit, sel_date, all_dates)
+    cur_year = pd.Timestamp(sel_date).year
+    prev_year = cur_year - 1
+    col_prev, col_cur = f"{prev_year}년", f"{cur_year}년"
+
+    def _sums(daily_df, group_col, group_val, days):
+        m = daily_df[(daily_df["날짜"].isin(days)) & (daily_df[group_col] == group_val)]
+        return {k: float(m[k].sum()) for k in ("트래픽", "거래액", "구매객수")}
+
+    def _yoy(cur, prev):
+        return round((cur / prev - 1) * 100, 1) if prev else None
+
+    # --- 시트1: BPU별 ---
+    tr = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
+    bpu_rows_def = [("전체", "Total"), ("e-영업1", "e-영업1"), ("e-영업2", "e-영업2"),
+                    ("e-영업3", "e-영업3"), ("e-영업4", "e-영업4")]
+    bpu_rows_def = [(lbl, v) for lbl, v in bpu_rows_def if (tr["BPU"] == v).any()]
+
+    left_rows = []
+    for metric in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
+        for lbl, bv in bpu_rows_def:
+            c = _sums(tr, "BPU", bv, cur_days)
+            p = _sums(tr, "BPU", bv, prior_days)
+            if metric in ("트래픽", "거래액", "구매객수"):
+                cv, pv = c[metric], p[metric]
+            elif metric == "CR":
+                cv = (c["구매객수"] / c["트래픽"] * 100) if c["트래픽"] else 0
+                pv = (p["구매객수"] / p["트래픽"] * 100) if p["트래픽"] else 0
+            else:  # 객단가
+                cv = (c["거래액"] / c["구매객수"]) if c["구매객수"] else 0
+                pv = (p["거래액"] / p["구매객수"]) if p["구매객수"] else 0
+            left_rows.append({
+                "지표": metric, "구분": lbl,
+                col_prev: round(pv, 1) if metric in ("CR",) else round(pv),
+                col_cur: round(cv, 1) if metric in ("CR",) else round(cv),
+                "전년비(%)": _yoy(cv, pv),
+            })
+    left_df = pd.DataFrame(left_rows)
+
+    # --- 시트2: 카테고리별 (거래액) ---
+    cat = df_category
+    if "회원구분" in cat.columns:
+        cat = cat[cat["회원구분"] == "전체"]
+    cat = cat[cat["브랜드"] == "전체"]
+    right_rows = []
+    for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+        sub = cat[cat["BPU"] == bv]
+        if sub.empty:
+            continue
+        # 전체 먼저, 그다음 거래액 있는 카테고리 (현재 기준 거래액 큰 순)
+        cats = ["전체"] + [c for c in sorted(sub["카테고리"].unique()) if c != "전체"]
+        _cat_vals = []
+        for cv_name in cats:
+            c_sum = sub[(sub["날짜"].isin(cur_days)) & (sub["카테고리"] == cv_name)]["거래액"].sum()
+            p_sum = sub[(sub["날짜"].isin(prior_days)) & (sub["카테고리"] == cv_name)]["거래액"].sum()
+            if cv_name != "전체" and c_sum == 0 and p_sum == 0:
+                continue  # 거래액 없는 카테고리 제외
+            _cat_vals.append((cv_name, float(p_sum), float(c_sum)))
+        # 전체는 맨 위 고정, 나머지는 현재 거래액 큰 순
+        _head = [x for x in _cat_vals if x[0] == "전체"]
+        _rest = sorted([x for x in _cat_vals if x[0] != "전체"], key=lambda x: x[2], reverse=True)
+        for cv_name, p_sum, c_sum in _head + _rest:
+            right_rows.append({
+                "BPU": bv, "카테고리": cv_name,
+                col_prev: round(p_sum), col_cur: round(c_sum), "전년비(%)": _yoy(c_sum, p_sum),
+            })
+    right_df = pd.DataFrame(right_rows)
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as writer:
+        left_df.to_excel(writer, index=False, sheet_name="BPU별")
+        right_df.to_excel(writer, index=False, sheet_name="카테고리별(거래액)")
+        for _ws in writer.sheets.values():
+            for _col in _ws.columns:
+                _w = max((len(str(c.value)) for c in _col if c.value is not None), default=8)
+                _ws.column_dimensions[_col[0].column_letter].width = min(_w + 3, 40)
+    return buf.getvalue(), (cur_days, prior_days)
+
+
 def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드"):
     """DataFrame을 엑셀 파일로 변환해 다운로드 버튼으로 제공."""
     buf = io.BytesIO()
@@ -1347,6 +1451,28 @@ components.html(
 
 
 if side["page"].startswith("1"):
+    # ============================================================
+    # 전년동요일 요약 엑셀 다운로드 (BPU별 + 카테고리별)
+    # ============================================================
+    if not df_traffic.empty:
+        try:
+            _yoy_xlsx, (_xd_cur, _xd_prev) = build_yoy_summary_excel(unit, selected_period_date, df_traffic, df_category)
+            _cur_rng = f"{_xd_cur.min().strftime('%y.%m.%d')}~{_xd_cur.max().strftime('%m.%d')}" if len(_xd_cur) else "-"
+            _prev_rng = f"{_xd_prev.min().strftime('%y.%m.%d')}~{_xd_prev.max().strftime('%m.%d')}" if len(_xd_prev) else "-"
+            _dl_c1, _dl_c2 = st.columns([1.1, 4])
+            with _dl_c1:
+                st.download_button(
+                    "⬇️ 전년동요일 요약 다운로드",
+                    data=_yoy_xlsx,
+                    file_name=f"EP_전년동요일요약_{unit}_{pd.Timestamp(selected_period_date).strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                )
+            with _dl_c2:
+                st.caption(f"올해 {_cur_rng}  vs  전년 동요일 {_prev_rng}  ·  BPU별/카테고리별 2개 시트")
+        except Exception as _e:
+            st.caption(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
+
     # ============================================================
     # 상단: EP 실적 (트래픽/거래액/구매객수/CR/객단가)
     # ============================================================
