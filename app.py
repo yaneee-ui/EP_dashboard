@@ -1209,10 +1209,19 @@ st.markdown(
         margin-bottom: 0 !important;
     }
     /* '전년 비교선 표시' 체크박스를 각자 컬럼의 오른쪽 끝에 붙임 (기본은 왼쪽 정렬이라
-       [3,1,1] 비율의 마지막 칸에서 체크박스와 라벨 뒤로 빈 공간이 남는 문제 해결) */
+       [3,1,1] 비율의 마지막 칸에서 체크박스와 라벨 뒤로 빈 공간이 남는 문제 해결).
+       내부 label이 컨테이너 폭 전체로 늘어나면 justify-content가 무효화되므로
+       label 자체도 콘텐츠 크기로 고정한다. */
     .st-key-tr_yoy, .st-key-ep_yoy_cb, .st-key-cat_yoy {
+        width: 100% !important;
         display: flex !important;
         justify-content: flex-end !important;
+    }
+    .st-key-tr_yoy label, .st-key-ep_yoy_cb label, .st-key-cat_yoy label,
+    .st-key-tr_yoy div[data-testid="stCheckbox"], .st-key-ep_yoy_cb div[data-testid="stCheckbox"],
+    .st-key-cat_yoy div[data-testid="stCheckbox"] {
+        flex: 0 0 auto !important;
+        width: auto !important;
     }
     </style>
     """,
