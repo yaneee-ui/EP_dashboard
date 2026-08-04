@@ -148,6 +148,49 @@ def aggregate_traffic(df, bpus, member="전체"):
     return agg
 
 
+FF_BRAND_CODE = "FF"
+
+
+def exclude_ff_brand(df):
+    """핏플랍(FF, 2025-10월 종료) 브랜드 실적을 카테고리 집계에서 제외한다.
+
+    - '브랜드=전체' 집계행(FF가 속한 카테고리 + '카테고리=전체' 전체 집계행)에서
+      FF의 트래픽/거래액/구매객수를 빼고 CR/객단가를 재계산 (비율 지표는 그냥
+      빼면 안 되고 항상 분자/분모를 먼저 뺀 뒤 재계산해야 함 - 데이터 정합성 원칙).
+    - 개별 브랜드 목록(랭킹 등)에서는 FF 행 자체를 제외.
+    - 다른 카테고리/브랜드 행은 전혀 건드리지 않음 (FF는 슈즈에만 있었으므로).
+    """
+    if df.empty or "브랜드" not in df.columns:
+        return df
+
+    ff_rows = df[(df["브랜드"] == FF_BRAND_CODE) & (df["카테고리"] != "전체")]
+    df2 = df[df["브랜드"] != FF_BRAND_CODE].copy()  # FF 자체 행(전체/개별 카테고리 다 포함) 제외
+    if ff_rows.empty:
+        return df2
+
+    group_keys = ["날짜", "BPU"] + (["회원구분"] if "회원구분" in df.columns else [])
+    ff_agg = ff_rows.groupby(group_keys, as_index=False)[["트래픽", "거래액", "구매객수"]].sum()
+    ff_agg = ff_agg.rename(columns={"트래픽": "_ff_t", "거래액": "_ff_g", "구매객수": "_ff_b"})
+
+    ff_categories = set(ff_rows["카테고리"].unique()) | {"전체"}
+    mask = (df2["브랜드"] == "전체") & (df2["카테고리"].isin(ff_categories))
+    if not mask.any():
+        return df2
+
+    target = df2.loc[mask].merge(ff_agg, on=group_keys, how="left")
+    target[["_ff_t", "_ff_g", "_ff_b"]] = target[["_ff_t", "_ff_g", "_ff_b"]].fillna(0)
+    target["트래픽"] = target["트래픽"] - target["_ff_t"]
+    target["거래액"] = target["거래액"] - target["_ff_g"]
+    target["구매객수"] = target["구매객수"] - target["_ff_b"]
+    target["CR"] = (target["구매객수"] / target["트래픽"] * 100).where(target["트래픽"] > 0)
+    target["객단가"] = (target["거래액"] / target["구매객수"]).where(target["구매객수"] > 0)
+
+    df2.loc[mask, ["트래픽", "거래액", "구매객수", "CR", "객단가"]] = target[
+        ["트래픽", "거래액", "구매객수", "CR", "객단가"]
+    ].values
+    return df2
+
+
 def aggregate_ep(df, bpus, match_status, lowest_status):
     """여러 BPU의 EP채널 데이터를 합산. 비율 지표는 재계산."""
     sub = df[(df[COL_BPU].isin(bpus)) & (df[COL_MATCH] == match_status) & (df[COL_LOWEST] == lowest_status)]
@@ -1784,6 +1827,13 @@ if side["page"].startswith("2"):
     if df_category.empty:
         st.info("카테고리 데이터가 없습니다. 사이드바에서 ep_category.csv를 업로드해주세요.")
     else:
+        _ff_exclude = st.checkbox(
+            "핏플랍(FF) 제외",
+            value=False, key="cat_ff_exclude",
+            help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
+                 "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
+        )
+
         # 매체필터(bpu)에 맞춰 카테고리 데이터 필터링 (자사/입점은 합산)
         if bpu in BPU_GROUPS:
             cat_bpu_df = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu])]
@@ -1800,6 +1850,10 @@ if side["page"].startswith("2"):
 
         if _has_segment:
             cat_bpu_df = cat_bpu_df[cat_bpu_df["회원구분"] == cat_segment]
+
+        if _ff_exclude:
+            cat_bpu_df = exclude_ff_brand(cat_bpu_df)
+            cat_bpu_df_all_seg = exclude_ff_brand(cat_bpu_df_all_seg)
 
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
         if (bpu == "Total" or bpu in BPU_GROUPS) and not cat_combo.empty:
