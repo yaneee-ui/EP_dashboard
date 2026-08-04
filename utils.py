@@ -138,12 +138,21 @@ def format_delta_html(delta) -> str:
 
 
 def week_of_month(date) -> int:
-    """해당 날짜가 그 달의 몇 번째 주인지 (1일이 속한 주=1주차, 월요일 시작 기준)."""
+    """해당 날짜(그 주의 월요일)가 같은 달 안에서 몇 번째 주인지.
+
+    예전엔 '(그 달 1일의 요일 오프셋 + 날짜) // 7' 방식으로 계산했는데,
+    1일이 월요일이 아닌 달에서는 '그 달의 첫 월요일'이 이미 2주차로 계산되고
+    1주차가 통째로 안 나오는 문제가 있었음 (예: 2026년 7월 1일=수요일이라
+    7월의 첫 월요일인 7/6이 2주차로 잘못 계산됨).
+
+    같은 달에 속하는 월요일들을 직접 나열해서, 이 날짜가 몇 번째 월요일인지로
+    계산하도록 바꿈 — 그 달의 첫 월요일은 항상 1주차가 된다."""
     date = pd.Timestamp(date)
-    first_day = date.replace(day=1)
-    # 그 달 1일의 요일(월=0) 만큼 오프셋
-    dom = date.day + first_day.weekday()
-    return (dom - 1) // 7 + 1
+    first_of_month = date.replace(day=1)
+    next_month = first_of_month + pd.offsets.MonthBegin(1)
+    last_of_month = next_month - pd.Timedelta(days=1)
+    mondays_in_month = pd.date_range(first_of_month, last_of_month, freq="W-MON")
+    return int((mondays_in_month <= date).sum())
 
 
 def make_period_label(last_date, unit: str) -> str:
