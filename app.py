@@ -1938,7 +1938,7 @@ if side["page"].startswith("2"):
                 series = series[series.index <= selected_period_date] if not series.empty else series
                 _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit))
 
-                _ff_val = None
+                _ff_stats = None
                 if _ff_note_df is not None:
                     ff_s = _ff_note_df.set_index("날짜")[col_name].sort_index()
                     ff_series = ff_s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
@@ -1947,9 +1947,11 @@ if side["page"].startswith("2"):
                     elif unit == "월마감" and not ff_series.empty and ff_s.index.max() < ff_series.index[-1]:
                         ff_series = ff_series.iloc[:-1]
                     ff_series = ff_series[ff_series.index <= selected_period_date] if not ff_series.empty else ff_series
-                    if not ff_series.empty and pd.notna(ff_series.iloc[-1]):
-                        _ff_val = float(ff_series.iloc[-1])
-                _ff_computed[display_name] = _ff_val
+                    # compute_kpi_deltas를 그대로 재사용해서, 메인 지표와 정확히 같은 기준 시점
+                    # (전기간/전년동기)의 FF 값을 뽑는다. 전년비교 기준연도(2025)에 FF가 활발했으므로,
+                    # 지금(2026) 시점만 보면 0에 가깝지만 전년동기 쪽엔 값이 커질 수 있음.
+                    _ff_stats = compute_kpi_deltas(ff_series, unit)
+                _ff_computed[display_name] = _ff_stats
 
             # 2단계: AI 인사이트 버튼 + 종합 요약
             _cat_ai_c1, _cat_ai_c2 = st.columns([5, 1])
@@ -1997,23 +1999,29 @@ if side["page"].startswith("2"):
                         _is_pct = col_name == "CR"
                         val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
                         cfg = UNIT_CONFIG[unit]
-                        _ff_val = _ff_computed.get(display_name)
-                        if _ff_val is not None:
-                            _ff_val_str = f"{_ff_val:.1f}%" if _is_pct else f"{_ff_val:,.0f}"
-                            _ff_line = (
-                                f"<div style='font-size:0.72rem;color:#ef4444;margin-top:5px;'>"
-                                f"핏플랍 제외분: {_ff_val_str}</div>"
-                            )
-                        else:
-                            _ff_line = ""
+
+                        def _ff_note(v, _is_pct=_is_pct):
+                            # 값이 거의 0이면(그 시점엔 FF 영향이 없으면) 표시 안 함 —
+                            # 지금이 2026년이면 '현재'/전기간 쪽은 대부분 0, 전년비교 쪽(2025)에
+                            # 큰 값이 나오는 게 정상 (FF는 2025-10월에 종료됐으므로)
+                            if v is None or pd.isna(v) or abs(v) < 0.5:
+                                return ""
+                            _s = f"{v:.1f}%" if _is_pct else f"{v:,.0f}"
+                            return f" <span style='color:#ef4444;font-weight:600;'>[FF {_s}]</span>"
+
+                        _ff_stats = _ff_computed.get(display_name)
+                        _ff_cur_note = _ff_note(_ff_stats["current"]) if _ff_stats else ""
+                        _ff_prev_note = _ff_note(_ff_stats.get("prev_value")) if _ff_stats else ""
+                        _ff_yoy_note = _ff_note(_ff_stats.get("yoy_value")) if _ff_stats else ""
+
                         st.markdown(
                             f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                             f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                            f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                            f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{val_str}</div>{_ff_cur_note}"
                             f"<div style='font-size:0.76rem;margin-top:6px;'>"
-                            f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
-                            f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}"
-                            f"</div>{_ff_line}</div>",
+                            f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}{_ff_prev_note}<br/>"
+                            f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}{_ff_yoy_note}"
+                            f"</div></div>",
                             unsafe_allow_html=True,
                         )
                         render_metric_insight(_ai_result_cat, display_name)
