@@ -85,8 +85,55 @@ def build_yoy_series(series: pd.Series, unit: str) -> pd.Series:
     return pd.Series(yoy_vals, index=idx)
 
 
-def compute_kpi_deltas(series: pd.Series, unit: str):
-    """최신 시점 기준 현재값 + 3종 증감률(전기간/평균/전년) 계산."""
+def _match_mean(daily: pd.Series, dates):
+    """daily(날짜 인덱스 Series)에서 dates 목록에 해당하는 값을 모아 평균낸다.
+    정확한 날짜가 없으면 그 이전의 가장 가까운 값으로 근사(build_yoy_series와 동일 규칙)."""
+    if daily.empty:
+        return None
+    idx = daily.index
+    vals = []
+    for t in dates:
+        if t in daily.index:
+            v = daily.loc[t]
+        else:
+            cand = idx[idx <= t]
+            v = daily.loc[cand[-1]] if len(cand) else None
+        if v is not None and not pd.isna(v):
+            vals.append(float(v))
+    if not vals:
+        return None
+    return sum(vals) / len(vals)
+
+
+def _partial_last_period(daily: pd.Series, unit: str):
+    """마지막 기간(주/월)이 아직 진행 중(부분)인지 판정하고, 그 기간에 실제로
+    존재하는 일자들과 '한 기간' 오프셋을 반환한다. (is_partial, current_days, step)."""
+    if daily.empty:
+        return False, None, None
+    last = daily.index.max()
+    if unit == "월별":
+        month_start = last.replace(day=1)
+        month_end = (month_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+        is_partial = last < month_end
+        cur_days = daily.index[(daily.index >= month_start) & (daily.index <= last)]
+        step = pd.DateOffset(months=1)
+    elif unit == "주별":
+        week_mon = last - pd.Timedelta(days=last.weekday())  # 그 주 월요일
+        is_partial = last.weekday() < 6  # 일요일(6)이 아니면 미완성 주
+        cur_days = daily.index[(daily.index >= week_mon) & (daily.index <= last)]
+        step = pd.Timedelta(weeks=1)
+    else:
+        return False, None, None  # 일별/월마감은 부분기간 보정 대상 아님
+    return is_partial, cur_days, step
+
+
+def compute_kpi_deltas(series: pd.Series, unit: str, raw_daily: pd.Series = None):
+    """최신 시점 기준 현재값 + 3종 증감률(전기간/평균/전년) 계산.
+
+    raw_daily(리샘플 전 일별 시리즈)를 주면, 진행 중인(부분) 달/주를 볼 때 비교 대상도
+    '같은 일수만큼'으로 맞춰 계산한다. 예) 8월이 1~3일치만 있으면, 전년비를 '작년 8월 전체
+    평균'이 아니라 '작년 같은 날들(동요일 364일 전)'과 비교 — 일별 카드와 결과가 일치.
+    raw_daily가 없으면 기존 동작 그대로(완성 기간 기준)."""
     cfg = UNIT_CONFIG[unit]
     series = series.dropna()
     if series.empty:
@@ -104,6 +151,32 @@ def compute_kpi_deltas(series: pd.Series, unit: str):
     yoy_series = build_yoy_series(series, unit)
     yoy_ref = yoy_series.iloc[-1] if not yoy_series.empty else None
     yoy_delta = _pct_delta(current, yoy_ref)
+
+    # --- 진행 중(부분) 기간 보정 ---
+    if raw_daily is not None and not raw_daily.empty:
+        rd = raw_daily.dropna().sort_index()
+        is_partial, cur_days, step = _partial_last_period(rd, unit)
+        if is_partial and cur_days is not None and len(cur_days) > 0:
+            _cur_raw = rd.loc[cur_days].mean()
+            if not pd.isna(_cur_raw):
+                current = float(_cur_raw)
+            # 전월/전주비: 한 기간 전, 같은 일자들
+            _prev2 = _match_mean(rd, [d - step for d in cur_days])
+            if _prev2 is not None:
+                prev, prev_delta = _prev2, _pct_delta(current, _prev2)
+            # 평균비: 이전 avg_window개 기간 각각 같은 일자 평균 → 다시 평균
+            _pmeans = []
+            for k in range(1, cfg["avg_window"] + 1):
+                m = _match_mean(rd, [d - k * step for d in cur_days])
+                if m is not None:
+                    _pmeans.append(m)
+            if _pmeans:
+                avg_ref = sum(_pmeans) / len(_pmeans)
+                avg_delta = _pct_delta(current, avg_ref)
+            # 전년비: 364일(동요일) 기준으로 같은 일자들
+            _yoy2 = _match_mean(rd, [d - pd.Timedelta(days=364) for d in cur_days])
+            if _yoy2 is not None:
+                yoy_ref, yoy_delta = _yoy2, _pct_delta(current, _yoy2)
 
     return {
         "current": current,
