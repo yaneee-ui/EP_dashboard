@@ -6,7 +6,6 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
-import numpy as np
 import datetime as _dt
 import io
 
@@ -3353,62 +3352,42 @@ if side["page"].startswith("7"):
         st.info("데이터가 없습니다. 사이드바에서 ep_traffic.csv를 업로드해주세요.")
     else:
 
-        def _trend_line(s):
-            """주차 인덱스 Series에 선형회귀(1차) 추세선을 계산해 같은 인덱스로 반환.
-            점 2개 미만이면 추세선을 그릴 수 없으니 None."""
-            if s is None or len(s) < 2:
-                return None
-            x = s.index.values.astype(float)
-            y = s.values.astype(float)
-            coeffs = np.polyfit(x, y, 1)
-            return pd.Series(np.polyval(coeffs, x), index=s.index)
-
         def _render_weekly_yearly_chart(title, s_by_label, wk_range, color_scheme=None):
             """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다.
             wk_range: (시작주차, 끝주차) — 이 범위만 잘라서 표시.
-            color_scheme: {"25년":색, "26년":색, "25년(FF제외)":색} — 차트마다 다른 색 팔레트.
-            실제값(실선+점) 위에 각 계열의 선형 추세선(점선, 같은 색)을 겹쳐 그린다."""
+            color_scheme: {"25년":색, "26년":색, "25년(FF제외)":색} — 차트마다 다른 색 팔레트."""
             import altair as alt
             _colors = color_scheme or {"25년": "#2563eb", "26년": "#f97316", "25년(FF제외)": "#9ca3af"}
-            actual_frames, trend_frames = [], []
+            frames = []
             for label, s in s_by_label.items():
                 if s is not None and not s.empty:
                     s = s[(s.index >= wk_range[0]) & (s.index <= wk_range[1])]
                     if not s.empty:
-                        actual_frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
-                        trend = _trend_line(s)
-                        if trend is not None:
-                            trend_frames.append(pd.DataFrame({"주차": trend.index, "값": trend.values, "구분": label}))
-            if not actual_frames:
+                        frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
+            if not frames:
                 st.info("선택한 주차 범위에 데이터가 없습니다.")
                 return
-            actual_df = pd.concat(actual_frames, ignore_index=True)
-            _domain = [d for d in s_by_label.keys() if d in actual_df["구분"].unique()]
+            long_df = pd.concat(frames, ignore_index=True)
+            _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
             _range = [_colors.get(d, "#000000") for d in _domain]
-            _color_enc = alt.Color("구분:N", scale=alt.Scale(domain=_domain, range=_range))
-
-            actual_layer = alt.Chart(actual_df).mark_line(
-                strokeWidth=2.4, point=alt.OverlayMarkDef(size=32, filled=True)
-            ).encode(
-                x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
-                y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
-                color=_color_enc.legend(orient="bottom", title=None),
-                tooltip=[
-                    alt.Tooltip("주차:O", title="주차"),
-                    alt.Tooltip("구분:N", title="구분"),
-                    alt.Tooltip("값:Q", title="값", format=",.0f"),
-                ],
-            )
-            layers = [actual_layer]
-            if trend_frames:
-                trend_df = pd.concat(trend_frames, ignore_index=True)
-                trend_layer = alt.Chart(trend_df).mark_line(strokeWidth=1.8, strokeDash=[5, 3]).encode(
-                    x=alt.X("주차:O", title=None),
-                    y=alt.Y("값:Q", title=None, scale=alt.Scale(zero=False)),
-                    color=_color_enc.legend(None),
+            chart = (
+                alt.Chart(long_df)
+                .mark_line(strokeWidth=2.4, point=alt.OverlayMarkDef(size=32, filled=True))
+                .encode(
+                    x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
+                    y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
+                    color=alt.Color(
+                        "구분:N", scale=alt.Scale(domain=_domain, range=_range),
+                        legend=alt.Legend(orient="bottom", title=None),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("주차:O", title="주차"),
+                        alt.Tooltip("구분:N", title="구분"),
+                        alt.Tooltip("값:Q", title="값", format=",.0f"),
+                    ],
                 )
-                layers.append(trend_layer)
-            chart = alt.layer(*layers).properties(height=280)
+                .properties(height=280)
+            )
             st.markdown(f"**{title}**")
             st.altair_chart(chart, use_container_width=True)
 
