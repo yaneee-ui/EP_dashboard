@@ -620,21 +620,25 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     if _event_rows:
         _ev_df = pd.DataFrame(_event_rows)
-        _ev_rule = alt.Chart(_ev_df).mark_rule(color="#dc2626", strokeDash=[3, 2], strokeWidth=1.3).encode(
-            x=alt.X("_date_label:O", sort=_label_order),
-            tooltip=[alt.Tooltip("_date_label:N", title="날짜"), alt.Tooltip("이벤트:N", title="이벤트")],
-        )
-        _ev_text = alt.Chart(_ev_df).mark_text(
-            align="left", baseline="middle", angle=270, dx=-6, dy=0, color="#dc2626", fontSize=9,
-        ).encode(
-            x=alt.X("_date_label:O", sort=_label_order),
-            y=alt.value(8),
-            text="이벤트:N",
-        )
-        chart = alt.layer(chart, _ev_rule, _ev_text).resolve_scale(x="shared")
+        # 세로선 없이, 금년(cols[0]) 라인의 그 날짜 실제 값 위치에만 마커를 찍는다
+        _main_vals = long_df[long_df["구분"] == cols[0]][["_date_label", "값"]]
+        _ev_df = _ev_df.merge(_main_vals, on="_date_label", how="left").dropna(subset=["값"])
+        if not _ev_df.empty:
+            _ev_marker = alt.Chart(_ev_df).mark_point(
+                shape="triangle-down", size=110, color="#dc2626", filled=True, opacity=0.95,
+            ).encode(
+                x=alt.X("_date_label:O", sort=_label_order),
+                y=alt.Y("값:Q"),
+                tooltip=[alt.Tooltip("_date_label:N", title="날짜"), alt.Tooltip("이벤트:N", title="이벤트")],
+            )
+            chart = alt.layer(chart, _ev_marker).resolve_scale(x="shared", y="shared")
 
     # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
     st.altair_chart(chart, use_container_width=True)
+
+    if _event_rows:
+        _ev_caption = "  ·  ".join(f"📌 {r['_date_label']} {r['이벤트']}" for r in _event_rows)
+        st.caption(_ev_caption)
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
