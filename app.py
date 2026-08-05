@@ -1045,6 +1045,7 @@ with _sticky:
         "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약",
         "3": "📋 누적 데이터", "4": "📋 누적 데이터 (카테고리)",
         "5": "🎟️ 쿠폰 비용 분석", "6": "📑 주간보고용",
+        "7": "📅 회원 트래픽 (주차별)",
     }
 
     # ========================================================
@@ -1305,6 +1306,15 @@ with _sticky:
     # 여기서는 간단한 제목만 표시
     # ========================================================
     elif _page_num == "6":
+        st.markdown(
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            unsafe_allow_html=True,
+        )
+
+    # ========================================================
+    # 페이지 7: 회원 트래픽(주차별)도 자체 로직만 있어서 제목만 표시
+    # ========================================================
+    elif _page_num == "7":
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -3259,3 +3269,103 @@ if side["page"].startswith("6"):
                 st.dataframe(_pv_right, use_container_width=True, hide_index=True, height=360)
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
+
+
+# ============================================================
+# 페이지 7: 회원 트래픽 (주차별) — 25년 vs 26년 vs 25년(FF제외)
+# ============================================================
+if side["page"].startswith("7"):
+    st.markdown("---")
+    st.markdown("### 📅 회원 트래픽 · 주차별 25년 vs 26년")
+    st.caption(
+        "각 연도 1월 1일부터 월~일 단위로 주차를 매겨서(그 해의 1주차부터), "
+        "올해/작년 같은 주차끼리 나란히 비교해요. 자사 정상=e-영업1, 자사 이월=e-영업2, "
+        "입점=e-영업3+e-영업4 (모두 '회원' 세그먼트 기준)."
+    )
+
+    if df_traffic.empty:
+        st.info("데이터가 없습니다. 사이드바에서 ep_traffic.csv를 업로드해주세요.")
+    else:
+        def _weekly_of_year(daily_df, metric, year):
+            """daily_df(날짜 컬럼 포함)를 해당 연도만 잘라서 월~일 주간 평균으로 리샘플하고,
+            그 해 첫 주=1주차로 시작하는 정수 인덱스를 붙인다."""
+            d = daily_df[daily_df["날짜"].dt.year == year]
+            if d.empty:
+                return pd.Series(dtype="float64")
+            s = d.set_index("날짜")[metric].sort_index()
+            weekly = s.resample("W-SUN").mean()
+            weekly.index = weekly.index - pd.Timedelta(days=6)  # 그 주의 월요일로 라벨
+            weekly = weekly.reset_index(drop=True)
+            weekly.index = weekly.index + 1  # 1주차부터 시작
+            return weekly
+
+        def _render_weekly_yearly_chart(title, s_by_label):
+            """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다."""
+            import altair as alt
+            _colors = {"25년": "#2563eb", "26년": "#f97316", "25년(FF제외)": "#9ca3af"}
+            frames = []
+            for label, s in s_by_label.items():
+                if s is not None and not s.empty:
+                    frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
+            if not frames:
+                st.info("표시할 데이터가 없습니다.")
+                return
+            long_df = pd.concat(frames, ignore_index=True)
+            _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
+            _range = [_colors.get(d, "#000000") for d in _domain]
+            chart = (
+                alt.Chart(long_df)
+                .mark_line(strokeWidth=1.8, point=alt.OverlayMarkDef(size=22, filled=True))
+                .encode(
+                    x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
+                    y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
+                    color=alt.Color(
+                        "구분:N", scale=alt.Scale(domain=_domain, range=_range),
+                        legend=alt.Legend(orient="bottom", title=None),
+                    ),
+                    tooltip=[
+                        alt.Tooltip("주차:O", title="주차"),
+                        alt.Tooltip("구분:N", title="구분"),
+                        alt.Tooltip("값:Q", title="값", format=",.0f"),
+                    ],
+                )
+                .properties(height=280)
+            )
+            st.markdown(f"**{title}**")
+            st.altair_chart(chart, use_container_width=True)
+
+        _tr_member = df_traffic[df_traffic["회원구분"] == "회원"]
+        _has_ff_data = not df_category.empty and (df_category["브랜드"] == "FF").any()
+        _tr_member_ff = None
+        if _has_ff_data:
+            _tr_ff_adj = exclude_ff_from_traffic(df_traffic, df_category)
+            _tr_member_ff = _tr_ff_adj[_tr_ff_adj["회원구분"] == "회원"]
+
+        _charts_def = [
+            ("전체 회원 트래픽", "single", "Total"),
+            ("자사 정상 회원 트래픽", "single", "e-영업1"),
+            ("자사 이월 회원 트래픽", "single", "e-영업2"),
+            ("입점 회원 트래픽", "multi", ["e-영업3", "e-영업4"]),
+        ]
+
+        _w_cols = st.columns(4)
+        for i, (title, kind, bpu_sel) in enumerate(_charts_def):
+            with _w_cols[i]:
+                if kind == "single":
+                    _d = _tr_member[_tr_member["BPU"] == bpu_sel][["날짜", "트래픽"]]
+                else:
+                    _d = _tr_member[_tr_member["BPU"].isin(bpu_sel)].groupby("날짜", as_index=False)["트래픽"].sum()
+
+                s2025 = _weekly_of_year(_d, "트래픽", 2025)
+                s2026 = _weekly_of_year(_d, "트래픽", 2026)
+
+                s2025_ff = None
+                if kind == "single" and _tr_member_ff is not None:
+                    _d_ff = _tr_member_ff[_tr_member_ff["BPU"] == bpu_sel][["날짜", "트래픽"]]
+                    s2025_ff = _weekly_of_year(_d_ff, "트래픽", 2025)
+
+                _series_map = {"25년": s2025, "26년": s2026}
+                if s2025_ff is not None and not s2025_ff.empty:
+                    _series_map["25년(FF제외)"] = s2025_ff
+
+                _render_weekly_yearly_chart(title, _series_map)
