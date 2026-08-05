@@ -191,6 +191,50 @@ def exclude_ff_brand(df):
     return df2
 
 
+def exclude_ff_from_traffic(df_traffic, df_category):
+    """EP실적 원본(df_traffic)엔 브랜드 정보가 없어서 핏플랍을 직접 제외할 수 없으므로,
+    카테고리 원본(df_category)에서 FF의 일자별 트래픽/거래액/구매객수를 가져와 그만큼
+    df_traffic에서 빼고 CR/객단가를 재계산한다.
+
+    - 'e-영업1'/'e-영업2' 리터럴 행(FF가 실제로 존재하는 BPU)에서 직접 차감.
+    - 'Total' 리터럴 행은 e-영업1~4를 미리 합쳐둔 별도 행이라, e-영업1+e-영업2 합계만큼
+      추가로 차감해야 함 (자사/입점 뷰는 앱에서 e-영업1~4를 그때그때 합산하는 구조라
+      e-영업1/e-영업2를 고치면 자동으로 반영되지만, Total은 그렇지 않음).
+    - 세그먼트는 카테고리 원본에 남아있는 전체/회원/신규만 보정 가능하다(비회원/기존은
+      용량 문제로 카테고리 원본에서 뺐던 세그먼트라 원천적으로 보정 불가 — 그대로 둠)."""
+    if df_traffic.empty or df_category.empty:
+        return df_traffic
+
+    ff = df_category[(df_category["브랜드"] == "FF") & (df_category["카테고리"] != "전체")]
+    if ff.empty:
+        return df_traffic
+
+    ff_by_bpu = ff.groupby(["날짜", "BPU", "회원구분"], as_index=False)[["트래픽", "거래액", "구매객수"]].sum()
+    ff_total = ff_by_bpu.groupby(["날짜", "회원구분"], as_index=False)[["트래픽", "거래액", "구매객수"]].sum()
+    ff_total["BPU"] = "Total"
+    ff_all = pd.concat([ff_by_bpu, ff_total], ignore_index=True)
+    ff_all = ff_all.rename(columns={"트래픽": "_ff_t", "거래액": "_ff_g", "구매객수": "_ff_b"})
+
+    group_keys = ["날짜", "BPU", "회원구분"]
+    mask = df_traffic["BPU"].isin(["Total", "e-영업1", "e-영업2"])
+    if not mask.any():
+        return df_traffic
+
+    target = df_traffic.loc[mask].merge(ff_all, on=group_keys, how="left")
+    target[["_ff_t", "_ff_g", "_ff_b"]] = target[["_ff_t", "_ff_g", "_ff_b"]].fillna(0)
+    target["트래픽"] = target["트래픽"] - target["_ff_t"]
+    target["거래액"] = target["거래액"] - target["_ff_g"]
+    target["구매객수"] = target["구매객수"] - target["_ff_b"]
+    target["CR"] = (target["구매객수"] / target["트래픽"] * 100).where(target["트래픽"] > 0)
+    target["객단가"] = (target["거래액"] / target["구매객수"]).where(target["구매객수"] > 0)
+
+    df2 = df_traffic.copy()
+    df2.loc[mask, ["트래픽", "거래액", "구매객수", "CR", "객단가"]] = target[
+        ["트래픽", "거래액", "구매객수", "CR", "객단가"]
+    ].values
+    return df2
+
+
 def aggregate_ep(df, bpus, match_status, lowest_status):
     """여러 BPU의 EP채널 데이터를 합산. 비율 지표는 재계산."""
     sub = df[(df[COL_BPU].isin(bpus)) & (df[COL_MATCH] == match_status) & (df[COL_LOWEST] == lowest_status)]
@@ -1228,16 +1272,30 @@ with _sticky:
                 if _has_segment and selected_brand != "전체":
                     st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
         else:
-            _ff_exclude = False
+            if (not df_category.empty) and (df_category["브랜드"] == "FF").any():
+                _ff_exclude = st.session_state.get("cat_ff_exclude", False)
+            else:
+                _ff_exclude = False
 
-        # 페이지1(실적요약)일 때는 EP실적용 세그먼트(고객 구분) 필터 노출
+        # 페이지1(실적요약)일 때는 EP실적용 세그먼트(고객 구분) 필터 + 핏플랍 제외 체크박스 노출
         if _page_num == "1":
             _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
             st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
-            segment = st.radio(
-                "고객 구분", _seg_options, horizontal=True,
-                key="seg_filter", label_visibility="collapsed",
-            )
+            _seg_c1, _seg_c2 = st.columns([3, 1])
+            with _seg_c1:
+                segment = st.radio(
+                    "고객 구분", _seg_options, horizontal=True,
+                    key="seg_filter", label_visibility="collapsed",
+                )
+            if (not df_category.empty) and (df_category["브랜드"] == "FF").any():
+                with _seg_c2:
+                    _ff_exclude = st.checkbox(
+                        "핏플랍 제외",
+                        value=_ff_exclude, key="cat_ff_exclude",
+                        help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
+                             "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
+                             "2번 페이지의 체크박스와 같은 설정을 공유해요.",
+                    )
 
         period_label = make_period_label(selected_period_date, unit)
 
@@ -1495,6 +1553,11 @@ components.html(
 
 
 if side["page"].startswith("1"):
+    # 핏플랍(FF) 제외 — 2번 페이지와 체크박스를 공유. df_traffic엔 브랜드 정보가 없어서
+    # 카테고리 원본(df_category)에서 FF 기여분을 가져와 빼는 방식 (exclude_ff_from_traffic 참고)
+    if _ff_exclude:
+        df_traffic = exclude_ff_from_traffic(df_traffic, df_category)
+
     # ============================================================
     # 상단: EP 실적 (트래픽/거래액/구매객수/CR/객단가)
     # ============================================================
