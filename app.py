@@ -3451,8 +3451,9 @@ if side["page"].startswith("7"):
 
         def _render_section(section_title, metric, segment_value, show_ff):
             """metric(트래픽/거래액), segment_value(회원/전체) 기준으로 4개 BPU 차트를 그린다.
-            연관된 지표라 같은 높이에서 흐름을 비교할 수 있게, 이 섹션(트래픽 또는 거래액)의
-            4개 차트가 y축 범위(최소/최대)를 공유하도록 먼저 전체 데이터를 훑어서 계산한다."""
+            '전체'는 규모가 훨씬 커서 같이 묶으면 나머지가 다 눌려 보이므로 독자적인 y축을 쓰고,
+            '자사 정상/자사 이월/입점' 3개는 서로 규모가 비슷해서 공통 y축을 공유해 흐름을
+            비교할 수 있게 한다."""
             st.markdown(f"#### {section_title}")
             _base = df_traffic[df_traffic["회원구분"] == segment_value]
             _base_ff = None
@@ -3460,9 +3461,9 @@ if side["page"].startswith("7"):
                 _base_ff = _tr_ff_adj[_tr_ff_adj["회원구분"] == segment_value]
 
             # 1단계: 4개 차트 데이터를 먼저 만들면서, 화면에 실제로 표시될(주차 범위로 자른)
-            # 값들의 최소/최대를 모아서 섹션 공통 y축 범위를 정한다.
+            # 값들의 최소/최대를 '전체' 따로, '정상/이월/입점' 따로 모은다.
             _chart_series = []
-            _all_vals = []
+            _total_vals, _shared_vals = [], []
             for label, kind, bpu_sel, color_scheme in _charts_def:
                 if kind == "single":
                     _d = _base[_base["BPU"] == bpu_sel][["날짜", metric]]
@@ -3482,29 +3483,35 @@ if side["page"].startswith("7"):
                     _series_map["25년(FF제외)"] = s2025_ff
 
                 _chart_series.append((label, color_scheme, _series_map))
+                _vals_bucket = _total_vals if label == "전체" else _shared_vals
                 for s in _series_map.values():
                     if s is not None and not s.empty:
                         _s_clip = s[(s.index >= wk_range[0]) & (s.index <= wk_range[1])]
                         if not _s_clip.empty:
-                            _all_vals.append(float(_s_clip.min()))
-                            _all_vals.append(float(_s_clip.max()))
+                            _vals_bucket.append(float(_s_clip.min()))
+                            _vals_bucket.append(float(_s_clip.max()))
 
-            y_domain = None
-            if _all_vals:
-                _y_min, _y_max = min(_all_vals), max(_all_vals)
-                _pad = (_y_max - _y_min) * 0.05 if _y_max > _y_min else (abs(_y_max) * 0.05 or 1)
-                y_domain = (_y_min - _pad, _y_max + _pad)
+            def _domain_from(vals):
+                if not vals:
+                    return None
+                _min, _max = min(vals), max(vals)
+                _pad = (_max - _min) * 0.05 if _max > _min else (abs(_max) * 0.05 or 1)
+                return (_min - _pad, _max + _pad)
 
-            # 2단계: 공유 y_domain으로 4개 차트를 그린다
+            _total_domain = _domain_from(_total_vals)
+            _shared_domain = _domain_from(_shared_vals)
+
+            # 2단계: '전체'는 자기 domain, 나머지 3개는 공유 domain으로 그린다
             _cols = st.columns(4)
             for i, (label, color_scheme, _series_map) in enumerate(_chart_series):
                 with _cols[i]:
+                    _y_domain = _total_domain if label == "전체" else _shared_domain
                     _render_weekly_yearly_chart(
-                        f"{label} {section_title}", _series_map, wk_range, color_scheme, y_domain=y_domain
+                        f"{label} {section_title}", _series_map, wk_range, color_scheme, y_domain=_y_domain
                     )
 
         _render_section("회원 트래픽", "트래픽", "회원", show_ff=True)
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        _render_section("거래액 (전체)", "거래액", "전체", show_ff=True)
+        _render_section("회원 거래액", "거래액", "전체", show_ff=True)
