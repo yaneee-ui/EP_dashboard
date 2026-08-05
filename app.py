@@ -3370,6 +3370,8 @@ if side["page"].startswith("7"):
             long_df = pd.concat(frames, ignore_index=True)
             _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
             _range = [_colors.get(d, "#000000") for d in _domain]
+            # "25년(FF제외)"만 점선으로 그려서 실제값(25/26년)과 구분되게 함
+            _dash_range = [[1, 0] if d != "25년(FF제외)" else [5, 3] for d in _domain]
             chart = (
                 alt.Chart(long_df)
                 .mark_line(strokeWidth=2.4, point=alt.OverlayMarkDef(size=32, filled=True))
@@ -3379,6 +3381,9 @@ if side["page"].startswith("7"):
                     color=alt.Color(
                         "구분:N", scale=alt.Scale(domain=_domain, range=_range),
                         legend=alt.Legend(orient="bottom", title=None),
+                    ),
+                    strokeDash=alt.StrokeDash(
+                        "구분:N", scale=alt.Scale(domain=_domain, range=_dash_range), legend=None,
                     ),
                     tooltip=[
                         alt.Tooltip("주차:O", title="주차"),
@@ -3396,10 +3401,10 @@ if side["page"].startswith("7"):
 
         # 차트(BPU)별로 다른 색 계열 — 25년=연한색, 26년=진한색, FF제외=같은 계열의 중간톤
         _charts_def = [
-            ("전체", "single", "Total", {"25년": "#c7c7c7", "26년": "#7f7f7f", "25년(FF제외)": "#ff7f0e"}),
-            ("자사 정상", "single", "e-영업1", {"25년": "#aec7e8", "26년": "#1f77b4", "25년(FF제외)": "#ff7f0e"}),
-            ("자사 이월", "single", "e-영업2", {"25년": "#98df8a", "26년": "#2ca02c", "25년(FF제외)": "#ff7f0e"}),
-            ("입점", "multi", ["e-영업3", "e-영업4"], {"25년": "#c5b0d5", "26년": "#9467bd", "25년(FF제외)": "#ff7f0e"}),
+            ("전체", "single", "Total", {"25년": "#c7c7c7", "26년": "#7f7f7f", "25년(FF제외)": "#ffbb78"}),
+            ("자사 정상", "single", "e-영업1", {"25년": "#aec7e8", "26년": "#1f77b4", "25년(FF제외)": "#ffbb78"}),
+            ("자사 이월", "single", "e-영업2", {"25년": "#98df8a", "26년": "#2ca02c", "25년(FF제외)": "#ffbb78"}),
+            ("입점", "multi", ["e-영업3", "e-영업4"], {"25년": "#c5b0d5", "26년": "#9467bd", "25년(FF제외)": "#ffbb78"}),
         ]
 
         # 주차 범위(wk_range)는 상단 고정 영역에서 이미 선택되어 넘어온다.
