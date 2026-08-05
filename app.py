@@ -3280,7 +3280,7 @@ if side["page"].startswith("7"):
     st.caption(
         "각 연도 1월 1일부터 월~일 단위로 주차를 매겨서(그 해의 1주차부터), "
         "올해/작년 같은 주차끼리 나란히 비교해요. 자사 정상=e-영업1, 자사 이월=e-영업2, "
-        "입점=e-영업3+e-영업4 (모두 '회원' 세그먼트 기준)."
+        "입점=e-영업3+e-영업4. 위쪽 트래픽은 '회원' 세그먼트 기준, 아래쪽 거래액은 '전체' 기준이에요."
     )
 
     if df_traffic.empty:
@@ -3299,16 +3299,19 @@ if side["page"].startswith("7"):
             weekly.index = weekly.index + 1  # 1주차부터 시작
             return weekly
 
-        def _render_weekly_yearly_chart(title, s_by_label):
-            """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다."""
+        def _render_weekly_yearly_chart(title, s_by_label, wk_range):
+            """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다.
+            wk_range: (시작주차, 끝주차) — 이 범위만 잘라서 표시."""
             import altair as alt
             _colors = {"25년": "#2563eb", "26년": "#f97316", "25년(FF제외)": "#9ca3af"}
             frames = []
             for label, s in s_by_label.items():
                 if s is not None and not s.empty:
-                    frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
+                    s = s[(s.index >= wk_range[0]) & (s.index <= wk_range[1])]
+                    if not s.empty:
+                        frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
             if not frames:
-                st.info("표시할 데이터가 없습니다.")
+                st.info("선택한 주차 범위에 데이터가 없습니다.")
                 return
             long_df = pd.concat(frames, ignore_index=True)
             _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
@@ -3334,38 +3337,64 @@ if side["page"].startswith("7"):
             st.markdown(f"**{title}**")
             st.altair_chart(chart, use_container_width=True)
 
-        _tr_member = df_traffic[df_traffic["회원구분"] == "회원"]
         _has_ff_data = not df_category.empty and (df_category["브랜드"] == "FF").any()
-        _tr_member_ff = None
-        if _has_ff_data:
-            _tr_ff_adj = exclude_ff_from_traffic(df_traffic, df_category)
-            _tr_member_ff = _tr_ff_adj[_tr_ff_adj["회원구분"] == "회원"]
+        _tr_ff_adj = exclude_ff_from_traffic(df_traffic, df_category) if _has_ff_data else None
 
         _charts_def = [
-            ("전체 회원 트래픽", "single", "Total"),
-            ("자사 정상 회원 트래픽", "single", "e-영업1"),
-            ("자사 이월 회원 트래픽", "single", "e-영업2"),
-            ("입점 회원 트래픽", "multi", ["e-영업3", "e-영업4"]),
+            ("전체", "single", "Total"),
+            ("자사 정상", "single", "e-영업1"),
+            ("자사 이월", "single", "e-영업2"),
+            ("입점", "multi", ["e-영업3", "e-영업4"]),
         ]
 
-        _w_cols = st.columns(4)
-        for i, (title, kind, bpu_sel) in enumerate(_charts_def):
-            with _w_cols[i]:
-                if kind == "single":
-                    _d = _tr_member[_tr_member["BPU"] == bpu_sel][["날짜", "트래픽"]]
-                else:
-                    _d = _tr_member[_tr_member["BPU"].isin(bpu_sel)].groupby("날짜", as_index=False)["트래픽"].sum()
+        # 두 해 중 더 긴 쪽(보통 25년, 최대 53주차) 기준으로 슬라이더 범위를 잡는다
+        _max_week = 1
+        for _y in (2025, 2026):
+            _s = _weekly_of_year(df_traffic[df_traffic["BPU"] == "Total"], "트래픽", _y)
+            if not _s.empty:
+                _max_week = max(_max_week, int(_s.index.max()))
 
-                s2025 = _weekly_of_year(_d, "트래픽", 2025)
-                s2026 = _weekly_of_year(_d, "트래픽", 2026)
+        _wk_c1, _wk_spacer = st.columns([2, 3])
+        with _wk_c1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>주차 범위</div>", unsafe_allow_html=True)
+            wk_range = st.slider(
+                "주차 범위", min_value=1, max_value=_max_week, value=(1, _max_week),
+                label_visibility="collapsed", key="wk_traffic_range",
+            )
+        st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
 
-                s2025_ff = None
-                if kind == "single" and _tr_member_ff is not None:
-                    _d_ff = _tr_member_ff[_tr_member_ff["BPU"] == bpu_sel][["날짜", "트래픽"]]
-                    s2025_ff = _weekly_of_year(_d_ff, "트래픽", 2025)
+        def _render_section(section_title, metric, segment_value, show_ff):
+            """metric(트래픽/거래액), segment_value(회원/전체) 기준으로 4개 BPU 차트를 그린다."""
+            st.markdown(f"#### {section_title}")
+            _base = df_traffic[df_traffic["회원구분"] == segment_value]
+            _base_ff = None
+            if show_ff and _tr_ff_adj is not None:
+                _base_ff = _tr_ff_adj[_tr_ff_adj["회원구분"] == segment_value]
 
-                _series_map = {"25년": s2025, "26년": s2026}
-                if s2025_ff is not None and not s2025_ff.empty:
-                    _series_map["25년(FF제외)"] = s2025_ff
+            _cols = st.columns(4)
+            for i, (label, kind, bpu_sel) in enumerate(_charts_def):
+                with _cols[i]:
+                    if kind == "single":
+                        _d = _base[_base["BPU"] == bpu_sel][["날짜", metric]]
+                    else:
+                        _d = _base[_base["BPU"].isin(bpu_sel)].groupby("날짜", as_index=False)[metric].sum()
 
-                _render_weekly_yearly_chart(title, _series_map)
+                    s2025 = _weekly_of_year(_d, metric, 2025)
+                    s2026 = _weekly_of_year(_d, metric, 2026)
+
+                    s2025_ff = None
+                    if show_ff and kind == "single" and _base_ff is not None:
+                        _d_ff = _base_ff[_base_ff["BPU"] == bpu_sel][["날짜", metric]]
+                        s2025_ff = _weekly_of_year(_d_ff, metric, 2025)
+
+                    _series_map = {"25년": s2025, "26년": s2026}
+                    if s2025_ff is not None and not s2025_ff.empty:
+                        _series_map["25년(FF제외)"] = s2025_ff
+
+                    _render_weekly_yearly_chart(f"{label} {section_title}", _series_map, wk_range)
+
+        _render_section("회원 트래픽", "트래픽", "회원", show_ff=True)
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+        _render_section("거래액 (전체)", "거래액", "전체", show_ff=True)
