@@ -6,6 +6,7 @@
 import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
+import numpy as np
 import datetime as _dt
 import io
 
@@ -24,7 +25,7 @@ from charts import main_trend_data
 from comparison_table import render_summary_table_html
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
-    resample_series, make_period_label, compute_kpi_deltas,
+    resample_series, make_period_label, compute_kpi_deltas, week_of_month,
     format_value, format_delta_html,
 )
 from styles import CUSTOM_CSS
@@ -233,6 +234,42 @@ def exclude_ff_from_traffic(df_traffic, df_category):
         ["트래픽", "거래액", "구매객수", "CR", "객단가"]
     ].values
     return df2
+
+
+def _weekly_of_year(daily_df, metric, year):
+    """daily_df(날짜 컬럼 포함)를 해당 연도만 잘라서 월~일 주간 평균으로 리샘플하고,
+    그 해 첫 주=1주차로 시작하는 정수 인덱스를 붙인다. (7번 페이지 전용, 스티키 헤더의
+    주차 필터와 페이지 본문 둘 다에서 같은 정의를 써야 해서 모듈 레벨에 둠)"""
+    d = daily_df[daily_df["날짜"].dt.year == year]
+    if d.empty:
+        return pd.Series(dtype="float64")
+    s = d.set_index("날짜")[metric].sort_index()
+    weekly = s.resample("W-SUN").mean()
+    weekly.index = weekly.index - pd.Timedelta(days=6)  # 그 주의 월요일로 라벨
+    weekly = weekly.reset_index(drop=True)
+    weekly.index = weekly.index + 1  # 1주차부터 시작
+    return weekly
+
+
+def _week_labels_for_year(daily_df, metric, year):
+    """_weekly_of_year와 정확히 같은 순서로 'N월 N주차' 라벨을 만든다 (1:1 대응 보장).
+    그 해 1/1이 월요일이 아니면 첫 주는 실제로 전년도 12월 마지막 주에 걸치는데,
+    이건 utils.week_of_month의 '월 경계는 이전 달 마지막 주로 본다' 규칙과 동일하게 처리
+    (그래야 예: 1월 1주차가 두 번 나오는 라벨 중복이 안 생김). 그 경우엔 연도를 앞에 붙여
+    구분한다(예: '24년 12월 5주차')."""
+    d = daily_df[daily_df["날짜"].dt.year == year]
+    if d.empty:
+        return []
+    s = d.set_index("날짜")[metric].sort_index()
+    weekly_raw = s.resample("W-SUN").mean()
+    labels = []
+    for bucket_end in weekly_raw.index:
+        mon = bucket_end - pd.Timedelta(days=6)
+        if mon.year != year:
+            labels.append(f"{mon.year % 100}년 {mon.month}월 {week_of_month(mon)}주차")
+        else:
+            labels.append(f"{mon.month}월 {week_of_month(mon)}주차")
+    return labels
 
 
 def aggregate_ep(df, bpus, match_status, lowest_status):
@@ -1045,7 +1082,7 @@ with _sticky:
         "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약",
         "3": "📋 누적 데이터", "4": "📋 누적 데이터 (카테고리)",
         "5": "🎟️ 쿠폰 비용 분석", "6": "📑 주간보고용",
-        "7": "📅 회원 트래픽 (주차별)",
+        "7": "📅 회원 실적 (주차별)",
     }
 
     # ========================================================
@@ -1312,13 +1349,42 @@ with _sticky:
         )
 
     # ========================================================
-    # 페이지 7: 회원 트래픽(주차별)도 자체 로직만 있어서 제목만 표시
+    # 페이지 7: 회원 실적(주차별) — 주차 범위 필터를 상단 고정 영역에 배치
     # ========================================================
     elif _page_num == "7":
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
         )
+        if df_traffic.empty:
+            wk_range = (1, 1)
+        else:
+            # 25년/26년 각각의 실제 데이터로 라벨을 만들고(두 해가 다르게 밀릴 수 있어서),
+            # 더 긴 쪽(보통 25년, 최대 53주)을 기준으로 슬라이더를 그린다.
+            # _week_labels_for_year가 _weekly_of_year와 정확히 같은 순서로 라벨을 만들어서
+            # 인덱스가 어긋나지 않는다.
+            _wk7_total = df_traffic[df_traffic["BPU"] == "Total"]
+            _wk7_labels_25 = _week_labels_for_year(_wk7_total, "트래픽", 2025)
+            _wk7_labels_26 = _week_labels_for_year(_wk7_total, "트래픽", 2026)
+            _wk7_labels = _wk7_labels_25 if len(_wk7_labels_25) >= len(_wk7_labels_26) else _wk7_labels_26
+            if not _wk7_labels:
+                _wk7_labels = ["1주차"]
+
+            # 기본값 = 최근 10주. '최근'은 26년(진행 중인 올해) 기준 마지막 주차로 잡고,
+            # 26년 데이터가 없으면 라벨 목록 전체의 마지막 10주로 대체한다.
+            _wk7_latest_wk = len(_wk7_labels_26) if _wk7_labels_26 else len(_wk7_labels)
+            _wk7_default_end = max(1, min(_wk7_latest_wk, len(_wk7_labels)))
+            _wk7_default_start = max(1, _wk7_default_end - 9)
+
+            _wk7_c1, _wk7_spacer = st.columns([2, 3])
+            with _wk7_c1:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>주차 범위</div>", unsafe_allow_html=True)
+                _wk7_sel_labels = st.select_slider(
+                    "주차 범위", options=_wk7_labels,
+                    value=(_wk7_labels[_wk7_default_start - 1], _wk7_labels[_wk7_default_end - 1]),
+                    label_visibility="collapsed", key="wk_traffic_range",
+                )
+            wk_range = (_wk7_labels.index(_wk7_sel_labels[0]) + 1, _wk7_labels.index(_wk7_sel_labels[1]) + 1)
 
     # ========================================================
     # 페이지 3 / 4: 매체필터 + 기간유형 + 시작일/종료일 (+카테고리/브랜드)
@@ -3272,11 +3338,11 @@ if side["page"].startswith("6"):
 
 
 # ============================================================
-# 페이지 7: 회원 트래픽 (주차별) — 25년 vs 26년 vs 25년(FF제외)
+# 페이지 7: 회원 실적 (주차별) — 25년 vs 26년 vs 25년(FF제외)
 # ============================================================
 if side["page"].startswith("7"):
     st.markdown("---")
-    st.markdown("### 📅 회원 트래픽 · 주차별 25년 vs 26년")
+    st.markdown("### 📅 회원 실적 · 주차별 25년 vs 26년")
     st.caption(
         "각 연도 1월 1일부터 월~일 단위로 주차를 매겨서(그 해의 1주차부터), "
         "올해/작년 같은 주차끼리 나란히 비교해요. 자사 정상=e-영업1, 자사 이월=e-영업2, "
@@ -3286,82 +3352,78 @@ if side["page"].startswith("7"):
     if df_traffic.empty:
         st.info("데이터가 없습니다. 사이드바에서 ep_traffic.csv를 업로드해주세요.")
     else:
-        def _weekly_of_year(daily_df, metric, year):
-            """daily_df(날짜 컬럼 포함)를 해당 연도만 잘라서 월~일 주간 평균으로 리샘플하고,
-            그 해 첫 주=1주차로 시작하는 정수 인덱스를 붙인다."""
-            d = daily_df[daily_df["날짜"].dt.year == year]
-            if d.empty:
-                return pd.Series(dtype="float64")
-            s = d.set_index("날짜")[metric].sort_index()
-            weekly = s.resample("W-SUN").mean()
-            weekly.index = weekly.index - pd.Timedelta(days=6)  # 그 주의 월요일로 라벨
-            weekly = weekly.reset_index(drop=True)
-            weekly.index = weekly.index + 1  # 1주차부터 시작
-            return weekly
 
-        def _render_weekly_yearly_chart(title, s_by_label, wk_range):
+        def _trend_line(s):
+            """주차 인덱스 Series에 선형회귀(1차) 추세선을 계산해 같은 인덱스로 반환.
+            점 2개 미만이면 추세선을 그릴 수 없으니 None."""
+            if s is None or len(s) < 2:
+                return None
+            x = s.index.values.astype(float)
+            y = s.values.astype(float)
+            coeffs = np.polyfit(x, y, 1)
+            return pd.Series(np.polyval(coeffs, x), index=s.index)
+
+        def _render_weekly_yearly_chart(title, s_by_label, wk_range, color_scheme=None):
             """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다.
-            wk_range: (시작주차, 끝주차) — 이 범위만 잘라서 표시."""
+            wk_range: (시작주차, 끝주차) — 이 범위만 잘라서 표시.
+            color_scheme: {"25년":색, "26년":색, "25년(FF제외)":색} — 차트마다 다른 색 팔레트.
+            실제값(실선+점) 위에 각 계열의 선형 추세선(점선, 같은 색)을 겹쳐 그린다."""
             import altair as alt
-            _colors = {"25년": "#2563eb", "26년": "#f97316", "25년(FF제외)": "#9ca3af"}
-            frames = []
+            _colors = color_scheme or {"25년": "#2563eb", "26년": "#f97316", "25년(FF제외)": "#9ca3af"}
+            actual_frames, trend_frames = [], []
             for label, s in s_by_label.items():
                 if s is not None and not s.empty:
                     s = s[(s.index >= wk_range[0]) & (s.index <= wk_range[1])]
                     if not s.empty:
-                        frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
-            if not frames:
+                        actual_frames.append(pd.DataFrame({"주차": s.index, "값": s.values, "구분": label}))
+                        trend = _trend_line(s)
+                        if trend is not None:
+                            trend_frames.append(pd.DataFrame({"주차": trend.index, "값": trend.values, "구분": label}))
+            if not actual_frames:
                 st.info("선택한 주차 범위에 데이터가 없습니다.")
                 return
-            long_df = pd.concat(frames, ignore_index=True)
-            _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
+            actual_df = pd.concat(actual_frames, ignore_index=True)
+            _domain = [d for d in s_by_label.keys() if d in actual_df["구분"].unique()]
             _range = [_colors.get(d, "#000000") for d in _domain]
-            chart = (
-                alt.Chart(long_df)
-                .mark_line(strokeWidth=1.8, point=alt.OverlayMarkDef(size=22, filled=True))
-                .encode(
-                    x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
-                    y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
-                    color=alt.Color(
-                        "구분:N", scale=alt.Scale(domain=_domain, range=_range),
-                        legend=alt.Legend(orient="bottom", title=None),
-                    ),
-                    tooltip=[
-                        alt.Tooltip("주차:O", title="주차"),
-                        alt.Tooltip("구분:N", title="구분"),
-                        alt.Tooltip("값:Q", title="값", format=",.0f"),
-                    ],
-                )
-                .properties(height=280)
+            _color_enc = alt.Color("구분:N", scale=alt.Scale(domain=_domain, range=_range))
+
+            actual_layer = alt.Chart(actual_df).mark_line(
+                strokeWidth=1.8, point=alt.OverlayMarkDef(size=22, filled=True)
+            ).encode(
+                x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
+                y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
+                color=_color_enc.legend(orient="bottom", title=None),
+                tooltip=[
+                    alt.Tooltip("주차:O", title="주차"),
+                    alt.Tooltip("구분:N", title="구분"),
+                    alt.Tooltip("값:Q", title="값", format=",.0f"),
+                ],
             )
+            layers = [actual_layer]
+            if trend_frames:
+                trend_df = pd.concat(trend_frames, ignore_index=True)
+                trend_layer = alt.Chart(trend_df).mark_line(strokeWidth=1.3, strokeDash=[4, 3]).encode(
+                    x=alt.X("주차:O", title=None),
+                    y=alt.Y("값:Q", title=None),
+                    color=_color_enc.legend(None),
+                )
+                layers.append(trend_layer)
+            chart = alt.layer(*layers).properties(height=280)
             st.markdown(f"**{title}**")
             st.altair_chart(chart, use_container_width=True)
 
         _has_ff_data = not df_category.empty and (df_category["브랜드"] == "FF").any()
         _tr_ff_adj = exclude_ff_from_traffic(df_traffic, df_category) if _has_ff_data else None
 
+        # 차트(BPU)별로 다른 색 계열 — 25년=연한색, 26년=진한색, FF제외=같은 계열의 중간톤
         _charts_def = [
-            ("전체", "single", "Total"),
-            ("자사 정상", "single", "e-영업1"),
-            ("자사 이월", "single", "e-영업2"),
-            ("입점", "multi", ["e-영업3", "e-영업4"]),
+            ("전체", "single", "Total", {"25년": "#94a3b8", "26년": "#1e293b", "25년(FF제외)": "#cbd5e1"}),
+            ("자사 정상", "single", "e-영업1", {"25년": "#93c5fd", "26년": "#1e3a8a", "25년(FF제외)": "#bfdbfe"}),
+            ("자사 이월", "single", "e-영업2", {"25년": "#86efac", "26년": "#14532d", "25년(FF제외)": "#bbf7d0"}),
+            ("입점", "multi", ["e-영업3", "e-영업4"], {"25년": "#d8b4fe", "26년": "#581c87", "25년(FF제외)": "#e9d5ff"}),
         ]
 
-        # 두 해 중 더 긴 쪽(보통 25년, 최대 53주차) 기준으로 슬라이더 범위를 잡는다
-        _max_week = 1
-        for _y in (2025, 2026):
-            _s = _weekly_of_year(df_traffic[df_traffic["BPU"] == "Total"], "트래픽", _y)
-            if not _s.empty:
-                _max_week = max(_max_week, int(_s.index.max()))
-
-        _wk_c1, _wk_spacer = st.columns([2, 3])
-        with _wk_c1:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>주차 범위</div>", unsafe_allow_html=True)
-            wk_range = st.slider(
-                "주차 범위", min_value=1, max_value=_max_week, value=(1, _max_week),
-                label_visibility="collapsed", key="wk_traffic_range",
-            )
-        st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+        # 주차 범위(wk_range)는 상단 고정 영역에서 이미 선택되어 넘어온다.
 
         def _render_section(section_title, metric, segment_value, show_ff):
             """metric(트래픽/거래액), segment_value(회원/전체) 기준으로 4개 BPU 차트를 그린다."""
@@ -3372,7 +3434,7 @@ if side["page"].startswith("7"):
                 _base_ff = _tr_ff_adj[_tr_ff_adj["회원구분"] == segment_value]
 
             _cols = st.columns(4)
-            for i, (label, kind, bpu_sel) in enumerate(_charts_def):
+            for i, (label, kind, bpu_sel, color_scheme) in enumerate(_charts_def):
                 with _cols[i]:
                     if kind == "single":
                         _d = _base[_base["BPU"] == bpu_sel][["날짜", metric]]
@@ -3391,7 +3453,7 @@ if side["page"].startswith("7"):
                     if s2025_ff is not None and not s2025_ff.empty:
                         _series_map["25년(FF제외)"] = s2025_ff
 
-                    _render_weekly_yearly_chart(f"{label} {section_title}", _series_map, wk_range)
+                    _render_weekly_yearly_chart(f"{label} {section_title}", _series_map, wk_range, color_scheme)
 
         _render_section("회원 트래픽", "트래픽", "회원", show_ff=True)
 
