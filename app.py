@@ -588,7 +588,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True, opacity=1))
         .encode(
             x=x_enc,
-            y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
+            y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
             color=alt.Color(
                 "구분:N",
                 scale=alt.Scale(domain=cols, range=colors),
@@ -3388,10 +3388,10 @@ if side["page"].startswith("7"):
             _color_enc = alt.Color("구분:N", scale=alt.Scale(domain=_domain, range=_range))
 
             actual_layer = alt.Chart(actual_df).mark_line(
-                strokeWidth=1.8, point=alt.OverlayMarkDef(size=22, filled=True)
+                strokeWidth=2.4, point=alt.OverlayMarkDef(size=32, filled=True)
             ).encode(
                 x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
-                y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
+                y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
                 color=_color_enc.legend(orient="bottom", title=None),
                 tooltip=[
                     alt.Tooltip("주차:O", title="주차"),
@@ -3402,9 +3402,9 @@ if side["page"].startswith("7"):
             layers = [actual_layer]
             if trend_frames:
                 trend_df = pd.concat(trend_frames, ignore_index=True)
-                trend_layer = alt.Chart(trend_df).mark_line(strokeWidth=1.3, strokeDash=[4, 3]).encode(
+                trend_layer = alt.Chart(trend_df).mark_line(strokeWidth=1.8, strokeDash=[5, 3]).encode(
                     x=alt.X("주차:O", title=None),
-                    y=alt.Y("값:Q", title=None),
+                    y=alt.Y("값:Q", title=None, scale=alt.Scale(zero=False)),
                     color=_color_enc.legend(None),
                 )
                 layers.append(trend_layer)
@@ -3417,10 +3417,10 @@ if side["page"].startswith("7"):
 
         # 차트(BPU)별로 다른 색 계열 — 25년=연한색, 26년=진한색, FF제외=같은 계열의 중간톤
         _charts_def = [
-            ("전체", "single", "Total", {"25년": "#94a3b8", "26년": "#1e293b", "25년(FF제외)": "#cbd5e1"}),
-            ("자사 정상", "single", "e-영업1", {"25년": "#93c5fd", "26년": "#1e3a8a", "25년(FF제외)": "#bfdbfe"}),
-            ("자사 이월", "single", "e-영업2", {"25년": "#86efac", "26년": "#14532d", "25년(FF제외)": "#bbf7d0"}),
-            ("입점", "multi", ["e-영업3", "e-영업4"], {"25년": "#d8b4fe", "26년": "#581c87", "25년(FF제외)": "#e9d5ff"}),
+            ("전체", "single", "Total", {"25년": "#64748b", "26년": "#0f172a", "25년(FF제외)": "#f59e0b"}),
+            ("자사 정상", "single", "e-영업1", {"25년": "#3b82f6", "26년": "#1e3a8a", "25년(FF제외)": "#f59e0b"}),
+            ("자사 이월", "single", "e-영업2", {"25년": "#22c55e", "26년": "#14532d", "25년(FF제외)": "#f59e0b"}),
+            ("입점", "multi", ["e-영업3", "e-영업4"], {"25년": "#a855f7", "26년": "#581c87", "25년(FF제외)": "#f59e0b"}),
         ]
 
         # 주차 범위(wk_range)는 상단 고정 영역에서 이미 선택되어 넘어온다.
