@@ -1177,10 +1177,11 @@ with _sticky:
         )
 
         _is_cat_page = _page_num == "2"
+        _ff_exclude = False  # 기본값 (아래에서 조건에 맞으면 덮어씀)
         if _is_cat_page:
             fc1, fc2, fc3, fc4, fc5, _fc_spacer = st.columns([1, 1, 1, 1, 1, 5])
         else:
-            fc1, fc2, _fc_spacer = st.columns([1, 1, 8])
+            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 1, 7])
 
         with fc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
@@ -1208,6 +1209,22 @@ with _sticky:
                     label_visibility="collapsed", key="period_filter",
                 )
                 selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
+
+        # 1번 페이지(카테고리 필터가 없는 페이지)는 매체필터/기준시점과 같은 줄 fc3에 핏플랍 제외 배치
+        # (2번 페이지는 카테고리/브랜드 뒤 fc5에 배치 — 두 페이지 다 '마지막 필터 바로 옆' 위치로 통일)
+        if not _is_cat_page:
+            if (not df_category.empty) and (df_category["브랜드"] == "FF").any():
+                with fc3:
+                    st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+                    _ff_exclude = st.checkbox(
+                        "핏플랍 제외",
+                        value=st.session_state.get("cat_ff_exclude", False), key="cat_ff_exclude",
+                        help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
+                             "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
+                             "2번 페이지의 체크박스와 같은 설정을 공유해요.",
+                    )
+            else:
+                _ff_exclude = False
 
         # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
         selected_cat, selected_brand = "전체", "전체"
@@ -1271,31 +1288,15 @@ with _sticky:
                 cat_segment = "전체"
                 if _has_segment and selected_brand != "전체":
                     st.caption("ℹ️ 브랜드별 데이터는 전체 세그먼트만 제공됩니다.")
-        else:
-            if (not df_category.empty) and (df_category["브랜드"] == "FF").any():
-                _ff_exclude = st.session_state.get("cat_ff_exclude", False)
-            else:
-                _ff_exclude = False
 
-        # 페이지1(실적요약)일 때는 EP실적용 세그먼트(고객 구분) 필터 + 핏플랍 제외 체크박스 노출
+        # 페이지1(실적요약)일 때는 EP실적용 세그먼트(고객 구분) 필터만 노출 (핏플랍 제외는 위 fc3에서 처리됨)
         if _page_num == "1":
             _seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
             st.markdown("<div style='margin-top:6px;'></div>", unsafe_allow_html=True)
-            _seg_c1, _seg_c2 = st.columns([3, 1])
-            with _seg_c1:
-                segment = st.radio(
-                    "고객 구분", _seg_options, horizontal=True,
-                    key="seg_filter", label_visibility="collapsed",
-                )
-            if (not df_category.empty) and (df_category["브랜드"] == "FF").any():
-                with _seg_c2:
-                    _ff_exclude = st.checkbox(
-                        "핏플랍 제외",
-                        value=_ff_exclude, key="cat_ff_exclude",
-                        help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
-                             "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
-                             "2번 페이지의 체크박스와 같은 설정을 공유해요.",
-                    )
+            segment = st.radio(
+                "고객 구분", _seg_options, horizontal=True,
+                key="seg_filter", label_visibility="collapsed",
+            )
 
         period_label = make_period_label(selected_period_date, unit)
 
@@ -1587,8 +1588,24 @@ if side["page"].startswith("1"):
         ]
         all_items = TRAFFIC_METRICS
 
+        # 핏플랍(FF) 제외 중일 때, KPI 카드에 참고로 보여줄 FF 기여분 계산용 데이터 준비.
+        # df_category에서 FF만 뽑아 지금 선택된 매체(bpu)+세그먼트 범위로 맞춘다.
+        # (세그먼트가 카테고리 원본에 없는 비회원/기존이면 FF 기여분을 못 구해서 표기 생략)
+        _ff_note_df = None
+        if _ff_exclude and not df_category.empty and segment in ("전체", "회원", "신규"):
+            _ff_raw = df_category[
+                (df_category["브랜드"] == "FF") & (df_category["카테고리"] != "전체") & (df_category["회원구분"] == segment)
+            ]
+            if bpu in BPU_GROUPS:
+                _ff_raw = _ff_raw[_ff_raw["BPU"].isin(BPU_GROUPS[bpu])]
+            elif bpu != "Total":
+                _ff_raw = _ff_raw[_ff_raw["BPU"] == bpu]
+            if not _ff_raw.empty:
+                _ff_note_df = _ff_raw.groupby("날짜", as_index=False)[["트래픽", "거래액", "구매객수"]].sum()
+
         # 1단계: 값/증감 먼저 계산 (AI 인사이트용 payload 구성)
         _kpi_computed = {}
+        _ff_computed = {}
         for col_name, display_name in all_items:
             s = tr_combo.set_index("날짜")[col_name].sort_index()
             # 절대값 지표(트래픽/거래액/구매객수)는 월마감이면 합계, 비율 지표(CR/객단가)는 항상 평균
@@ -1604,6 +1621,23 @@ if side["page"].startswith("1"):
             _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
             stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             _kpi_computed[display_name] = (col_name, stats)
+
+            # CR/객단가는 계산되는 값이라 FF 기여분을 따로 표기할 필요 없음 — 여기서 건너뜀
+            _ff_stats = None
+            if _ff_note_df is not None and col_name in ("트래픽", "거래액", "구매객수"):
+                ff_s = _ff_note_df.set_index("날짜")[col_name].sort_index()
+                # 메인 시리즈(s)와 날짜 범위를 맞춘다 (FF 매출 0인 날엔 원본에 행 자체가 없어서,
+                # 안 맞추면 FF 시리즈만 마지막 날짜가 짧아져 '진행 중인 기간' 판정이 어긋나던 버그 있었음)
+                ff_s = ff_s.reindex(s.index, fill_value=0)
+                ff_series = ff_s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
+                if unit == "주별":
+                    ff_series.index = ff_series.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not ff_series.empty and ff_s.index.max() < ff_series.index[-1]:
+                    ff_series = ff_series.iloc[:-1]
+                ff_series = ff_series[ff_series.index <= selected_period_date] if not ff_series.empty else ff_series
+                _ff_s_raw = ff_s[ff_s.index <= selected_period_date] if selected_period_date is not None else ff_s
+                _ff_stats = compute_kpi_deltas(ff_series, unit, raw_daily=_ff_s_raw)
+            _ff_computed[display_name] = _ff_stats
 
         # 2단계: AI 인사이트 버튼 + 종합 요약
         _ai_col1, _ai_col2 = st.columns([5, 1])
@@ -1653,14 +1687,27 @@ if side["page"].startswith("1"):
                         val_str = f"{stats['current']:,.0f}"
 
                     cfg = UNIT_CONFIG[unit]
+
+                    def _ff_note(v, _is_pct=_is_pct):
+                        if v is None or pd.isna(v) or abs(v) < 0.5:
+                            return ""
+                        _s = f"{v:.1f}%" if _is_pct else f"{v:,.0f}"
+                        return f" <span style='color:#ef4444;font-weight:600;'>[FF {_s}]</span>"
+
+                    _ff_stats = _ff_computed.get(display_name)
+                    _ff_cur_note = _ff_note(_ff_stats["current"]) if _ff_stats else ""
+                    _ff_prev_note = _ff_note(_ff_stats.get("prev_value")) if _ff_stats else ""
+                    _ff_avg_note = _ff_note(_ff_stats.get("avg_value")) if _ff_stats else ""
+                    _ff_yoy_note = _ff_note(_ff_stats.get("yoy_value")) if _ff_stats else ""
+
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                        f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                        f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>{_ff_cur_note}"
                         f"<div style='font-size:0.78rem;margin-top:6px;'>"
-                        f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
-                        f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), _is_pct)}<br/>"
-                        f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}"
+                        f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}{_ff_prev_note}<br/>"
+                        f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), _is_pct)}{_ff_avg_note}<br/>"
+                        f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}{_ff_yoy_note}"
                         f"</div></div>",
                         unsafe_allow_html=True,
                     )
@@ -1878,6 +1925,56 @@ if side["page"].startswith("1"):
             st.markdown(ytd_html, unsafe_allow_html=True)
 
 
+
+    # --- 쿠폰 비용 요약 (최신월 기준, 상세는 5.쿠폰 비용 분석 페이지) ---
+    if not df_coupon.empty:
+        st.markdown("---")
+        st.markdown("### 🎟️ 쿠폰 비용 요약", unsafe_allow_html=True)
+        _cs_sub = df_coupon[df_coupon["BPU"] == "Total"]
+        _cs_by_month = _cs_sub.groupby("연월")["쿠폰할인"].sum().sort_index()
+        if not _cs_by_month.empty:
+            _cs_latest = _cs_by_month.index.max()
+            _cs_gmv = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")].set_index("날짜")["거래액"].resample("MS").sum()
+            _cs_gmv_val = _cs_gmv.get(_cs_latest, None)
+            _cs_coupon_val = _cs_by_month.get(_cs_latest, 0)
+            _cs_rate = (_cs_coupon_val / _cs_gmv_val * 100) if _cs_gmv_val else None
+            _cs_c1, _cs_c2, _cs_c3 = st.columns(3)
+            with _cs_c1:
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_cs_latest.strftime('%Y년 %m월')} 쿠폰할인</div>"
+                    f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cs_coupon_val:,.0f}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with _cs_c2:
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액(Total)</div>"
+                    f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cs_gmv_val:,.0f}</div></div>"
+                    if _cs_gmv_val else "<div></div>",
+                    unsafe_allow_html=True,
+                )
+            with _cs_c3:
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>비용률</div>"
+                    f"<div style='font-size:1.4rem;font-weight:700;color:#7c3aed;'>{_cs_rate:.2f}%</div></div>"
+                    if _cs_rate is not None else "<div></div>",
+                    unsafe_allow_html=True,
+                )
+            st.caption("👉 매체별·쿠폰유형별 상세, 쿠폰명 랭킹은 사이드바 '5. 쿠폰 비용 분석' 페이지에서 볼 수 있어요.")
+
+    st.markdown("---")
+    st.markdown("### 🏢 사업부별 실적 비교", unsafe_allow_html=True)
+    _bpu_cfg = UNIT_CONFIG[unit]
+    st.markdown(
+        f"<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · "
+        f"<b>{unit}</b> 기준 · 기준시점: <b>{period_label}</b> · "
+        f"값·{_bpu_cfg['prev_label']}·{_bpu_cfg['avg_label']}·{_bpu_cfg['yoy_label']}</div>",
+        unsafe_allow_html=True,
+    )
+    render_bpu_comparison_table(df_traffic, unit=unit, selected_period_date=selected_period_date)
+
     # ============================================================
     # 하단: EP 채널 지표 (원부매칭율/최저가율 등)
     # ============================================================
@@ -2022,55 +2119,6 @@ if side["page"].startswith("1"):
             f"<tbody>{''.join(ep_body_rows)}</tbody></table>"
         )
         st.markdown(ep_summary_html, unsafe_allow_html=True)
-
-    # --- 쿠폰 비용 요약 (최신월 기준, 상세는 5.쿠폰 비용 분석 페이지) ---
-    if not df_coupon.empty:
-        st.markdown("---")
-        st.markdown("### 🎟️ 쿠폰 비용 요약", unsafe_allow_html=True)
-        _cs_sub = df_coupon[df_coupon["BPU"] == "Total"]
-        _cs_by_month = _cs_sub.groupby("연월")["쿠폰할인"].sum().sort_index()
-        if not _cs_by_month.empty:
-            _cs_latest = _cs_by_month.index.max()
-            _cs_gmv = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")].set_index("날짜")["거래액"].resample("MS").sum()
-            _cs_gmv_val = _cs_gmv.get(_cs_latest, None)
-            _cs_coupon_val = _cs_by_month.get(_cs_latest, 0)
-            _cs_rate = (_cs_coupon_val / _cs_gmv_val * 100) if _cs_gmv_val else None
-            _cs_c1, _cs_c2, _cs_c3 = st.columns(3)
-            with _cs_c1:
-                st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_cs_latest.strftime('%Y년 %m월')} 쿠폰할인</div>"
-                    f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cs_coupon_val:,.0f}</div></div>",
-                    unsafe_allow_html=True,
-                )
-            with _cs_c2:
-                st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액(Total)</div>"
-                    f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cs_gmv_val:,.0f}</div></div>"
-                    if _cs_gmv_val else "<div></div>",
-                    unsafe_allow_html=True,
-                )
-            with _cs_c3:
-                st.markdown(
-                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>비용률</div>"
-                    f"<div style='font-size:1.4rem;font-weight:700;color:#7c3aed;'>{_cs_rate:.2f}%</div></div>"
-                    if _cs_rate is not None else "<div></div>",
-                    unsafe_allow_html=True,
-                )
-            st.caption("👉 매체별·쿠폰유형별 상세, 쿠폰명 랭킹은 사이드바 '5. 쿠폰 비용 분석' 페이지에서 볼 수 있어요.")
-
-    st.markdown("---")
-    st.markdown("### 🏢 사업부별 실적 비교", unsafe_allow_html=True)
-    _bpu_cfg = UNIT_CONFIG[unit]
-    st.markdown(
-        f"<div class='chart-caption'>Total / e-영업1~4 / 자사 / 입점 · "
-        f"<b>{unit}</b> 기준 · 기준시점: <b>{period_label}</b> · "
-        f"값·{_bpu_cfg['prev_label']}·{_bpu_cfg['avg_label']}·{_bpu_cfg['yoy_label']}</div>",
-        unsafe_allow_html=True,
-    )
-    render_bpu_comparison_table(df_traffic, unit=unit, selected_period_date=selected_period_date)
 
 
 if side["page"].startswith("2"):
