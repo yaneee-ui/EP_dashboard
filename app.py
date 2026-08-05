@@ -524,6 +524,13 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
     return _head + _rest
 
 
+# 일자별 그래프에 표시할 이벤트 주석 (날짜, 라벨). 필요하면 여기에 추가/수정하면 됨.
+DASHBOARD_EVENTS = [
+    (pd.Timestamp("2026-08-04"), "최저가쿠폰 초기화(18시)"),
+    (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
+]
+
+
 def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
@@ -531,7 +538,9 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     unit이 '월별'/'월마감'이면 x축을 월 단위(연-월)로 표시한다.
     yoy_actual_dates: chart_df.index와 같은 길이의 날짜 배열/시리즈. '전년' 계열은 화면상
     올해 날짜 위치에 겹쳐 그려지지만(비교하기 좋으라고) 실제 값은 작년 것이므로, 이걸 주면
-    '(전년)'이 포함된 계열의 툴팁 날짜만 실제 작년 날짜로 보여준다(안 주면 x축 날짜 그대로)."""
+    '(전년)'이 포함된 계열의 툴팁 날짜만 실제 작년 날짜로 보여준다(안 주면 x축 날짜 그대로).
+    일별(비월별) 조회일 땐, DASHBOARD_EVENTS 중 화면에 보이는 날짜 범위에 해당하는 이벤트를
+    빨간 점선 세로줄 + 라벨로 같이 표시한다."""
     import altair as alt
 
     if chart_df is None or chart_df.empty:
@@ -554,6 +563,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         long_df.loc[_is_yoy_row, "_tooltip_date"] = long_df.loc[_is_yoy_row, "날짜"].map(_actual_map)
 
     _is_monthly = unit in ("월별", "월마감")
+    _event_rows = []
     if _is_monthly:
         x_enc = alt.X(
             "날짜:T", title=None, timeUnit="yearmonth",
@@ -582,6 +592,12 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         )
         _date_fmt = "%Y-%m-%d"
 
+        # 화면에 보이는 날짜 범위 안에 있는 이벤트만 세로 점선+라벨로 표시
+        _event_rows = []
+        for ev_date, ev_label in DASHBOARD_EVENTS:
+            if ev_date.normalize() in set(pd.DatetimeIndex(_uniq_dates).normalize()):
+                _event_rows.append({"_date_label": ev_date.strftime("%m/%d"), "이벤트": ev_label})
+
     chart = (
         alt.Chart(long_df)
         .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True, opacity=1))
@@ -601,6 +617,22 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         )
         .properties(height=height)
     )
+
+    if _event_rows:
+        _ev_df = pd.DataFrame(_event_rows)
+        _ev_rule = alt.Chart(_ev_df).mark_rule(color="#dc2626", strokeDash=[3, 2], strokeWidth=1.3).encode(
+            x=alt.X("_date_label:O", sort=_label_order),
+            tooltip=[alt.Tooltip("_date_label:N", title="날짜"), alt.Tooltip("이벤트:N", title="이벤트")],
+        )
+        _ev_text = alt.Chart(_ev_df).mark_text(
+            align="left", baseline="middle", angle=270, dx=-6, dy=0, color="#dc2626", fontSize=9,
+        ).encode(
+            x=alt.X("_date_label:O", sort=_label_order),
+            y=alt.value(8),
+            text="이벤트:N",
+        )
+        chart = alt.layer(chart, _ev_rule, _ev_text).resolve_scale(x="shared")
+
     # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
     st.altair_chart(chart, use_container_width=True)
 
@@ -3352,10 +3384,13 @@ if side["page"].startswith("7"):
         st.info("데이터가 없습니다. 사이드바에서 ep_traffic.csv를 업로드해주세요.")
     else:
 
-        def _render_weekly_yearly_chart(title, s_by_label, wk_range, color_scheme=None):
+        def _render_weekly_yearly_chart(title, s_by_label, wk_range, color_scheme=None, y_domain=None):
             """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다.
             wk_range: (시작주차, 끝주차) — 이 범위만 잘라서 표시.
-            color_scheme: {"25년":색, "26년":색, "25년(FF제외)":색} — 차트마다 다른 색 팔레트."""
+            color_scheme: {"25년":색, "26년":색, "25년(FF제외)":색} — 차트마다 다른 색 팔레트.
+            y_domain: (최소,최대) 주어지면 y축을 이 값으로 고정한다(같은 섹션의 4개 차트가
+            같은 y축 범위를 공유해서 서로 높이를 비교할 수 있게 하기 위함). 없으면 차트별로
+            자동 확대(zero=False)."""
             import altair as alt
             _colors = color_scheme or {"25년": "#2563eb", "26년": "#f97316", "25년(FF제외)": "#9ca3af"}
             frames = []
@@ -3372,12 +3407,13 @@ if side["page"].startswith("7"):
             _range = [_colors.get(d, "#000000") for d in _domain]
             # "25년(FF제외)"만 점선으로 그려서 실제값(25/26년)과 구분되게 함
             _dash_range = [[1, 0] if d != "25년(FF제외)" else [5, 3] for d in _domain]
+            _y_scale = alt.Scale(domain=list(y_domain)) if y_domain is not None else alt.Scale(zero=False)
             chart = (
                 alt.Chart(long_df)
                 .mark_line(strokeWidth=2.4, point=alt.OverlayMarkDef(size=32, filled=True))
                 .encode(
                     x=alt.X("주차:O", title=None, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
-                    y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
+                    y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=_y_scale),
                     color=alt.Color(
                         "구분:N", scale=alt.Scale(domain=_domain, range=_range),
                         legend=alt.Legend(orient="bottom", title=None),
@@ -3410,34 +3446,58 @@ if side["page"].startswith("7"):
         # 주차 범위(wk_range)는 상단 고정 영역에서 이미 선택되어 넘어온다.
 
         def _render_section(section_title, metric, segment_value, show_ff):
-            """metric(트래픽/거래액), segment_value(회원/전체) 기준으로 4개 BPU 차트를 그린다."""
+            """metric(트래픽/거래액), segment_value(회원/전체) 기준으로 4개 BPU 차트를 그린다.
+            연관된 지표라 같은 높이에서 흐름을 비교할 수 있게, 이 섹션(트래픽 또는 거래액)의
+            4개 차트가 y축 범위(최소/최대)를 공유하도록 먼저 전체 데이터를 훑어서 계산한다."""
             st.markdown(f"#### {section_title}")
             _base = df_traffic[df_traffic["회원구분"] == segment_value]
             _base_ff = None
             if show_ff and _tr_ff_adj is not None:
                 _base_ff = _tr_ff_adj[_tr_ff_adj["회원구분"] == segment_value]
 
+            # 1단계: 4개 차트 데이터를 먼저 만들면서, 화면에 실제로 표시될(주차 범위로 자른)
+            # 값들의 최소/최대를 모아서 섹션 공통 y축 범위를 정한다.
+            _chart_series = []
+            _all_vals = []
+            for label, kind, bpu_sel, color_scheme in _charts_def:
+                if kind == "single":
+                    _d = _base[_base["BPU"] == bpu_sel][["날짜", metric]]
+                else:
+                    _d = _base[_base["BPU"].isin(bpu_sel)].groupby("날짜", as_index=False)[metric].sum()
+
+                s2025 = _weekly_of_year(_d, metric, 2025)
+                s2026 = _weekly_of_year(_d, metric, 2026)
+
+                s2025_ff = None
+                if show_ff and kind == "single" and _base_ff is not None:
+                    _d_ff = _base_ff[_base_ff["BPU"] == bpu_sel][["날짜", metric]]
+                    s2025_ff = _weekly_of_year(_d_ff, metric, 2025)
+
+                _series_map = {"25년": s2025, "26년": s2026}
+                if s2025_ff is not None and not s2025_ff.empty:
+                    _series_map["25년(FF제외)"] = s2025_ff
+
+                _chart_series.append((label, color_scheme, _series_map))
+                for s in _series_map.values():
+                    if s is not None and not s.empty:
+                        _s_clip = s[(s.index >= wk_range[0]) & (s.index <= wk_range[1])]
+                        if not _s_clip.empty:
+                            _all_vals.append(float(_s_clip.min()))
+                            _all_vals.append(float(_s_clip.max()))
+
+            y_domain = None
+            if _all_vals:
+                _y_min, _y_max = min(_all_vals), max(_all_vals)
+                _pad = (_y_max - _y_min) * 0.05 if _y_max > _y_min else (abs(_y_max) * 0.05 or 1)
+                y_domain = (_y_min - _pad, _y_max + _pad)
+
+            # 2단계: 공유 y_domain으로 4개 차트를 그린다
             _cols = st.columns(4)
-            for i, (label, kind, bpu_sel, color_scheme) in enumerate(_charts_def):
+            for i, (label, color_scheme, _series_map) in enumerate(_chart_series):
                 with _cols[i]:
-                    if kind == "single":
-                        _d = _base[_base["BPU"] == bpu_sel][["날짜", metric]]
-                    else:
-                        _d = _base[_base["BPU"].isin(bpu_sel)].groupby("날짜", as_index=False)[metric].sum()
-
-                    s2025 = _weekly_of_year(_d, metric, 2025)
-                    s2026 = _weekly_of_year(_d, metric, 2026)
-
-                    s2025_ff = None
-                    if show_ff and kind == "single" and _base_ff is not None:
-                        _d_ff = _base_ff[_base_ff["BPU"] == bpu_sel][["날짜", metric]]
-                        s2025_ff = _weekly_of_year(_d_ff, metric, 2025)
-
-                    _series_map = {"25년": s2025, "26년": s2026}
-                    if s2025_ff is not None and not s2025_ff.empty:
-                        _series_map["25년(FF제외)"] = s2025_ff
-
-                    _render_weekly_yearly_chart(f"{label} {section_title}", _series_map, wk_range, color_scheme)
+                    _render_weekly_yearly_chart(
+                        f"{label} {section_title}", _series_map, wk_range, color_scheme, y_domain=y_domain
+                    )
 
         _render_section("회원 트래픽", "트래픽", "회원", show_ff=True)
 
