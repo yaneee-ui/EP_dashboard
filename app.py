@@ -444,11 +444,14 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
     return _head + _rest
 
 
-def render_line_chart(chart_df, height=350, unit="일별"):
+def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
     Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)
-    unit이 '월별'/'월마감'이면 x축을 월 단위(연-월)로 표시한다."""
+    unit이 '월별'/'월마감'이면 x축을 월 단위(연-월)로 표시한다.
+    yoy_actual_dates: chart_df.index와 같은 길이의 날짜 배열/시리즈. '전년' 계열은 화면상
+    올해 날짜 위치에 겹쳐 그려지지만(비교하기 좋으라고) 실제 값은 작년 것이므로, 이걸 주면
+    '(전년)'이 포함된 계열의 툴팁 날짜만 실제 작년 날짜로 보여준다(안 주면 x축 날짜 그대로)."""
     import altair as alt
 
     if chart_df is None or chart_df.empty:
@@ -462,6 +465,13 @@ def render_line_chart(chart_df, height=350, unit="일별"):
     _df.index.name = "날짜"
     long_df = _df.reset_index().melt("날짜", var_name="구분", value_name="값")
     long_df = long_df.dropna(subset=["값"])
+
+    # 전년 비교선의 툴팁 날짜를 실제 작년 날짜로 교체 (x축 위치는 올해 날짜 그대로 유지)
+    long_df["_tooltip_date"] = long_df["날짜"]
+    if yoy_actual_dates is not None:
+        _actual_map = dict(zip(pd.DatetimeIndex(chart_df.index), pd.DatetimeIndex(yoy_actual_dates)))
+        _is_yoy_row = long_df["구분"].astype(str).str.contains("(전년)", regex=False)
+        long_df.loc[_is_yoy_row, "_tooltip_date"] = long_df.loc[_is_yoy_row, "날짜"].map(_actual_map)
 
     _is_monthly = unit in ("월별", "월마감")
     if _is_monthly:
@@ -504,7 +514,7 @@ def render_line_chart(chart_df, height=350, unit="일별"):
                 legend=alt.Legend(orient="bottom", title=None),
             ),
             tooltip=[
-                alt.Tooltip("날짜:T", title="날짜", format=_date_fmt),
+                alt.Tooltip("_tooltip_date:T", title="날짜", format=_date_fmt),
                 alt.Tooltip("구분:N", title="구분"),
                 alt.Tooltip("값:Q", title="값", format=",.0f"),
             ],
@@ -1644,27 +1654,29 @@ if side["page"].startswith("1"):
 
         # 전년 비교선 (동요일 364일 / 월마감은 1년)
         yoy_col_name = None
+        _tr_yoy_actual_dates = None
         if show_tr_yoy and not tr_series.empty:
             if unit == "월마감":
                 prev_dates = tr_series.index - pd.DateOffset(years=1)
             else:
                 prev_dates = tr_series.index - pd.Timedelta(days=364)
             yoy_vals = []
+            yoy_actual = []
             for pd_date in prev_dates:
                 if pd_date in tr_full.index:
                     yoy_vals.append(tr_full.loc[pd_date])
+                    yoy_actual.append(pd_date)
                 else:
                     cand = tr_full.index[tr_full.index <= pd_date]
                     yoy_vals.append(tr_full.loc[cand[-1]] if len(cand) else None)
+                    yoy_actual.append(cand[-1] if len(cand) else pd_date)
             yoy_label = UNIT_CONFIG[unit]["yoy_label"]
             yoy_col_name = f"{yoy_label}(전년)"
             chart_df[yoy_col_name] = yoy_vals
+            _tr_yoy_actual_dates = yoy_actual
 
         # 금년=진한 파랑, 전년=하늘색
-        if yoy_col_name and show_tr_yoy:
-            render_line_chart(chart_df, height=350, unit=unit)
-        else:
-            render_line_chart(chart_df, height=350, unit=unit)
+        render_line_chart(chart_df, height=350, unit=unit, yoy_actual_dates=_tr_yoy_actual_dates)
 
         _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
         _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
@@ -2239,23 +2251,26 @@ if side["page"].startswith("2"):
 
             cat_chart_df = pd.DataFrame({cat_metric: cat_series})
 
+            _cat_yoy_actual_dates = None
             if show_cat_yoy and not cat_series.empty:
                 if unit == "월마감":
                     prev_dates = cat_series.index - pd.DateOffset(years=1)
                 else:
                     prev_dates = cat_series.index - pd.Timedelta(days=364)
                 yoy_vals = []
+                yoy_actual = []
                 for pd_date in prev_dates:
                     if pd_date in cat_full.index:
                         yoy_vals.append(cat_full.loc[pd_date])
+                        yoy_actual.append(pd_date)
                     else:
                         cand = cat_full.index[cat_full.index <= pd_date]
                         yoy_vals.append(cat_full.loc[cand[-1]] if len(cand) else None)
+                        yoy_actual.append(cand[-1] if len(cand) else pd_date)
                 yoy_label_cat = UNIT_CONFIG[unit]["yoy_label"]
                 cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
-                render_line_chart(cat_chart_df, height=350, unit=unit)
-            else:
-                render_line_chart(cat_chart_df, height=350, unit=unit)
+                _cat_yoy_actual_dates = yoy_actual
+            render_line_chart(cat_chart_df, height=350, unit=unit, yoy_actual_dates=_cat_yoy_actual_dates)
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
