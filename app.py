@@ -3386,7 +3386,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     st.caption(
         "각 연도 1월 1일부터 월~일 단위로 주차를 매겨서(그 해의 1주차부터), "
         "올해/작년 같은 주차끼리 나란히 비교해요. 자사 정상=e-영업1, 자사 이월=e-영업2, "
-        f"입점=e-영업3+e-영업4. 위쪽 트래픽은 '{traffic_segment}' 세그먼트 기준, 아래쪽 거래액은 '전체' 기준이에요."
+        f"입점=e-영업3+e-영업4. 트래픽·거래액 둘 다 '{traffic_segment}' 세그먼트 기준이에요."
     )
 
     if df_traffic.empty:
@@ -3536,7 +3536,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
 
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
     st.markdown("---")
-    _render_section(f"{traffic_segment} 거래액", "거래액", "전체", show_ff=True)
+    _render_section(f"{traffic_segment} 거래액", "거래액", traffic_segment, show_ff=True)
 
 
 if side["page"].startswith("7"):
