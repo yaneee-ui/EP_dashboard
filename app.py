@@ -528,6 +528,7 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
 DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-04"), "최저가쿠폰 초기화(18시)"),
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
+    (pd.Timestamp("2026-07-31"), "네이버 검색API 종료"),
 ]
 
 
@@ -3522,13 +3523,32 @@ def _render_weekly_segment_page(page_title, traffic_segment):
         _total_domain = _domain_from(_total_vals)
         _shared_domain = _domain_from(_shared_vals)
 
+        # '전체' 대비 비중(%) — 26년, 선택된 주차 범위의 합계 기준으로 계산해서 타이틀에 붙인다
+        _total_26_sum = None
+        for _label0, _cs0, _sm0 in _chart_series:
+            if _label0 == "전체":
+                _s26_total = _sm0.get("26년")
+                if _s26_total is not None and not _s26_total.empty:
+                    _s26_total_clip = _s26_total[(_s26_total.index >= wk_range[0]) & (_s26_total.index <= wk_range[1])]
+                    if not _s26_total_clip.empty:
+                        _total_26_sum = float(_s26_total_clip.sum())
+                break
+
         # 2단계: '전체'는 자기 domain, 나머지 3개는 공유 domain으로 그린다
         _cols = st.columns(4)
         for i, (label, color_scheme, _series_map) in enumerate(_chart_series):
             with _cols[i]:
                 _y_domain = _total_domain if label == "전체" else _shared_domain
+                _title = f"{label} {section_title}"
+                if label != "전체" and _total_26_sum:
+                    _s26 = _series_map.get("26년")
+                    if _s26 is not None and not _s26.empty:
+                        _s26_clip = _s26[(_s26.index >= wk_range[0]) & (_s26.index <= wk_range[1])]
+                        if not _s26_clip.empty:
+                            _share = float(_s26_clip.sum()) / _total_26_sum * 100
+                            _title += f" (전체 중 {_share:.0f}%)"
                 _render_weekly_yearly_chart(
-                    f"{label} {section_title}", _series_map, wk_range, color_scheme,
+                    _title, _series_map, wk_range, color_scheme,
                     y_domain=_y_domain, week_labels=_wk7_labels,
                 )
 
