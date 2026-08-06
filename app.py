@@ -528,7 +528,6 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
 DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-04"), "최저가쿠폰 초기화(18시)"),
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
-    (pd.Timestamp("2026-07-31"), "네이버 검색API 종료"),
 ]
 
 
@@ -3539,7 +3538,9 @@ def _render_weekly_segment_page(page_title, traffic_segment):
         for i, (label, color_scheme, _series_map) in enumerate(_chart_series):
             with _cols[i]:
                 _y_domain = _total_domain if label == "전체" else _shared_domain
-                _title = f"{label} {section_title}"
+                # "전체 실적" 페이지의 "전체"(Total) 차트처럼, label과 section_title이
+                # 겹쳐서 "전체 전체 트래픽"같이 중복되는 경우 label을 또 붙이지 않는다.
+                _title = section_title if section_title.startswith(label) else f"{label} {section_title}"
                 if label != "전체" and _total_26_sum:
                     _s26 = _series_map.get("26년")
                     if _s26 is not None and not _s26.empty:
