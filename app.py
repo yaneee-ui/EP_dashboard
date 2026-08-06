@@ -528,6 +528,7 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
 DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-04"), "최저가쿠폰 초기화(18시)"),
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
+    (pd.Timestamp("2026-07-31"), "네이버 검색API 종료"),
 ]
 
 
