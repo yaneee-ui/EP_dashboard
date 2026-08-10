@@ -18,7 +18,7 @@ def _finalize(df: pd.DataFrame) -> pd.DataFrame:
     return df.sort_values(COL_DATE).reset_index(drop=True)
 
 
-@st.cache_data(ttl=3600, show_spinner="데이터를 불러오는 중...")
+@st.cache_data(ttl=3600, max_entries=5, show_spinner="데이터를 불러오는 중...")
 def load_data(uploaded_file=None, file_name=None) -> pd.DataFrame:
     """
     데이터를 로드한다.
@@ -26,6 +26,10 @@ def load_data(uploaded_file=None, file_name=None) -> pd.DataFrame:
     - uploaded_file 이 .xlsx: 사내 원본 엑셀 -> 자동 변환
     - uploaded_file 이 .csv: 이미 변환된 long-format CSV로 간주
     file_name: 업로드 파일명(확장자 판별용). Streamlit UploadedFile은 .name 속성 사용.
+
+    max_entries=5: 이 함수는 업로드 파일마다 별도 캐시 항목이 쌓이는데(파일이 다르면
+    캐시 키도 달라짐), 계속 다른 파일을 올리면 캐시가 무한정 쌓여 메모리를 차지할 수
+    있어서 최근 5개까지만 남기고 오래된 항목은 자동으로 비운다.
     """
     if uploaded_file is None:
         df = pd.read_csv(DEFAULT_DATA_PATH)
@@ -47,9 +51,18 @@ TRAFFIC_DATA_PATH = "ep_traffic.csv"
 
 @st.cache_data(ttl=3600, show_spinner="트래픽 데이터를 불러오는 중...")
 def load_traffic_data() -> pd.DataFrame:
-    """EP실적 데이터 (트래픽/거래액/구매객수/CR/객단가) 로드."""
+    """EP실적 데이터 (트래픽/거래액/구매객수/CR/객단가) 로드.
+    다른 로더(load_category_data 등)와 동일하게 문자열은 category, 숫자는 float32로
+    캐스팅해서 메모리를 줄인다 — 예전엔 이 최적화가 이 로더에만 빠져 있었음."""
     df = pd.read_csv(TRAFFIC_DATA_PATH)
     df["날짜"] = pd.to_datetime(df["날짜"])
+    if "BPU" in df.columns:
+        df["BPU"] = df["BPU"].astype("category")
+    if "회원구분" in df.columns:
+        df["회원구분"] = df["회원구분"].astype("category")
+    for col in ["트래픽", "거래액", "구매객수", "CR", "객단가"]:
+        if col in df.columns:
+            df[col] = pd.to_numeric(df[col], errors="coerce").astype("float32")
     return df.sort_values("날짜").reset_index(drop=True)
 
 
@@ -131,11 +144,15 @@ COUPON_DAILY_PATH = "ep_coupon_daily.csv"
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_coupon_daily() -> pd.DataFrame:
-    """쿠폰명별 일자별 상세 할인 데이터 로드 (있으면 일/주별 조회 가능)."""
+    """쿠폰명별 일자별 상세 할인 데이터 로드 (있으면 일/주별 조회 가능).
+    문자열은 category, 금액은 float32로 캐스팅해서 메모리를 줄인다."""
     import os
     if not os.path.exists(COUPON_DAILY_PATH):
         return pd.DataFrame(columns=["날짜", "BPU", "쿠폰ID", "쿠폰명", "쿠폰유형", "쿠폰할인"])
     df = pd.read_csv(COUPON_DAILY_PATH)
     df["날짜"] = pd.to_datetime(df["날짜"])
-    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce")
+    for col in ["BPU", "쿠폰ID", "쿠폰명", "쿠폰유형"]:
+        if col in df.columns:
+            df[col] = df[col].astype("category")
+    df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce").astype("float32")
     return df.sort_values("날짜").reset_index(drop=True)
