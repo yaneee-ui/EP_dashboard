@@ -14,8 +14,7 @@ from data_loader import (
     load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail,
 )
 from ai_insights import (
-    generate_insights, render_overall_summary_box, render_metric_insight,
-    generate_ranking_insights, render_ranking_insight_box,
+    render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
 )
 from sidebar import render_sidebar, render_sidebar_data_status
 from filters import filter_by_combo
@@ -28,6 +27,7 @@ from utils import (
     format_value, format_delta_html,
 )
 from styles import CUSTOM_CSS
+from insight_card import render_insight_card
 
 def _ref_str(val, is_pct=False):
     """비교 대상 실제 값을 괄호로 표시."""
@@ -41,217 +41,6 @@ def _ref_str(val, is_pct=False):
 # ============================================================
 # 인사이트 카드: 좌측 자동요약(API 미사용) + 우측 AI·메모(GitHub 저장)
 # ============================================================
-
-def generate_auto_summary(payload, context_label=""):
-    """이미 계산된 증감률 숫자만으로 규칙 기반 요약을 만든다. API 호출이 없어서 무료·즉시.
-    payload: [{"name","value","prev_label","prev_delta","yoy_label","yoy_delta"}, ...]
-    (generate_insights에 넘기는 것과 동일한 payload 구조를 그대로 재사용)"""
-    if not payload:
-        return "표시할 데이터가 없습니다."
-    lines = []
-    for item in payload:
-        _bits = [f"**{item['name']}** {item.get('value', '-')}"]
-        _pd_ = item.get("prev_delta")
-        if _pd_ is not None:
-            _arrow = "▲" if _pd_ >= 0 else "▼"
-            _bits.append(f"{item.get('prev_label', '전기간')} {_arrow}{abs(_pd_):.1f}%")
-        _yd_ = item.get("yoy_delta")
-        if _yd_ is not None:
-            _arrow2 = "▲" if _yd_ >= 0 else "▼"
-            _bits.append(f"{item.get('yoy_label', '전년')} {_arrow2}{abs(_yd_):.1f}%")
-        lines.append(" · ".join(_bits))
-    return "\n\n".join(f"- {ln}" for ln in lines)
-
-
-def _copy_button_html(text, button_label="복사", key=""):
-    """클립보드 복사 버튼 (Streamlit 기본엔 없어서 작은 JS 컴포넌트로 구현)."""
-    import json as _json
-    _safe_text = _json.dumps(text or "")
-    _html = f"""
-    <button id="copybtn_{key}" style="
-        padding:4px 10px;font-size:0.78rem;border:1px solid #d1d5db;border-radius:6px;
-        background:#fff;color:#374151;cursor:pointer;">{button_label}</button>
-    <span id="copied_{key}" style="font-size:0.75rem;color:#16a34a;margin-left:6px;display:none;">복사됨!</span>
-    <script>
-        document.getElementById("copybtn_{key}").onclick = function() {{
-            navigator.clipboard.writeText({_safe_text});
-            var msg = document.getElementById("copied_{key}");
-            msg.style.display = "inline";
-            setTimeout(function() {{ msg.style.display = "none"; }}, 1500);
-        }};
-    </script>
-    """
-    components.html(_html, height=32)
-
-
-MEMO_FILE_PATH = "data/insight_memos.json"
-
-
-def _github_conf():
-    """secrets에 GITHUB_TOKEN / GITHUB_REPO(예: 'yani/ep_dashboard')가 설정돼 있는지 확인."""
-    try:
-        token = st.secrets.get("GITHUB_TOKEN")
-        repo = st.secrets.get("GITHUB_REPO")
-    except Exception:
-        return None, None
-    if not token or not repo:
-        return None, None
-    return token, repo
-
-
-@st.cache_data(ttl=30, show_spinner=False)
-def _load_all_memos():
-    """GitHub 저장소의 메모 JSON 파일을 통째로 읽어온다. 연결 안 돼 있으면 빈 dict."""
-    import requests, base64, json as _json
-    token, repo = _github_conf()
-    if not token or not repo:
-        return {}
-    url = f"https://api.github.com/repos/{repo}/contents/{MEMO_FILE_PATH}"
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        if resp.status_code == 200:
-            content = base64.b64decode(resp.json()["content"]).decode("utf-8")
-            return _json.loads(content)
-        return {}
-    except Exception:
-        return {}
-
-
-def load_memo(key):
-    """특정 key(조회조건 조합)의 저장된 메모 텍스트. 없으면 None."""
-    memos = _load_all_memos()
-    entry = memos.get(key)
-    return entry.get("text") if entry else None
-
-
-def save_memo(key, text):
-    """메모를 GitHub 저장소 파일에 커밋. (읽기→수정→쓰기, 파일 없으면 새로 생성)
-    반환: (성공여부, 메시지)"""
-    import requests, base64, json as _json
-    token, repo = _github_conf()
-    if not token or not repo:
-        return False, "GitHub 저장소 연결이 설정되지 않았어요. (secrets에 GITHUB_TOKEN·GITHUB_REPO 필요)"
-    url = f"https://api.github.com/repos/{repo}/contents/{MEMO_FILE_PATH}"
-    headers = {"Authorization": f"token {token}", "Accept": "application/vnd.github+json"}
-    try:
-        resp = requests.get(url, headers=headers, timeout=10)
-        memos, sha = {}, None
-        if resp.status_code == 200:
-            data = resp.json()
-            sha = data["sha"]
-            memos = _json.loads(base64.b64decode(data["content"]).decode("utf-8"))
-        elif resp.status_code != 404:
-            return False, f"저장소 조회 실패 (HTTP {resp.status_code})"
-
-        memos[key] = {"text": text, "updated_at": pd.Timestamp.now().strftime("%Y-%m-%d %H:%M")}
-        new_content = base64.b64encode(
-            _json.dumps(memos, ensure_ascii=False, indent=2).encode("utf-8")
-        ).decode("utf-8")
-        payload = {"message": f"메모 업데이트: {key}", "content": new_content}
-        if sha:
-            payload["sha"] = sha
-        put_resp = requests.put(url, headers=headers, json=payload, timeout=10)
-        if put_resp.status_code in (200, 201):
-            _load_all_memos.clear()
-            return True, "저장했습니다."
-        return False, f"저장 실패 (HTTP {put_resp.status_code})"
-    except Exception as e:
-        return False, f"저장 중 오류: {e}"
-
-
-def _extract_ai_text(ai_result):
-    """generate_insights() 반환값에서 표시용 텍스트를 방어적으로 뽑아낸다
-    (dict/문자열 등 정확한 타입을 몰라도 최대한 합리적으로 처리)."""
-    if not ai_result:
-        return ""
-    if isinstance(ai_result, str):
-        return ai_result
-    if isinstance(ai_result, dict):
-        for k in ("summary", "overall", "overall_summary", "text", "insight"):
-            if ai_result.get(k):
-                return str(ai_result[k])
-        return str(ai_result)
-    return str(ai_result)
-
-
-def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key):
-    """좌: 자동 요약(API 미사용) / 우: AI 생성·메모(GitHub 저장). 목업 디자인 구현.
-    반환값: 이번 실행에서 유효한 ai_result (버튼을 안 눌렀어도 같은 조회조건이면 캐시에서
-    복원됨) — 호출부가 render_metric_insight(카드별 한줄 인사이트)에 이어서 쓸 수 있게 함."""
-    _auto_text = generate_auto_summary(auto_payload, ai_context)
-
-    st.markdown(
-        "<div style='margin-top:12px;padding:14px 16px;border:1px solid #e5e7eb;border-radius:10px;background:#fff;'>"
-        "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;'>"
-        "<b style='font-size:0.95rem;'>인사이트</b>"
-        "<span style='font-size:0.78rem;color:#9ca3af;'>좌: 자동 요약(토큰 미사용) · 우: AI·메모(저장됨)</span>"
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
-    _col_l, _col_r = st.columns(2)
-
-    with _col_l:
-        st.markdown("<b style='font-size:0.85rem;'>⚡ 자동 요약</b>", unsafe_allow_html=True)
-        st.markdown(
-            f"<div style='background:#f9fafb;border-radius:8px;padding:10px 12px;margin:6px 0;"
-            f"font-size:0.82rem;line-height:1.6;color:#374151;min-height:80px;'>{_auto_text}</div>",
-            unsafe_allow_html=True,
-        )
-        _copy_button_html(_auto_text.replace("**", "").replace("- ", ""), "복사", key=f"auto_{memo_key}")
-
-    with _col_r:
-        _hdr_col1, _hdr_col2 = st.columns([2, 1])
-        with _hdr_col1:
-            st.markdown("<b style='font-size:0.85rem;'>🤖 AI · 메모</b>", unsafe_allow_html=True)
-        with _hdr_col2:
-            _ai_clicked = st.button("AI 생성", key=f"ai_btn::{ai_cache_key}", use_container_width=True)
-
-        # AI 결과 캐싱(조회조건이 바뀌면 이전 결과를 자동 폐기) — 기존 로직과 동일한 패턴
-        _ai_result_key = f"ai_raw::{ai_cache_key}"
-        _ai_ctx_key = f"ai_ctx::{ai_cache_key}"
-        _ai_result = None
-        if _ai_clicked:
-            with st.spinner("AI 인사이트 생성 중..."):
-                _ai_result = generate_insights(auto_payload, ai_context, ai_cache_key)
-                st.session_state[_ai_result_key] = _ai_result
-                st.session_state[_ai_ctx_key] = ai_context
-        elif st.session_state.get(_ai_ctx_key) == ai_context:
-            _ai_result = st.session_state.get(_ai_result_key)
-        else:
-            st.session_state.pop(_ai_result_key, None)
-            st.session_state.pop(_ai_ctx_key, None)
-
-        _ai_text = _extract_ai_text(_ai_result)
-        _memo_state_key = f"memo_text::{memo_key}"
-        if _memo_state_key not in st.session_state:
-            _saved = load_memo(memo_key)
-            st.session_state[_memo_state_key] = _saved or ""
-        if _ai_clicked and _ai_text:
-            # 방금 새로 생성한 경우에만 메모를 덮어쓴다 (기존에 직접 쓴 메모를 매번 덮어쓰지 않도록)
-            st.session_state[_memo_state_key] = _ai_text
-
-        _memo_text = st.text_area(
-            "메모", value=st.session_state[_memo_state_key], key=f"memo_ta::{memo_key}",
-            height=110, label_visibility="collapsed",
-            placeholder="AI 생성을 누르거나 직접 작성하세요. 저장하면 다음에 열 때 그대로 남습니다.",
-        )
-        _save_col1, _save_col2 = st.columns([1, 3])
-        with _save_col1:
-            if st.button("저장", key=f"save_btn::{memo_key}"):
-                _ok, _msg = save_memo(memo_key, _memo_text)
-                st.session_state[_memo_state_key] = _memo_text
-                (st.success if _ok else st.warning)(_msg)
-        _token, _repo = _github_conf()
-        if _token and _repo:
-            st.caption("🤖 **AI 생성**을 누르면 메모에 채워져요(직접 수정 가능). 메모는 GitHub 저장소에 저장돼요.")
-        else:
-            st.caption(
-                "⚠️ 메모 저장소가 아직 연결 안 됐어요 — secrets에 `GITHUB_TOKEN`·`GITHUB_REPO`를 "
-                "설정하면 메모가 계속 저장돼요. (지금은 새로고침하면 메모가 사라져요)"
-            )
-    return _ai_result
-
 
 st.set_page_config(page_title="마케팅 실적 현황 대시보드", layout="wide", page_icon="📊")
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
@@ -1980,7 +1769,7 @@ if side["page"].startswith("1"):
                     "yoy_label": cfg["yoy_label"], "yoy_delta": float(stats["yoy_delta"] or 0),
                 })
         _memo_key_ep = f"ep_summary::{bpu}::{segment}::{unit}::{period_label}"
-        _ai_result_ep = render_insight_card(_ai_payload_ep, _ai_context_ep, "ep_summary", _memo_key_ep)
+        _ai_result_ep = render_insight_card(_ai_payload_ep, _ai_context_ep, "ep_summary", _memo_key_ep, period_label)
 
 
         # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -2562,7 +2351,7 @@ if side["page"].startswith("2"):
                 f"cat_summary::{bpu}::{selected_cat}::{selected_brand}::{cat_segment}::{unit}::{period_label}"
                 + ("::ff제외" if _ff_exclude else "")
             )
-            _ai_result_cat = render_insight_card(_ai_payload_cat, _ai_context_cat, "cat_summary", _memo_key_cat)
+            _ai_result_cat = render_insight_card(_ai_payload_cat, _ai_context_cat, "cat_summary", _memo_key_cat, period_label)
 
             # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
             cat_cols = st.columns(5)
