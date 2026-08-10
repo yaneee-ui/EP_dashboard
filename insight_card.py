@@ -81,24 +81,29 @@ def generate_auto_summary_plain(payload, period_label="", extra_sections=None):
 
 def _copy_button_html(text, button_label="복사", key=""):
     """클립보드 복사 버튼 (Streamlit 기본엔 없어서 작은 JS 컴포넌트로 구현).
-    Streamlit 네이티브 버튼과 나란히 놓여도 크기가 비슷하게 폭 100%로 맞춘다."""
+    Streamlit 네이티브 버튼과 나란히 놓여도 크기가 비슷하게 폭 100%로 맞춘다.
+    box-sizing:border-box를 꼭 줘야 padding이 width:100%에 포함돼서, 안 주면
+    padding만큼 컬럼 폭을 넘어서 옆 버튼이랑 정렬이 깨져 보이는 문제가 있었음."""
     import json as _json
     _safe_text = _json.dumps(text or "")
     _html = f"""
+    <div style="box-sizing:border-box;width:100%;">
     <button id="copybtn_{key}" style="
-        width:100%;padding:6px 10px;font-size:0.82rem;border:1px solid rgba(49,51,63,0.2);
-        border-radius:8px;background:#fff;color:#31333f;cursor:pointer;font-family:inherit;">{button_label}</button>
-    <span id="copied_{key}" style="font-size:0.72rem;color:#16a34a;display:none;">✓ 복사됨</span>
+        box-sizing:border-box;width:100%;padding:6px 10px;font-size:0.82rem;
+        border:1px solid rgba(49,51,63,0.2);border-radius:8px;background:#fff;
+        color:#31333f;cursor:pointer;font-family:inherit;line-height:1.6;">{button_label}</button>
+    <div id="copied_{key}" style="font-size:0.7rem;color:#16a34a;text-align:center;display:none;">✓ 복사됨</div>
+    </div>
     <script>
         document.getElementById("copybtn_{key}").onclick = function() {{
             navigator.clipboard.writeText({_safe_text});
             var msg = document.getElementById("copied_{key}");
-            msg.style.display = "inline";
+            msg.style.display = "block";
             setTimeout(function() {{ msg.style.display = "none"; }}, 1500);
         }};
     </script>
     """
-    components.html(_html, height=32)
+    components.html(_html, height=36)
 
 
 MEMO_FILE_PATH = "data/insight_memos.json"
@@ -205,79 +210,92 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     for sec in (extra_sections or []):
         _ai_payload_full.extend(sec.get("items", []))
 
-    st.markdown(
-        "<div style='margin-top:14px;padding:16px 18px 4px;border:1px solid #e5e7eb;"
-        "border-radius:12px;background:#fff;'>"
-        "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:12px;'>"
-        "<b style='font-size:0.95rem;'>인사이트</b>"
-        "<span style='font-size:0.76rem;color:#9ca3af;'>좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)</span>"
-        "</div></div>",
-        unsafe_allow_html=True,
-    )
-    _col_l, _col_r = st.columns(2)
-
-    with _col_l:
-        _l_title, _l_btn1, _l_btn2 = st.columns([3, 1.3, 1.3])
-        with _l_title:
-            st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>⚡ 자동 요약</b></div>", unsafe_allow_html=True)
-        with _l_btn1:
-            st.button("다시 생성", key=f"auto_regen::{memo_key}", use_container_width=True)
-        with _l_btn2:
-            _copy_button_html(generate_auto_summary_plain(auto_payload, period_label, extra_sections), "복사", key=f"autocp::{memo_key}")
+    # st.container(border=True)로 감싸야 안의 st.columns까지 실제로 테두리 안에 들어간다.
+    # (예전엔 st.markdown으로 만든 테두리 div가 columns 밖에 있어서 제목 줄에만 테두리가
+    # 쳐지고 실제 내용은 테두리 밖에 떠 있는 것처럼 보이는 문제가 있었음)
+    with st.container(border=True):
         st.markdown(
-            f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:8px 0 4px;"
-            f"font-size:0.82rem;line-height:1.7;color:#374151;min-height:120px;'>{_auto_html}</div>",
+            "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:4px;'>"
+            "<b style='font-size:0.95rem;'>인사이트</b>"
+            "<span style='font-size:0.76rem;color:#9ca3af;'>좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)</span>"
+            "</div>",
             unsafe_allow_html=True,
         )
+        _col_l, _col_r = st.columns(2)
 
-    with _col_r:
-        _r_title, _r_btn1, _r_btn2 = st.columns([2.4, 1.3, 1.3])
-        with _r_title:
-            st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>🤖 AI 인사이트 · 메모</b></div>", unsafe_allow_html=True)
-        with _r_btn1:
-            _ai_clicked = st.button("AI 생성", key=f"ai_btn::{ai_cache_key}", use_container_width=True)
-
-        # AI 결과 캐싱(조회조건이 바뀌면 이전 결과를 자동 폐기) — 기존 로직과 동일한 패턴
-        _ai_result_key = f"ai_raw::{ai_cache_key}"
-        _ai_ctx_key = f"ai_ctx::{ai_cache_key}"
-        _ai_result = None
-        if _ai_clicked:
-            with st.spinner("AI 인사이트 생성 중..."):
-                _ai_result = generate_insights(_ai_payload_full, ai_context, ai_cache_key)
-                st.session_state[_ai_result_key] = _ai_result
-                st.session_state[_ai_ctx_key] = ai_context
-        elif st.session_state.get(_ai_ctx_key) == ai_context:
-            _ai_result = st.session_state.get(_ai_result_key)
-        else:
-            st.session_state.pop(_ai_result_key, None)
-            st.session_state.pop(_ai_ctx_key, None)
-
-        _ai_text = _extract_ai_text(_ai_result)
-        _memo_state_key = f"memo_text::{memo_key}"
-        if _memo_state_key not in st.session_state:
-            _saved = load_memo(memo_key)
-            st.session_state[_memo_state_key] = _saved or ""
-        if _ai_clicked and _ai_text:
-            # 방금 새로 생성한 경우에만 메모를 덮어쓴다 (기존에 직접 쓴 메모를 매번 덮어쓰지 않도록)
-            st.session_state[_memo_state_key] = _ai_text
-
-        _memo_text = st.text_area(
-            "메모", value=st.session_state[_memo_state_key], key=f"memo_ta::{memo_key}",
-            height=120, label_visibility="collapsed",
-            placeholder="AI 생성을 누르거나 직접 작성하세요. 저장하면 다음에 열 때 그대로 남습니다.",
-        )
-        with _r_btn2:
-            _save_clicked = st.button("💾 저장", key=f"save_btn::{memo_key}", use_container_width=True)
-        if _save_clicked:
-            _ok, _msg = save_memo(memo_key, _memo_text)
-            st.session_state[_memo_state_key] = _memo_text
-            (st.success if _ok else st.warning)(_msg)
-        _token, _repo = _github_conf()
-        if _token and _repo:
-            st.caption("🤖 **AI 생성**을 누르면 메모에 채워져요(직접 수정 가능). 메모는 GitHub 저장소에 저장돼요.")
-        else:
-            st.caption(
-                "⚠️ 메모 저장소가 아직 연결 안 됐어요 — secrets에 `GITHUB_TOKEN`·`GITHUB_REPO`를 "
-                "설정하면 메모가 계속 저장돼요. (지금은 새로고침하면 메모가 사라져요)"
+        with _col_l:
+            _l_title, _l_btn1, _l_btn2 = st.columns([3, 1.3, 1.3])
+            with _l_title:
+                st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>⚡ 자동 요약</b></div>", unsafe_allow_html=True)
+            with _l_btn1:
+                st.button("다시 생성", key=f"auto_regen::{memo_key}", use_container_width=True)
+            with _l_btn2:
+                _copy_button_html(generate_auto_summary_plain(auto_payload, period_label, extra_sections), "복사", key=f"autocp::{memo_key}")
+            st.markdown(
+                f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:8px 0 4px;"
+                f"font-size:0.82rem;line-height:1.7;color:#374151;min-height:120px;'>{_auto_html}</div>",
+                unsafe_allow_html=True,
             )
+
+        with _col_r:
+            _r_title, _r_btn1, _r_btn2 = st.columns([2.4, 1.3, 1.3])
+            with _r_title:
+                st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>🤖 AI 인사이트 · 메모</b></div>", unsafe_allow_html=True)
+            with _r_btn1:
+                _ai_clicked = st.button("AI 생성", key=f"ai_btn::{ai_cache_key}", use_container_width=True)
+
+            # AI 결과 캐싱(조회조건이 바뀌면 이전 결과를 자동 폐기) — 기존 로직과 동일한 패턴
+            _ai_result_key = f"ai_raw::{ai_cache_key}"
+            _ai_ctx_key = f"ai_ctx::{ai_cache_key}"
+            _ai_result = None
+            _ai_error = None
+            if _ai_clicked:
+                with st.spinner("AI 인사이트 생성 중..."):
+                    try:
+                        _ai_result = generate_insights(_ai_payload_full, ai_context, ai_cache_key)
+                    except Exception as e:
+                        _ai_error = str(e)
+                    st.session_state[_ai_result_key] = _ai_result
+                    st.session_state[_ai_ctx_key] = ai_context
+            elif st.session_state.get(_ai_ctx_key) == ai_context:
+                _ai_result = st.session_state.get(_ai_result_key)
+            else:
+                st.session_state.pop(_ai_result_key, None)
+                st.session_state.pop(_ai_ctx_key, None)
+
+            # 텍스트영역(메모)은 key로만 상태를 관리한다 — key가 있는 위젯은 한번 그려지고 나면
+            # value= 인자가 재실행 시 무시되고 st.session_state[key]가 우선하는 Streamlit 특성
+            # 때문에, 예전엔 별도 키(_memo_state_key)에만 AI 결과를 넣어서 실제 텍스트영역엔
+            # 절대 반영이 안 되던 버그가 있었음. 위젯의 '진짜' key를 직접 세팅해야 함.
+            _memo_widget_key = f"memo_ta::{memo_key}"
+            if _memo_widget_key not in st.session_state:
+                _saved = load_memo(memo_key)
+                st.session_state[_memo_widget_key] = _saved or ""
+            if _ai_clicked:
+                _ai_text = _extract_ai_text(_ai_result)
+                if _ai_text:
+                    st.session_state[_memo_widget_key] = _ai_text
+                elif _ai_error:
+                    st.error(f"AI 생성 중 오류가 발생했어요: {_ai_error}")
+                else:
+                    st.warning("AI가 빈 결과를 반환했어요. 다시 시도해주세요.")
+
+            _memo_text = st.text_area(
+                "메모", key=_memo_widget_key,
+                height=120, label_visibility="collapsed",
+                placeholder="AI 생성을 누르거나 직접 작성하세요. 저장하면 다음에 열 때 그대로 남습니다.",
+            )
+            with _r_btn2:
+                _save_clicked = st.button("💾 저장", key=f"save_btn::{memo_key}", use_container_width=True)
+            if _save_clicked:
+                _ok, _msg = save_memo(memo_key, _memo_text)
+                (st.success if _ok else st.warning)(_msg)
+            _token, _repo = _github_conf()
+            if _token and _repo:
+                st.caption("🤖 **AI 생성**을 누르면 메모에 채워져요(직접 수정 가능). 메모는 GitHub 저장소에 저장돼요.")
+            else:
+                st.caption(
+                    "⚠️ 메모 저장소가 아직 연결 안 됐어요 — secrets에 `GITHUB_TOKEN`·`GITHUB_REPO`를 "
+                    "설정하면 메모가 계속 저장돼요. (지금은 새로고침하면 메모가 사라져요)"
+                )
     return _ai_result
