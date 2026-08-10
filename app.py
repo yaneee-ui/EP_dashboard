@@ -1768,8 +1768,41 @@ if side["page"].startswith("1"):
                     "prev_label": cfg["prev_label"], "prev_delta": float(stats["prev_delta"] or 0),
                     "yoy_label": cfg["yoy_label"], "yoy_delta": float(stats["yoy_delta"] or 0),
                 })
+
+        # KPI 카드뿐 아니라 하단 '사업부별 실적 비교'표 내용도 요약에 반영 —
+        # 거래액 기준으로 e-영업1~4 중 가장 많이 오르고/내린 사업부를 뽑는다.
+        # (render_bpu_comparison_table과 완전히 같은 함수를 재사용해서 숫자가 어긋나지 않음)
+        _extra_sections_ep = []
+        try:
+            _bpu_rows_all, _, _ = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
+            _bpu_gmv_rows = [
+                r for r in _bpu_rows_all
+                if r["metric_label"] == "거래액(순결제)" and r["bpu"] in ("e-영업1", "e-영업2", "e-영업3", "e-영업4") and r["stats"]
+            ]
+            if len(_bpu_gmv_rows) >= 2:
+                _key_delta = lambda r: r["stats"].get("yoy_delta") if r["stats"].get("yoy_delta") is not None else r["stats"].get("prev_delta")
+                _ranked = sorted([r for r in _bpu_gmv_rows if _key_delta(r) is not None], key=_key_delta, reverse=True)
+                if _ranked:
+                    _bpu_items = []
+                    _top, _bottom = _ranked[0], _ranked[-1]
+                    for _r, _tag in ((_top, "최대 상승"), (_bottom, "최대 하락")):
+                        if _r is _top and _r is _bottom:
+                            continue  # 사업부가 1개뿐이면 하나만
+                        _bpu_items.append({
+                            "name": f"{_r['bpu']} ({_tag})", "value": f"{_r['stats']['current']:,.0f}",
+                            "yoy_label": cfg["yoy_label"], "yoy_delta": _r["stats"].get("yoy_delta"),
+                            "prev_label": cfg["prev_label"], "prev_delta": _r["stats"].get("prev_delta"),
+                        })
+                    if _bpu_items:
+                        _extra_sections_ep.append({"header": "사업부(BPU)별 거래액 비교", "items": _bpu_items})
+        except Exception:
+            pass  # 요약은 보조 기능이라, 계산 중 문제가 있어도 KPI 요약은 그대로 보여준다
+
         _memo_key_ep = f"ep_summary::{bpu}::{segment}::{unit}::{period_label}"
-        _ai_result_ep = render_insight_card(_ai_payload_ep, _ai_context_ep, "ep_summary", _memo_key_ep, period_label)
+        _ai_result_ep = render_insight_card(
+            _ai_payload_ep, _ai_context_ep, "ep_summary", _memo_key_ep, period_label,
+            extra_sections=_extra_sections_ep,
+        )
 
 
         # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -2256,6 +2289,38 @@ if side["page"].startswith("2"):
             cat_bpu_df = exclude_ff_brand(cat_bpu_df)
             cat_bpu_df_all_seg = exclude_ff_brand(cat_bpu_df_all_seg)
 
+        # 카테고리별 거래액 요약(전기간비/평균비/전년비) — 아래쪽 '카테고리별 요약'표랑
+        # 인사이트 카드(자동요약) 둘 다에서 쓸 거라 여기서 한 번만 계산해둔다.
+        # 카테고리 선택 필터와 무관하게 전체 카테고리를 대상으로 함 (개요용이라서).
+        _cat_summary_rows = []
+        _cat_daily_df_early = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _cat_daily_df_early = _cat_daily_df_early.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+        else:
+            _cat_daily_df_early = _cat_daily_df_early[["날짜", "카테고리", "거래액"]]
+        if not _cat_daily_df_early.empty:
+            _cat_cfg_early = UNIT_CONFIG[unit]
+            _cat_agg_early = "sum" if unit == "월마감" else "mean"
+            for cat_name, g in _cat_daily_df_early.groupby("카테고리"):
+                s = g.set_index("날짜")["거래액"].sort_index()
+                series = s.resample(_cat_cfg_early["rule"]).agg(_cat_agg_early)
+                if unit == "주별":
+                    series.index = series.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
+                    series = series.iloc[:-1]
+                if not series.empty:
+                    series = series[series.index <= selected_period_date]
+                _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+                stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+                if stats is None or not stats["current"]:
+                    continue
+                _cat_summary_rows.append({
+                    "카테고리": cat_name, "거래액": stats["current"],
+                    "prev": stats["prev_delta"], "avg": stats["avg_delta"], "yoy": stats["yoy_delta"],
+                    "prev_v": stats.get("prev_value"), "avg_v": stats.get("avg_value"), "yoy_v": stats.get("yoy_value"),
+                })
+        _cat_summary_rows.sort(key=lambda r: r["거래액"], reverse=True)
+
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
         if (bpu == "Total" or bpu in BPU_GROUPS) and not cat_combo.empty:
             cat_combo = cat_combo.groupby("날짜", as_index=False).agg({"트래픽": "sum", "거래액": "sum", "구매객수": "sum"})
@@ -2351,7 +2416,31 @@ if side["page"].startswith("2"):
                 f"cat_summary::{bpu}::{selected_cat}::{selected_brand}::{cat_segment}::{unit}::{period_label}"
                 + ("::ff제외" if _ff_exclude else "")
             )
-            _ai_result_cat = render_insight_card(_ai_payload_cat, _ai_context_cat, "cat_summary", _memo_key_cat, period_label)
+
+            # KPI 카드뿐 아니라 하단 '카테고리별 요약'표 내용도 요약에 반영 —
+            # 거래액 전년비 기준으로 가장 많이 오르고/내린 카테고리를 뽑는다.
+            # (_cat_summary_rows는 위에서 이미 계산해둔 걸 그대로 씀 — 표와 숫자가 어긋나지 않음)
+            _extra_sections_cat = []
+            try:
+                _cat_movers = [r for r in _cat_summary_rows if r.get("yoy") is not None]
+                if len(_cat_movers) >= 2:
+                    _ranked_cat = sorted(_cat_movers, key=lambda r: r["yoy"], reverse=True)
+                    _top_c, _bottom_c = _ranked_cat[0], _ranked_cat[-1]
+                    _cat_items = []
+                    for _r, _tag in ((_top_c, "최대 상승"), (_bottom_c, "최대 하락")):
+                        _cat_items.append({
+                            "name": f"{_r['카테고리']} ({_tag})", "value": f"{_r['거래액']:,.0f}",
+                            "yoy_label": _cfg_cat["yoy_label"], "yoy_delta": _r["yoy"],
+                        })
+                    if _cat_items:
+                        _extra_sections_cat.append({"header": "카테고리별 거래액 톱무버", "items": _cat_items})
+            except Exception:
+                pass  # 요약은 보조 기능이라, 계산 중 문제가 있어도 KPI 요약은 그대로 보여준다
+
+            _ai_result_cat = render_insight_card(
+                _ai_payload_cat, _ai_context_cat, "cat_summary", _memo_key_cat, period_label,
+                extra_sections=_extra_sections_cat,
+            )
 
             # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
             cat_cols = st.columns(5)
@@ -2559,46 +2648,15 @@ if side["page"].startswith("2"):
         # 사이드바 조회단위(일별/주별/월별/월마감)를 그대로 따라간다 — KPI 카드와 같은
         # compute_kpi_deltas를 재사용해서 라벨(전일비/전주비/전월비 등)도 자동으로 맞춰짐.
         # 카테고리 선택 필터와 무관하게 전체 카테고리를 대상으로 함 (개요용 표라서).
+        # _cat_summary_rows는 위(cat_bpu_df 확정 직후)에서 이미 계산해둔 걸 그대로 씀
+        # (인사이트 카드 자동요약에서도 같은 값을 써서 숫자가 어긋나지 않게 하기 위함).
         st.markdown(f"**카테고리별 요약**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · 거래액 기준 · {unit}</span>", unsafe_allow_html=True)
 
-        _cat_daily_df = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
-        if bpu == "Total" or bpu in BPU_GROUPS:
-            _cat_daily_df = _cat_daily_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+        if not _cat_summary_rows:
+            st.info("거래액이 있는 카테고리가 없습니다.")
         else:
-            _cat_daily_df = _cat_daily_df[["날짜", "카테고리", "거래액"]]
-
-        if _cat_daily_df.empty:
-            st.info("표시할 카테고리 데이터가 없습니다.")
-        else:
-            _cat_cfg = UNIT_CONFIG[unit]
-            _cat_rule = _cat_cfg["rule"]
-            # 거래액은 절대값(합산 가능) 지표라 월마감이면 합계, 그 외에는 일평균 (다른 페이지와 동일 규칙)
-            _cat_agg = "sum" if unit == "월마감" else "mean"
-
-            _cat_summary_rows = []
-            for cat_name, g in _cat_daily_df.groupby("카테고리"):
-                s = g.set_index("날짜")["거래액"].sort_index()
-                series = s.resample(_cat_rule).agg(_cat_agg)
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                    series = series.iloc[:-1]  # 미완성 달 제외
-                if not series.empty:
-                    series = series[series.index <= selected_period_date]
-                _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
-                stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
-                if stats is None or not stats["current"]:  # None 또는 0(거래액 없음)인 카테고리는 제외
-                    continue
-                _cat_summary_rows.append({
-                    "카테고리": cat_name, "거래액": stats["current"],
-                    "prev": stats["prev_delta"], "avg": stats["avg_delta"], "yoy": stats["yoy_delta"],
-                    "prev_v": stats.get("prev_value"), "avg_v": stats.get("avg_value"), "yoy_v": stats.get("yoy_value"),
-                })
-
-            if not _cat_summary_rows:
-                st.info("거래액이 있는 카테고리가 없습니다.")
-            else:
-                _cat_summary_rows.sort(key=lambda r: r["거래액"], reverse=True)
+            if True:
+                _cat_cfg = UNIT_CONFIG[unit]
                 _cat_summary_body = "".join(
                     f"<tr><td class='m'>{r['카테고리']}</td>"
                     f"<td class='v' style='text-align:right;'>{r['거래액']:,.0f}</td>"
