@@ -13,50 +13,70 @@ from utils import format_delta_html
 from ai_insights import generate_insights
 
 
-def generate_auto_summary(payload, period_label=""):
+def generate_auto_summary(payload, period_label="", extra_sections=None):
     """이미 계산된 증감률 숫자만으로 규칙 기반 요약을 만든다. API 호출이 없어서 무료·즉시.
-    payload: [{"name","value","prev_label","prev_delta","yoy_label","yoy_delta"}, ...]
+    payload: [{"name","value","prev_label","prev_delta","yoy_label","yoy_delta"}, ...] — KPI 카드용.
+    extra_sections: [{"header": str, "items": payload와 동일 구조}, ...] — BPU별 비교, 카테고리별
+    톱무버 등 KPI 카드 밖의 다른 표 내용도 같이 담을 때 씀. 없으면 실적 섹션만 표시.
     HTML로 반환한다 — 카드 전체가 unsafe_allow_html로 그려지는데 마크다운 **볼드**를
     섞어 쓰면 일부만 볼드되는 등 렌더링이 깨지는 문제가 있어서, 처음부터 <b> 태그로 만든다.
     색상(▲초록/▼빨강)은 나머지 대시보드 전체에서 쓰는 format_delta_html을 그대로 재사용해서
     스타일을 통일한다."""
-    if not payload:
+    if not payload and not extra_sections:
         return "<div style='color:#9ca3af;'>표시할 데이터가 없습니다.</div>"
-    _rows = []
-    for item in payload:
-        _bits = [f"<b>{item['name']}</b> {item.get('value', '-')}"]
-        _pd_ = item.get("prev_delta")
-        if _pd_ is not None:
-            _bits.append(f"{item.get('prev_label', '전기간')} {format_delta_html(_pd_)}")
-        _yd_ = item.get("yoy_delta")
-        if _yd_ is not None:
-            _bits.append(f"{item.get('yoy_label', '전년')} {format_delta_html(_yd_)}")
-        _rows.append(f"<div style='margin:5px 0;'>{' · '.join(_bits)}</div>")
-    _header = (
-        f"<div style='font-size:0.78rem;color:#6b7280;font-weight:700;margin-bottom:6px;'>"
-        f"□ 실적{' — ' + period_label if period_label else ''}</div>"
-    )
-    return _header + "".join(_rows)
+
+    def _section_html(header, items):
+        _rows = []
+        for item in items:
+            _bits = [f"<b>{item['name']}</b> {item.get('value', '-')}"]
+            _pd_ = item.get("prev_delta")
+            if _pd_ is not None:
+                _bits.append(f"{item.get('prev_label', '전기간')} {format_delta_html(_pd_)}")
+            _yd_ = item.get("yoy_delta")
+            if _yd_ is not None:
+                _bits.append(f"{item.get('yoy_label', '전년')} {format_delta_html(_yd_)}")
+            _rows.append(f"<div style='margin:5px 0;'>{' · '.join(_bits)}</div>")
+        _hdr = f"<div style='font-size:0.78rem;color:#6b7280;font-weight:700;margin:10px 0 6px;'>□ {header}</div>"
+        return _hdr + "".join(_rows)
+
+    _blocks = []
+    if payload:
+        _blocks.append(_section_html(f"실적{' — ' + period_label if period_label else ''}", payload))
+    for sec in (extra_sections or []):
+        if sec.get("items"):
+            _blocks.append(_section_html(sec["header"], sec["items"]))
+    # 첫 섹션 위 여백은 필요 없어서(카드 안에 이미 패딩이 있음) 제거
+    return "".join(_blocks).replace("margin:10px 0 6px;", "margin:0 0 6px;", 1)
 
 
-def generate_auto_summary_plain(payload, period_label=""):
+def generate_auto_summary_plain(payload, period_label="", extra_sections=None):
     """generate_auto_summary와 동일한 내용을 HTML 태그 없는 평문으로 만든다.
     (복사 버튼으로 클립보드에 붙여넣을 때 태그가 그대로 보이지 않게 하기 위함)"""
-    if not payload:
+    if not payload and not extra_sections:
         return "표시할 데이터가 없습니다."
-    lines = [f"□ 실적{' — ' + period_label if period_label else ''}"]
-    for item in payload:
-        _bits = [f"{item['name']} {item.get('value', '-')}"]
-        _pd_ = item.get("prev_delta")
-        if _pd_ is not None:
-            _arrow = "▲" if _pd_ >= 0 else "▼"
-            _bits.append(f"{item.get('prev_label', '전기간')} {_arrow}{abs(_pd_):.1f}%")
-        _yd_ = item.get("yoy_delta")
-        if _yd_ is not None:
-            _arrow2 = "▲" if _yd_ >= 0 else "▼"
-            _bits.append(f"{item.get('yoy_label', '전년')} {_arrow2}{abs(_yd_):.1f}%")
-        lines.append(" · ".join(_bits))
-    return "\n".join(lines)
+
+    def _section_plain(header, items):
+        lines = [f"□ {header}"]
+        for item in items:
+            _bits = [f"{item['name']} {item.get('value', '-')}"]
+            _pd_ = item.get("prev_delta")
+            if _pd_ is not None:
+                _arrow = "▲" if _pd_ >= 0 else "▼"
+                _bits.append(f"{item.get('prev_label', '전기간')} {_arrow}{abs(_pd_):.1f}%")
+            _yd_ = item.get("yoy_delta")
+            if _yd_ is not None:
+                _arrow2 = "▲" if _yd_ >= 0 else "▼"
+                _bits.append(f"{item.get('yoy_label', '전년')} {_arrow2}{abs(_yd_):.1f}%")
+            lines.append(" · ".join(_bits))
+        return "\n".join(lines)
+
+    _blocks = []
+    if payload:
+        _blocks.append(_section_plain(f"실적{' — ' + period_label if period_label else ''}", payload))
+    for sec in (extra_sections or []):
+        if sec.get("items"):
+            _blocks.append(_section_plain(sec["header"], sec["items"]))
+    return "\n\n".join(_blocks)
 
 
 def _copy_button_html(text, button_label="복사", key=""):
@@ -172,11 +192,18 @@ def _extract_ai_text(ai_result):
     return str(ai_result)
 
 
-def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period_label=""):
+def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period_label="", extra_sections=None):
     """좌: 자동 요약(API 미사용) / 우: AI 생성·메모(GitHub 저장). 참고 이미지 스타일 구현.
+    extra_sections: [{"header": str, "items": [...]}] — KPI 카드 외에 BPU별 비교, 카테고리별
+    톱무버 같은 다른 표의 핵심 내용도 요약에 같이 담고 싶을 때 넘긴다 (선택사항).
     반환값: 이번 실행에서 유효한 ai_result (버튼을 안 눌렀어도 같은 조회조건이면 캐시에서
     복원됨) — 호출부가 render_metric_insight(카드별 한줄 인사이트)에 이어서 쓸 수 있게 함."""
-    _auto_html = generate_auto_summary(auto_payload, period_label)
+    _auto_html = generate_auto_summary(auto_payload, period_label, extra_sections)
+    # AI 쪽엔 섹션 구분 없이 전부 합쳐서 넘긴다 (KPI + BPU별/카테고리별 핵심 수치까지
+    # 반영된 서술형 인사이트를 만들 수 있도록)
+    _ai_payload_full = list(auto_payload or [])
+    for sec in (extra_sections or []):
+        _ai_payload_full.extend(sec.get("items", []))
 
     st.markdown(
         "<div style='margin-top:14px;padding:16px 18px 4px;border:1px solid #e5e7eb;"
@@ -196,7 +223,7 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
         with _l_btn1:
             st.button("다시 생성", key=f"auto_regen::{memo_key}", use_container_width=True)
         with _l_btn2:
-            _copy_button_html(generate_auto_summary_plain(auto_payload, period_label), "복사", key=f"autocp::{memo_key}")
+            _copy_button_html(generate_auto_summary_plain(auto_payload, period_label, extra_sections), "복사", key=f"autocp::{memo_key}")
         st.markdown(
             f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:8px 0 4px;"
             f"font-size:0.82rem;line-height:1.7;color:#374151;min-height:120px;'>{_auto_html}</div>",
@@ -216,7 +243,7 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
         _ai_result = None
         if _ai_clicked:
             with st.spinner("AI 인사이트 생성 중..."):
-                _ai_result = generate_insights(auto_payload, ai_context, ai_cache_key)
+                _ai_result = generate_insights(_ai_payload_full, ai_context, ai_cache_key)
                 st.session_state[_ai_result_key] = _ai_result
                 st.session_state[_ai_ctx_key] = ai_context
         elif st.session_state.get(_ai_ctx_key) == ai_context:
@@ -254,5 +281,3 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
                 "설정하면 메모가 계속 저장돼요. (지금은 새로고침하면 메모가 사라져요)"
             )
     return _ai_result
-
-
