@@ -188,7 +188,6 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
             color: rgb(49, 51, 63) !important;
             text-decoration: none !important;
             -webkit-text-decoration: none !important;
-            border-bottom: none !important;
         }
         div[data-testid="stExpander"] div[data-testid="stButton"] button {
             height: 2rem !important;
@@ -201,6 +200,9 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
             overflow: hidden !important;
             text-overflow: ellipsis !important;
             font-size: 0.82rem !important;
+        }
+        div[data-testid="stExpander"] div[data-testid="stHorizontalBlock"]:has(div[data-testid="stButton"]) {
+            margin-top: -10px !important;
         }
         </style>
         """,
