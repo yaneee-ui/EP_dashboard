@@ -179,8 +179,8 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     # 이 카드 안의 버튼만이라도 강제로 원래 스타일로 되돌린다 (!important로 덮어씀).
     # 추가로: styles.py의 'KPI 카드 높이 통일' 규칙(stVerticalBlockBorderWrapper에
     # height:100% 강제)이 st.expander도 내부적으로 같은 wrapper를 쓰다 보니 같이 걸려서,
-    # 버튼 높이가 눌려 하단이 살짝 잘리는 문제가 있었음 — 이 카드 범위 안에서는 그 높이
-    # 강제를 다시 풀어준다.
+    # 버튼 높이가 눌려 하단이 잘리는 문제가 있었음 — expander 안쪽 전 레벨(블록/컬럼/버튼)에
+    # 걸쳐 height/overflow 제약을 풀어주고, 버튼 자체 높이도 넉넉하게 확보한다.
     st.markdown(
         """
         <style>
@@ -192,12 +192,30 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
             border-bottom: none !important;
         }
         div[data-testid="stExpander"] div[data-testid="stVerticalBlockBorderWrapper"],
-        div[data-testid="stExpander"] div[data-testid="stVerticalBlockBorderWrapper"] > div {
+        div[data-testid="stExpander"] div[data-testid="stVerticalBlockBorderWrapper"] > div,
+        div[data-testid="stExpander"] div[data-testid="stHorizontalBlock"],
+        div[data-testid="stExpander"] div[data-testid="column"],
+        div[data-testid="stExpander"] div[data-testid="stVerticalBlock"] {
             height: auto !important;
+            min-height: 0 !important;
             overflow: visible !important;
         }
+        div[data-testid="stExpander"] div[data-testid="stButton"] {
+            height: auto !important;
+            overflow: visible !important;
+            padding-bottom: 4px;
+        }
         div[data-testid="stExpander"] div[data-testid="stButton"] button {
-            min-height: 2.5rem;
+            height: auto !important;
+            min-height: 2.75rem !important;
+            padding: 0.5rem 0.9rem !important;
+            line-height: 1.3 !important;
+            overflow: visible !important;
+        }
+        div[data-testid="stExpander"] div[data-testid="stButton"] button p {
+            white-space: nowrap !important;
+            overflow: hidden !important;
+            text-overflow: ellipsis !important;
         }
         </style>
         """,
@@ -222,7 +240,7 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
             with _l_title:
                 st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>⚡ 자동 요약</b></div>", unsafe_allow_html=True)
             with _l_btn1:
-                st.button("다시 생성", key=f"auto_regen::{memo_key}", use_container_width=True)
+                st.button("갱신", key=f"auto_regen::{memo_key}", use_container_width=True, help="자동 요약을 다시 계산해요")
             _copy_state_key = f"show_copy::{memo_key}"
             with _l_btn2:
                 if st.button("복사", key=f"autocp::{memo_key}", use_container_width=True):
@@ -239,7 +257,7 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
 
 
         with _col_r:
-            _r_title, _r_btn1, _r_btn2 = st.columns([2.4, 1.3, 1.3])
+            _r_title, _r_btn1, _r_btn2 = st.columns([2.0, 1.6, 1.4])
             with _r_title:
                 st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>🤖 AI 인사이트 · 메모</b></div>", unsafe_allow_html=True)
             with _r_btn1:
