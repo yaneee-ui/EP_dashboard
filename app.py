@@ -636,7 +636,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     chart = (
         alt.Chart(long_df)
-        .mark_line(strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True, opacity=1))
+        .mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=45, filled=True, opacity=1))
         .encode(
             x=x_enc,
             y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
@@ -3527,7 +3527,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
 
         chart = (
             alt.Chart(long_df)
-            .mark_line(strokeWidth=2.4, point=alt.OverlayMarkDef(size=32, filled=True))
+            .mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=32, filled=True))
             .encode(
                 x=alt.X(_x_field, title=None, sort=_x_sort, axis=alt.Axis(labelAngle=-90, labelFontSize=8, labelPadding=2)),
                 y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=_y_scale),
