@@ -1884,7 +1884,7 @@ if side["page"].startswith("1"):
                                    min_value=tr_series.index.min().date(), max_value=tr_series.index.max().date(),
                                    key=_tr_range_key)
             with col_reset:
-                st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
                 st.button(
                     "🔄 최근으로", key=f"tr_range_reset_{bpu}_{segment}", use_container_width=True,
                     on_click=_reset_date_range, args=(_tr_range_key, (_default_start, tr_series.index.max().date())),
@@ -2191,7 +2191,7 @@ if side["page"].startswith("1"):
                     min_value=_ep_min_d, max_value=_ep_max_d, key=_ep_range_key,
                 )
             with col_ereset:
-                st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
+                st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
                 st.button(
                     "🔄 최근으로", key=f"ep_range_reset_{bpu}_{match_status}_{lowest_status}", use_container_width=True,
                     on_click=_reset_date_range, args=(_ep_range_key, (_ep_default_start, _ep_max_d)),
@@ -2534,7 +2534,7 @@ if side["page"].startswith("2"):
                         min_value=_cat_min_d, max_value=_cat_max_d, key=_cat_range_key,
                     )
                 with col_reset:
-                    st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
+                    st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
                     st.button(
                         "🔄 최근으로", key=f"cat_range_reset_{bpu}_{selected_cat}_{selected_brand}", use_container_width=True,
                         on_click=_reset_date_range, args=(_cat_range_key, (_cat_default_start, _cat_max_d)),
@@ -3164,7 +3164,7 @@ if side["page"].startswith("5"):
                             label_visibility="collapsed", key=_cp_chart_key,
                         )
                     with _cc2:
-                        st.markdown("<div style='height:1.85rem;'></div>", unsafe_allow_html=True)
+                        st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
                         st.button(
                             "🔄 최근으로", key=f"{_cp_chart_key}_reset", use_container_width=True,
                             on_click=_reset_date_range, args=(_cp_chart_key, (_cp_chart_default_start, _combined.index.max().date())),
