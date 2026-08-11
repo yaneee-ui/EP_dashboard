@@ -177,6 +177,10 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     복원됨) — 호출부가 render_metric_insight(카드별 한줄 인사이트)에 이어서 쓸 수 있게 함."""
     # 원인 불명의 전역 CSS(아마 styles.py)가 버튼 글자에 색/밑줄을 입히는 문제가 있어서,
     # 이 카드 안의 버튼만이라도 강제로 원래 스타일로 되돌린다 (!important로 덮어씀).
+    # 추가로: styles.py의 'KPI 카드 높이 통일' 규칙(stVerticalBlockBorderWrapper에
+    # height:100% 강제)이 st.expander도 내부적으로 같은 wrapper를 쓰다 보니 같이 걸려서,
+    # 버튼 높이가 눌려 하단이 살짝 잘리는 문제가 있었음 — 이 카드 범위 안에서는 그 높이
+    # 강제를 다시 풀어준다.
     st.markdown(
         """
         <style>
@@ -186,6 +190,14 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
             text-decoration: none !important;
             -webkit-text-decoration: none !important;
             border-bottom: none !important;
+        }
+        div[data-testid="stExpander"] div[data-testid="stVerticalBlockBorderWrapper"],
+        div[data-testid="stExpander"] div[data-testid="stVerticalBlockBorderWrapper"] > div {
+            height: auto !important;
+            overflow: visible !important;
+        }
+        div[data-testid="stExpander"] div[data-testid="stButton"] button {
+            min-height: 2.5rem;
         }
         </style>
         """,
