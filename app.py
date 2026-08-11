@@ -3507,6 +3507,21 @@ def _render_weekly_segment_page(page_title, traffic_segment):
             st.info("선택한 주차 범위에 데이터가 없습니다.")
             return
         long_df = pd.concat(frames, ignore_index=True)
+
+        # "26년" 라인 위에 마우스 올렸을 때 전년비(%)도 같이 보이게 — 같은 주차의 "25년"
+        # 값과 비교해서 계산한다. 26년이 아닌 행(25년/25년(FF제외))에는 안 채운다.
+        long_df["전년비"] = pd.NA
+        if "25년" in s_by_label and "26년" in s_by_label:
+            _s25 = s_by_label["25년"]
+            _s26_mask = long_df["구분"] == "26년"
+            for idx in long_df[_s26_mask].index:
+                _wk = long_df.at[idx, "주차"]
+                if _s25 is not None and _wk in _s25.index and pd.notna(_s25.loc[_wk]) and _s25.loc[_wk] != 0:
+                    long_df.at[idx, "전년비"] = (long_df.at[idx, "값"] / _s25.loc[_wk] - 1) * 100
+        long_df["전년비_표시"] = long_df["전년비"].apply(
+            lambda v: f"{'▲' if v >= 0 else '▼'}{abs(v):.1f}%" if pd.notna(v) else "-"
+        )
+
         _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
         _range = [_colors.get(d, "#000000") for d in _domain]
         # "25년(FF제외)"만 점선으로 그려서 실제값(25/26년)과 구분되게 함
@@ -3542,6 +3557,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
                     alt.Tooltip(_x_tooltip_field, title=_x_tooltip_title),
                     alt.Tooltip("구분:N", title="구분"),
                     alt.Tooltip("값:Q", title="값", format=",.0f"),
+                    alt.Tooltip("전년비_표시:N", title="전년비"),
                 ],
             )
             .properties(height=280)
