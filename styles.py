@@ -90,13 +90,14 @@ CUSTOM_CSS = """
 .summary-table td.v { font-weight: 600; }
 .summary-table td.d { text-align: left; }
 
-/* KPI 카드 높이 통일 */
-div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] {
-    height: 100%;
-}
-div[data-testid="stHorizontalBlock"] > div[data-testid="stVerticalBlockBorderWrapper"] > div {
-    height: 100%;
-}
+/* (예전엔 여기 'KPI 카드 높이 통일' 규칙이 있었는데, 지금 KPI 카드는 전부
+   st.markdown() raw HTML(<div style='background:#fff;...')로 그려지고 있어서
+   해당 규칙이 적용될 대상이 없는 죽은 코드였음. 대신 st.expander/
+   st.container(border=True)를 쓰는 다른 곳(예: 인사이트 카드)에 의도치 않게
+   걸려서 버튼 높이가 강제로 눌리는 부작용만 일으키고 있어서 완전히 제거함.
+   나중에 실제로 st.container(border=True) 기반 카드를 새로 만들어서 높이를
+   맞추고 싶으면, 그 카드에만 적용되는 별도의 클래스/컨테이너 key를 지정해서
+   범위를 좁힌 선택자로 다시 추가하는 걸 추천. */
 
 /* 모든 필터 selectbox/date_input 폭 제한 (사이드바 제외, 본문 전체 적용) */
 div[data-testid="stMain"] div[data-testid="stSelectbox"],
