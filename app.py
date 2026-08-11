@@ -2207,7 +2207,11 @@ if side["page"].startswith("1"):
             with col_ey:
                 show_ep_yoy = st.checkbox("전년 비교선 표시", value=True, key="ep_yoy_cb")
             _ep_date_start = _dt.date(_ep_latest_year, 1, 1)
-            _ep_date_end = last_date_ep.date()
+            # 절대 최신 날짜(last_date_ep)가 아니라 선택된 기준시점까지만 —
+            # 안 그러면 표/KPI 카드는 기준시점까지만 보여주는데 이 차트만 그 뒤 데이터까지
+            # 더 보여줘서 마지막 지점 값이 서로 달라지는 버그가 있었음(다른 차트 2곳에서
+            # 먼저 발견돼서 여기도 같은 패턴인지 점검함).
+            _ep_date_end = selected_period_date.date() if selected_period_date is not None else last_date_ep.date()
 
         ep_trend, ep_yoy = main_trend_data(df_ep_combo, ep_metric, unit, show_yoy=show_ep_yoy,
                                            current_year=_ep_latest_year,
