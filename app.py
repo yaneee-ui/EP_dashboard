@@ -588,8 +588,28 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     _df = chart_df.copy()
     _df.index.name = "날짜"
-    long_df = _df.reset_index().melt("날짜", var_name="구분", value_name="값")
+
+    # 금년(cols[0]) 라인 호버 시 전년비(%)도 같이 보이게 — 같은 날짜의 전년 비교 컬럼
+    # (cols[1], "(전년)"이 붙은 컬럼)과 비교해서 미리 계산해둔다. melt 대상 컬럼(cols)에
+    # 섞이지 않도록, 계산은 여기서 다 끝내고 결과(딕셔너리)만 남긴다.
+    _yoy_col = cols[1] if len(cols) > 1 else None
+    _yoy_map = {}
+    if _yoy_col is not None:
+        _yoy_pct = (_df[cols[0]] / _df[_yoy_col] - 1) * 100
+        _yoy_map = _yoy_pct.to_dict()
+
+    long_df = _df[cols].reset_index().melt("날짜", var_name="구분", value_name="값")
     long_df = long_df.dropna(subset=["값"])
+
+    if _yoy_map:
+        long_df["전년비"] = long_df["날짜"].map(_yoy_map)
+        long_df["전년비_표시"] = long_df.apply(
+            lambda r: (f"{'▲' if r['전년비'] >= 0 else '▼'}{abs(r['전년비']):.1f}%"
+                       if r["구분"] == cols[0] and pd.notna(r["전년비"]) else "-"),
+            axis=1,
+        )
+    else:
+        long_df["전년비_표시"] = "-"
 
     # 전년 비교선의 툴팁 날짜를 실제 작년 날짜로 교체 (x축 위치는 올해 날짜 그대로 유지)
     long_df["_tooltip_date"] = long_df["날짜"]
@@ -649,6 +669,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
                 alt.Tooltip("_tooltip_date:T", title="날짜", format=_date_fmt),
                 alt.Tooltip("구분:N", title="구분"),
                 alt.Tooltip("값:Q", title="값", format=",.0f"),
+                alt.Tooltip("전년비_표시:N", title="전년비"),
             ],
         )
         .properties(height=height)
