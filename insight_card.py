@@ -190,10 +190,17 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
             -webkit-text-decoration: none !important;
             border-bottom: none !important;
         }
+        div[data-testid="stExpander"] div[data-testid="stButton"] button {
+            height: 2rem !important;
+            min-height: 2rem !important;
+            padding: 0.15rem 0.6rem !important;
+            line-height: 1.4 !important;
+        }
         div[data-testid="stExpander"] div[data-testid="stButton"] button p {
             white-space: nowrap !important;
             overflow: hidden !important;
             text-overflow: ellipsis !important;
+            font-size: 0.82rem !important;
         }
         </style>
         """,
