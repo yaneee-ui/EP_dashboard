@@ -199,105 +199,92 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     for sec in (extra_sections or []):
         _ai_payload_full.extend(sec.get("items", []))
 
-    # 카드 전체를 <div>로 감싼다 — st.markdown으로 연 태그만 찍고, 안에서 st.columns 등을
-    # 실행한 뒤, 맨 마지막에 닫는 태그를 찍는 방식. Streamlit은 각 호출을 DOM에 순서대로
-    # 이어붙이기 때문에, 열린 <div>가 그 사이의 모든 네이티브 위젯(columns 포함)을 실제로
-    # 감싸게 된다 — st.container(border=True)는 테두리가 너무 옅어서 눈에 잘 안 띄었어서,
-    # 색/굵기를 직접 지정할 수 있는 이 방식으로 바꿈.
-    st.markdown(
-        "<div style='border:1.5px solid #d1d5db;border-radius:14px;padding:18px 20px 14px;"
-        "margin-top:10px;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,0.04);'>",
-        unsafe_allow_html=True,
-    )
-    st.markdown(
-        "<div style='display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px;'>"
-        "<b style='font-size:0.95rem;'>인사이트</b>"
-        "<span style='font-size:0.76rem;color:#9ca3af;'>좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)</span>"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-    _col_l, _col_r = st.columns(2)
+    # 카드 전체를 st.expander로 감싼다 — 접기/펼치기가 기본 내장돼 있고, 네이티브
+    # 컴포넌트라 테두리도 항상 안정적으로 그려진다 (예전엔 <div> 직접 열고 닫는
+    # 방식이었는데, 접기/펼치기 요청이 와서 이 참에 더 안정적인 방식으로 교체함).
+    with st.expander("📊 인사이트  ·  좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)", expanded=True):
+        _col_l, _col_r = st.columns(2)
 
-    with _col_l:
-        _l_title, _l_btn1, _l_btn2 = st.columns([3, 1.3, 1.3])
-        with _l_title:
-            st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>⚡ 자동 요약</b></div>", unsafe_allow_html=True)
-        with _l_btn1:
-            st.button("다시 생성", key=f"auto_regen::{memo_key}", use_container_width=True)
-        _copy_state_key = f"show_copy::{memo_key}"
-        with _l_btn2:
-            if st.button("복사", key=f"autocp::{memo_key}", use_container_width=True):
-                st.session_state[_copy_state_key] = not st.session_state.get(_copy_state_key, False)
-        st.markdown(
-            f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:8px 0 4px;"
-            f"font-size:0.82rem;line-height:1.7;color:#374151;min-height:120px;'>{_auto_html}</div>",
-            unsafe_allow_html=True,
-        )
-        if st.session_state.get(_copy_state_key):
-            # 네이티브 st.code는 자체 복사 아이콘이 내장돼 있어서(iframe 없이도 동작),
-            # 정렬 깨질 위험이 없다 — 오른쪽 위 아이콘을 눌러서 복사하면 됨.
-            st.code(generate_auto_summary_plain(auto_payload, period_label, extra_sections), language=None)
-
-    with _col_r:
-        _r_title, _r_btn1, _r_btn2 = st.columns([2.4, 1.3, 1.3])
-        with _r_title:
-            st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>🤖 AI 인사이트 · 메모</b></div>", unsafe_allow_html=True)
-        with _r_btn1:
-            _ai_clicked = st.button("AI 생성", key=f"ai_btn::{ai_cache_key}", use_container_width=True)
-
-        # AI 결과 캐싱(조회조건이 바뀌면 이전 결과를 자동 폐기) — 기존 로직과 동일한 패턴
-        _ai_result_key = f"ai_raw::{ai_cache_key}"
-        _ai_ctx_key = f"ai_ctx::{ai_cache_key}"
-        _ai_result = None
-        _ai_error = None
-        if _ai_clicked:
-            with st.spinner("AI 인사이트 생성 중..."):
-                try:
-                    _ai_result = generate_insights(_ai_payload_full, ai_context, ai_cache_key)
-                except Exception as e:
-                    _ai_error = str(e)
-                st.session_state[_ai_result_key] = _ai_result
-                st.session_state[_ai_ctx_key] = ai_context
-        elif st.session_state.get(_ai_ctx_key) == ai_context:
-            _ai_result = st.session_state.get(_ai_result_key)
-        else:
-            st.session_state.pop(_ai_result_key, None)
-            st.session_state.pop(_ai_ctx_key, None)
-
-        # 텍스트영역(메모)은 key로만 상태를 관리한다 — key가 있는 위젯은 한번 그려지고 나면
-        # value= 인자가 재실행 시 무시되고 st.session_state[key]가 우선하는 Streamlit 특성
-        # 때문에, 예전엔 별도 키(_memo_state_key)에만 AI 결과를 넣어서 실제 텍스트영역엔
-        # 절대 반영이 안 되던 버그가 있었음. 위젯의 '진짜' key를 직접 세팅해야 함.
-        _memo_widget_key = f"memo_ta::{memo_key}"
-        if _memo_widget_key not in st.session_state:
-            _saved = load_memo(memo_key)
-            st.session_state[_memo_widget_key] = _saved or ""
-        if _ai_clicked:
-            _ai_text = _extract_ai_text(_ai_result)
-            if _ai_text:
-                st.session_state[_memo_widget_key] = _ai_text
-            elif _ai_error:
-                st.error(f"AI 생성 중 오류가 발생했어요: {_ai_error}")
-            else:
-                st.warning("AI가 빈 결과를 반환했어요. 다시 시도해주세요.")
-
-        _memo_text = st.text_area(
-            "메모", key=_memo_widget_key,
-            height=120, label_visibility="collapsed",
-            placeholder="AI 생성을 누르거나 직접 작성하세요. 저장하면 다음에 열 때 그대로 남습니다.",
-        )
-        with _r_btn2:
-            _save_clicked = st.button("💾 저장", key=f"save_btn::{memo_key}", use_container_width=True)
-        if _save_clicked:
-            _ok, _msg = save_memo(memo_key, _memo_text)
-            (st.success if _ok else st.warning)(_msg)
-        _token, _repo = _github_conf()
-        if _token and _repo:
-            st.caption("🤖 **AI 생성**을 누르면 메모에 채워져요(직접 수정 가능). 메모는 GitHub 저장소에 저장돼요.")
-        else:
-            st.caption(
-                "⚠️ 메모 저장소가 아직 연결 안 됐어요 — secrets에 `GITHUB_TOKEN`·`GITHUB_REPO`를 "
-                "설정하면 메모가 계속 저장돼요. (지금은 새로고침하면 메모가 사라져요)"
+        with _col_l:
+            _l_title, _l_btn1, _l_btn2 = st.columns([3, 1.3, 1.3])
+            with _l_title:
+                st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>⚡ 자동 요약</b></div>", unsafe_allow_html=True)
+            with _l_btn1:
+                st.button("다시 생성", key=f"auto_regen::{memo_key}", use_container_width=True)
+            _copy_state_key = f"show_copy::{memo_key}"
+            with _l_btn2:
+                if st.button("복사", key=f"autocp::{memo_key}", use_container_width=True):
+                    st.session_state[_copy_state_key] = not st.session_state.get(_copy_state_key, False)
+            st.markdown(
+                f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:8px 0 4px;"
+                f"font-size:0.82rem;line-height:1.7;color:#374151;min-height:120px;'>{_auto_html}</div>",
+                unsafe_allow_html=True,
             )
-    st.markdown("</div>", unsafe_allow_html=True)
+            if st.session_state.get(_copy_state_key):
+                # 네이티브 st.code는 자체 복사 아이콘이 내장돼 있어서(iframe 없이도 동작),
+                # 정렬 깨질 위험이 없다 — 오른쪽 위 아이콘을 눌러서 복사하면 됨.
+                st.code(generate_auto_summary_plain(auto_payload, period_label, extra_sections), language=None)
+
+
+        with _col_r:
+            _r_title, _r_btn1, _r_btn2 = st.columns([2.4, 1.3, 1.3])
+            with _r_title:
+                st.markdown("<div style='padding-top:5px;'><b style='font-size:0.85rem;'>🤖 AI 인사이트 · 메모</b></div>", unsafe_allow_html=True)
+            with _r_btn1:
+                _ai_clicked = st.button("AI 생성", key=f"ai_btn::{ai_cache_key}", use_container_width=True)
+
+            # AI 결과 캐싱(조회조건이 바뀌면 이전 결과를 자동 폐기) — 기존 로직과 동일한 패턴
+            _ai_result_key = f"ai_raw::{ai_cache_key}"
+            _ai_ctx_key = f"ai_ctx::{ai_cache_key}"
+            _ai_result = None
+            _ai_error = None
+            if _ai_clicked:
+                with st.spinner("AI 인사이트 생성 중..."):
+                    try:
+                        _ai_result = generate_insights(_ai_payload_full, ai_context, ai_cache_key)
+                    except Exception as e:
+                        _ai_error = str(e)
+                    st.session_state[_ai_result_key] = _ai_result
+                    st.session_state[_ai_ctx_key] = ai_context
+            elif st.session_state.get(_ai_ctx_key) == ai_context:
+                _ai_result = st.session_state.get(_ai_result_key)
+            else:
+                st.session_state.pop(_ai_result_key, None)
+                st.session_state.pop(_ai_ctx_key, None)
+
+            # 텍스트영역(메모)은 key로만 상태를 관리한다 — key가 있는 위젯은 한번 그려지고 나면
+            # value= 인자가 재실행 시 무시되고 st.session_state[key]가 우선하는 Streamlit 특성
+            # 때문에, 예전엔 별도 키(_memo_state_key)에만 AI 결과를 넣어서 실제 텍스트영역엔
+            # 절대 반영이 안 되던 버그가 있었음. 위젯의 '진짜' key를 직접 세팅해야 함.
+            _memo_widget_key = f"memo_ta::{memo_key}"
+            if _memo_widget_key not in st.session_state:
+                _saved = load_memo(memo_key)
+                st.session_state[_memo_widget_key] = _saved or ""
+            if _ai_clicked:
+                _ai_text = _extract_ai_text(_ai_result)
+                if _ai_text:
+                    st.session_state[_memo_widget_key] = _ai_text
+                elif _ai_error:
+                    st.error(f"AI 생성 중 오류가 발생했어요: {_ai_error}")
+                else:
+                    st.warning("AI가 빈 결과를 반환했어요. 다시 시도해주세요.")
+
+            _memo_text = st.text_area(
+                "메모", key=_memo_widget_key,
+                height=120, label_visibility="collapsed",
+                placeholder="AI 생성을 누르거나 직접 작성하세요. 저장하면 다음에 열 때 그대로 남습니다.",
+            )
+            with _r_btn2:
+                _save_clicked = st.button("💾 저장", key=f"save_btn::{memo_key}", use_container_width=True)
+            if _save_clicked:
+                _ok, _msg = save_memo(memo_key, _memo_text)
+                (st.success if _ok else st.warning)(_msg)
+            _token, _repo = _github_conf()
+            if _token and _repo:
+                st.caption("🤖 **AI 생성**을 누르면 메모에 채워져요(직접 수정 가능). 메모는 GitHub 저장소에 저장돼요.")
+            else:
+                st.caption(
+                    "⚠️ 메모 저장소가 아직 연결 안 됐어요 — secrets에 `GITHUB_TOKEN`·`GITHUB_REPO`를 "
+                    "설정하면 메모가 계속 저장돼요. (지금은 새로고침하면 메모가 사라져요)"
+                )
     return _ai_result
