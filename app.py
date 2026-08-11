@@ -1868,6 +1868,11 @@ if side["page"].startswith("1"):
         # 올해만 추출
         latest_year = int(tr_full.index.max().year)
         tr_series = tr_full[tr_full.index.year == latest_year]
+        # 표/KPI 카드는 selected_period_date까지만 자르는데 이 차트는 최신 연도 데이터를
+        # 끝까지 다 보여주고 있어서 표랑 차트 마지막 지점이 다른 값을 가리키는 버그가
+        # 있었음(2번 페이지에서 먼저 발견됨) — 여기도 동일하게 자른다.
+        if selected_period_date is not None and not tr_series.empty:
+            tr_series = tr_series[tr_series.index <= selected_period_date]
 
         # 일별이면 최근 30일 + 기간 조정
         if unit == "일별":
@@ -2504,6 +2509,11 @@ if side["page"].startswith("2"):
 
             latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
             cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
+            # 표(카테고리 실적 요약 표)/KPI 카드는 selected_period_date까지만 자르는데,
+            # 이 차트는 그걸 안 하고 최신 연도 데이터를 끝까지 다 보여주고 있어서 표랑 차트
+            # 마지막 지점이 다른 값을 가리키는 버그가 있었음 — 여기서도 동일하게 자른다.
+            if selected_period_date is not None and not cat_series.empty:
+                cat_series = cat_series[cat_series.index <= selected_period_date]
 
             if unit == "일별" and not cat_series.empty:
                 _cat_max_d = cat_series.index.max().date()
