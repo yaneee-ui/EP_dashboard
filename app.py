@@ -137,6 +137,38 @@ def _reset_date_range(_state_key, _value):
     st.session_state[_state_key] = _value
 
 
+def render_week_range_filter(series, key_prefix, col_slider, col_reset, default_weeks=12):
+    """'주별' 조회 시 차트 영역에 'N월 N주차' 라벨 기반 주차 범위 슬라이더를 그린다.
+    (7/8/9번 페이지에서 쓰던 것과 동일한 라벨 방식을 1/2번 페이지 차트에도 적용)
+    '일별'의 날짜 range picker와 같은 자리에, 같은 3분할 레이아웃(슬라이더|최근으로|전년비교선)을
+    유지하기 위해 컬럼을 호출부에서 미리 만들어 넘겨받는다(컬럼 안에 컬럼을 또 만들면 레이아웃이
+    불균형해지는 문제가 있어서).
+    series: 이미 '주별'로 리샘플된(Monday 라벨) 시리즈. 반환값: 선택 범위로 잘라진 시리즈."""
+    if series.empty:
+        return series
+    labels = [f"{d.month}월 {week_of_month(d)}주차" for d in series.index]
+    n = len(labels)
+    default_start_idx = max(0, n - default_weeks)
+    _range_key = f"{key_prefix}_wkrange"
+    with col_slider:
+        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>주차 범위</div>", unsafe_allow_html=True)
+        sel_labels = st.select_slider(
+            "주차 범위", options=labels, value=(labels[default_start_idx], labels[-1]),
+            label_visibility="collapsed", key=_range_key,
+        )
+    with col_reset:
+        st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
+        st.button(
+            "🔄 최근으로", key=f"{key_prefix}_wkrange_reset", use_container_width=True,
+            on_click=_reset_date_range, args=(_range_key, (labels[default_start_idx], labels[-1])),
+        )
+    start_idx = labels.index(sel_labels[0])
+    end_idx = labels.index(sel_labels[1])
+    if start_idx > end_idx:
+        start_idx, end_idx = end_idx, start_idx
+    return series.iloc[start_idx:end_idx + 1]
+
+
 def aggregate_traffic(df, bpus, member="전체"):
     """여러 BPU의 트래픽 데이터를 합산. CR/객단가는 재계산."""
     sub = df[(df["BPU"].isin(bpus)) & (df["회원구분"] == member)]
@@ -1894,9 +1926,16 @@ if side["page"].startswith("1"):
             if isinstance(dr, tuple) and len(dr) == 2:
                 tr_series = tr_series[(tr_series.index >= pd.Timestamp(dr[0])) & (tr_series.index <= pd.Timestamp(dr[1]))]
         else:
-            _sp1, _sp2, col_y = st.columns([3, 1, 1])
-            with col_y:
-                show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
+            if unit == "주별":
+                col_wk, col_reset, col_y = st.columns([3, 1, 1])
+                tr_series = render_week_range_filter(tr_series, f"tr_{bpu}_{segment}", col_wk, col_reset)
+                with col_y:
+                    st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
+                    show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
+            else:
+                _sp1, _sp2, col_y = st.columns([3, 1, 1])
+                with col_y:
+                    show_tr_yoy = st.checkbox("전년 비교선 표시", value=True, key="tr_yoy")
 
         chart_df = pd.DataFrame({tr_metric: tr_series})
 
@@ -2544,9 +2583,18 @@ if side["page"].startswith("2"):
                 if isinstance(cat_dr, tuple) and len(cat_dr) == 2:
                     cat_series = cat_series[(cat_series.index >= pd.Timestamp(cat_dr[0])) & (cat_series.index <= pd.Timestamp(cat_dr[1]))]
             else:
-                _csp1, _csp2, col_cy = st.columns([3, 1, 1])
-                with col_cy:
-                    show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
+                if unit == "주별":
+                    col_wk, col_reset, col_cy = st.columns([3, 1, 1])
+                    cat_series = render_week_range_filter(
+                        cat_series, f"cat_{bpu}_{selected_cat}_{selected_brand}", col_wk, col_reset
+                    )
+                    with col_cy:
+                        st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
+                        show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
+                else:
+                    _csp1, _csp2, col_cy = st.columns([3, 1, 1])
+                    with col_cy:
+                        show_cat_yoy = st.checkbox("전년 비교선 표시", value=True, key="cat_yoy")
 
             cat_chart_df = pd.DataFrame({cat_metric: cat_series})
 
