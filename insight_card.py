@@ -230,7 +230,7 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
                 if st.button("복사", key=f"autocp::{memo_key}", use_container_width=True):
                     st.session_state[_copy_state_key] = not st.session_state.get(_copy_state_key, False)
             st.markdown(
-                f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:8px 0 4px;"
+                f"<div style='background:#f9fafb;border-radius:8px;padding:12px 14px;margin:18px 0 4px;"
                 f"font-size:0.82rem;line-height:1.7;color:#374151;min-height:120px;'>{_auto_html}</div>",
                 unsafe_allow_html=True,
             )
@@ -282,6 +282,7 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
                 else:
                     st.warning("AI가 빈 결과를 반환했어요. 다시 시도해주세요.")
 
+            st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
             _memo_text = st.text_area(
                 "메모", key=_memo_widget_key,
                 height=120, label_visibility="collapsed",
