@@ -26,6 +26,7 @@ from utils import (
     resample_series, make_period_label, compute_kpi_deltas, week_of_month,
     format_value, format_delta_html,
 )
+from utils import _match_mean, _partial_last_period
 from styles import CUSTOM_CSS
 from insight_card import render_insight_card
 
@@ -1966,8 +1967,16 @@ if side["page"].startswith("1"):
                 prev_dates = tr_series.index - pd.Timedelta(days=364)
             yoy_vals = []
             yoy_actual = []
-            for pd_date in prev_dates:
-                if pd_date in tr_full.index:
+            # 마지막 지점이 진행 중인(부분) 주/월이면, 표(KPI카드)와 똑같이 '동요일 매칭
+            # 평균'으로 계산한다 — 안 그러면 '이번 주 며칠치'를 '작년 그 주 전체 평균'과
+            # 비교하는 격이라 차트 비교선이 표랑 다른 값을 보여주는 문제가 있었음.
+            _is_partial, _cur_days, _ = _partial_last_period(s_raw, unit)
+            for i, pd_date in enumerate(prev_dates):
+                if _is_partial and i == len(prev_dates) - 1 and _cur_days is not None:
+                    _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cur_days])
+                    yoy_vals.append(_matched)
+                    yoy_actual.append(pd_date)
+                elif pd_date in tr_full.index:
                     yoy_vals.append(tr_full.loc[pd_date])
                     yoy_actual.append(pd_date)
                 else:
@@ -2623,8 +2632,15 @@ if side["page"].startswith("2"):
                     prev_dates = cat_series.index - pd.Timedelta(days=364)
                 yoy_vals = []
                 yoy_actual = []
-                for pd_date in prev_dates:
-                    if pd_date in cat_full.index:
+                # 마지막 지점이 진행 중인(부분) 주/월이면 표(카테고리 실적 요약 표)와 동일하게
+                # '동요일 매칭 평균'으로 계산 (이유는 페이지1의 동일 로직 주석 참고)
+                _cat_is_partial, _cat_cur_days, _ = _partial_last_period(s_raw, unit)
+                for i, pd_date in enumerate(prev_dates):
+                    if _cat_is_partial and i == len(prev_dates) - 1 and _cat_cur_days is not None:
+                        _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cat_cur_days])
+                        yoy_vals.append(_matched)
+                        yoy_actual.append(pd_date)
+                    elif pd_date in cat_full.index:
                         yoy_vals.append(cat_full.loc[pd_date])
                         yoy_actual.append(pd_date)
                     else:
