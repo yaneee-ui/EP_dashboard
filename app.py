@@ -626,6 +626,10 @@ DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
 ]
 
+# 전일비 이 비율(%) 이상 급등/급락하면 차트에 자동으로 이상치 마커를 찍는다.
+# 사람이 직접 등록하는 DASHBOARD_EVENTS와 달리, 매번 데이터만 보고 자동으로 계산된다.
+ANOMALY_THRESHOLD_PCT = 20
+
 
 def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
@@ -696,6 +700,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     _is_monthly = unit in ("월별", "월마감")
     _event_rows = []
+    _anomaly_rows = []
     if _is_monthly:
         x_enc = alt.X(
             "날짜:T", title=None, timeUnit="yearmonth",
@@ -729,6 +734,21 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         for ev_date, ev_label in DASHBOARD_EVENTS:
             if ev_date.normalize() in set(pd.DatetimeIndex(_uniq_dates).normalize()):
                 _event_rows.append({"_date_label": ev_date.strftime("%m/%d"), "이벤트": ev_label})
+
+        # 전일비/전주비 급등/급락 자동 감지 — 금년(cols[0]) 라인 기준. 사람이 등록한
+        # 이벤트와는 별도 목록(_anomaly_rows)으로 관리해서, 차트에서 다른 색/모양으로
+        # 구분해 보여준다. (일별/주별 둘 다 여기로 오므로, 라벨만 단위에 맞게 바꾼다)
+        _anomaly_prev_label = "전주비" if unit == "주별" else "전일비"
+        _anomaly_rows = []
+        _cur_series_daily = _df[_df.columns[0]].sort_index()  # _df는 원본 컬럼명 그대로(cols는 이미 표시 라벨로 바뀐 뒤)
+        _pct_change = _cur_series_daily.pct_change() * 100
+        for _d, _chg in _pct_change.items():
+            if pd.notna(_chg) and abs(_chg) >= ANOMALY_THRESHOLD_PCT and _d in set(_uniq_dates):
+                _dir = "급등" if _chg > 0 else "급락"
+                _anomaly_rows.append({
+                    "_date_label": pd.Timestamp(_d).strftime("%m/%d"),
+                    "이상치": f"{_anomaly_prev_label} {_dir} {abs(_chg):.0f}%",
+                })
 
     chart = (
         alt.Chart(long_df)
@@ -766,12 +786,29 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
             )
             chart = alt.layer(chart, _ev_marker).resolve_scale(x="shared", y="shared")
 
+    if _anomaly_rows:
+        _an_df = pd.DataFrame(_anomaly_rows)
+        _main_vals2 = long_df[long_df["구분"] == cols[0]][["_date_label", "값"]]
+        _an_df = _an_df.merge(_main_vals2, on="_date_label", how="left").dropna(subset=["값"])
+        if not _an_df.empty:
+            _an_marker = alt.Chart(_an_df).mark_point(
+                shape="diamond", size=90, color="#f59e0b", filled=True, opacity=0.9,
+            ).encode(
+                x=alt.X("_date_label:O", sort=_label_order),
+                y=alt.Y("값:Q"),
+                tooltip=[alt.Tooltip("_date_label:N", title="날짜"), alt.Tooltip("이상치:N", title="이상치")],
+            )
+            chart = alt.layer(chart, _an_marker).resolve_scale(x="shared", y="shared")
+
     # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
     st.altair_chart(chart, use_container_width=True)
 
     if _event_rows:
         _ev_caption = "  ·  ".join(f"📌 {r['_date_label']} {r['이벤트']}" for r in _event_rows)
         st.caption(_ev_caption)
+    if _anomaly_rows:
+        _an_caption = "  ·  ".join(f"🔶 {r['_date_label']} {r['이상치']}" for r in _anomaly_rows)
+        st.caption(f"이상치 자동 감지({ANOMALY_THRESHOLD_PCT}% 이상 변동): {_an_caption}")
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
@@ -1251,6 +1288,7 @@ with _sticky:
         "3": "📋 누적 데이터", "4": "📋 누적 데이터 (카테고리)",
         "5": "🎟️ 쿠폰 비용 분석", "6": "📑 주간보고용",
         "7": "📅 전체 실적 (주차별)", "8": "📅 회원 실적 (주차별)", "9": "📅 신규 실적 (주차별)",
+        "10": "🧭 종합 요약",
     }
 
     # ========================================================
@@ -1511,6 +1549,16 @@ with _sticky:
     # 여기서는 간단한 제목만 표시
     # ========================================================
     elif _page_num == "6":
+        st.markdown(
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            unsafe_allow_html=True,
+        )
+
+    # ========================================================
+    # 페이지 10: 종합 요약 — 별도 필터 없이 제목만 (페이지 자체가 최신일 기준 요약이라
+    # 복잡한 기간 선택 UI가 필요 없음)
+    # ========================================================
+    elif _page_num == "10":
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -1798,7 +1846,7 @@ components.html(
 
 
 
-if side["page"].startswith("1"):
+if side["page"].startswith("1."):
     # 핏플랍(FF) 제외 — 2번 페이지와 체크박스를 공유. df_traffic엔 브랜드 정보가 없어서
     # 카테고리 원본(df_category)에서 FF 기여분을 가져와 빼는 방식 (exclude_ff_from_traffic 참고)
     if _ff_exclude:
@@ -2422,7 +2470,7 @@ if side["page"].startswith("1"):
         st.markdown(ep_summary_html, unsafe_allow_html=True)
 
 
-if side["page"].startswith("2"):
+if side["page"].startswith("2."):
     # ============================================================
     # 카테고리별 실적 (카테고리 → 브랜드 드릴다운, 전년비교 가능)
     # ============================================================
@@ -2885,7 +2933,7 @@ if side["page"].startswith("2"):
 # ============================================================
 # 페이지 3: 누적 데이터 (EP실적 + EP채널 합쳐서 기간별 표)
 # ============================================================
-if side["page"].startswith("3"):
+if side["page"].startswith("3."):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
@@ -3020,7 +3068,7 @@ if side["page"].startswith("3"):
 # ============================================================
 # 페이지 4: 누적 데이터 (카테고리)
 # ============================================================
-if side["page"].startswith("4"):
+if side["page"].startswith("4."):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
@@ -3123,7 +3171,7 @@ if side["page"].startswith("4"):
 # ============================================================
 # 페이지 5: 쿠폰 비용 분석
 # ============================================================
-if side["page"].startswith("5"):
+if side["page"].startswith("5."):
     st.markdown("---")
 
     _has_daily = not df_coupon_daily.empty
@@ -3530,7 +3578,7 @@ if side["page"].startswith("5"):
 # ============================================================
 # 페이지 6: 주간보고용 (전년동요일 요약 엑셀 다운로드)
 # ============================================================
-if side["page"].startswith("6"):
+if side["page"].startswith("6."):
     st.markdown("---")
     st.markdown("### 📑 주간보고용 · 전년동요일 요약")
 
@@ -3866,11 +3914,204 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     _render_section(f"{traffic_segment} 거래액", "거래액", traffic_segment, show_ff=True)
 
 
-if side["page"].startswith("7"):
+if side["page"].startswith("7."):
     _render_weekly_segment_page("전체 실적", "전체")
 
-if side["page"].startswith("8"):
+if side["page"].startswith("8."):
     _render_weekly_segment_page("회원 실적", "회원")
 
-if side["page"].startswith("9"):
+if side["page"].startswith("9."):
     _render_weekly_segment_page("신규 실적", "신규")
+
+
+# ============================================================
+# 페이지 10: 종합 요약 — 여기저기 흩어진 핵심 지표를 한 화면에 모음
+# (A: 핵심 지표 한눈에 + C: 카테고리×브랜드 피벗 테이블)
+# ============================================================
+if side["page"].startswith("10"):
+    st.markdown("### 🧭 종합 요약")
+    st.caption("여러 페이지에 흩어진 핵심 지표를 한 화면에 모았어요 — 상세 분석·필터링은 각 페이지에서 확인하세요.")
+
+    if df_traffic.empty:
+        st.info("데이터가 없습니다. 사이드바에서 데이터를 업로드해주세요.")
+    else:
+        # 이 페이지는 요약용이라 별도 기간 필터 없이, 데이터의 절대 최신 날짜를 기준으로 한다.
+        _sum_ref = df_traffic["날짜"].max()
+        st.caption(f"📅 기준: {_sum_ref.strftime('%Y-%m-%d')} (데이터 최신일) · 조회단위: {unit}")
+
+        # ── 섹션 1: 핵심 지표 (전체 BPU) ──
+        st.markdown("#### 📊 핵심 지표 (전체)")
+        _sum_bpu_rows, _sum_cfg, _ = compute_bpu_comparison_rows(df_traffic, unit, _sum_ref)
+        _sum_total_metrics = {r["metric_label"]: r for r in _sum_bpu_rows if r["bpu"] == "Total" and r["stats"]}
+        _sum_metric_order = ["EP UV", "거래액(순결제)", "구매객수", "구매전환율(%)", "객단가"]
+        _sum_kpi_cols = st.columns(len(_sum_metric_order))
+        for _i, _mlabel in enumerate(_sum_metric_order):
+            with _sum_kpi_cols[_i]:
+                _r = _sum_total_metrics.get(_mlabel)
+                if _r is None:
+                    st.markdown(f"<div style='color:#9ca3af;font-size:0.8rem;'>{_mlabel}: -</div>", unsafe_allow_html=True)
+                    continue
+                _stats = _r["stats"]
+                _is_pct = _r["is_pct"]
+                _val_str = f"{_stats['current']:.1f}%" if _is_pct else f"{_stats['current']:,.0f}"
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 14px;min-height:118px;'>"
+                    f"<div style='color:#6b7280;font-size:0.76rem;'>{_mlabel}</div>"
+                    f"<div style='font-size:1.15rem;font-weight:700;color:#111827;'>{_val_str}</div>"
+                    f"<div style='font-size:0.72rem;margin-top:4px;'>"
+                    f"{_sum_cfg['prev_label']} {format_delta_html(_stats.get('prev_delta'))}<br/>"
+                    f"{_sum_cfg['yoy_label']} {format_delta_html(_stats.get('yoy_delta'))}"
+                    f"</div></div>", unsafe_allow_html=True,
+                )
+
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+        # ── 섹션 2: BPU별 거래액 미니 비교 ──
+        st.markdown("#### 🏢 사업부(BPU)별 거래액")
+        _sum_bpu_gmv = {r["bpu"]: r for r in _sum_bpu_rows if r["metric_label"] == "거래액(순결제)" and r["stats"]}
+        _sum_bpu_cols = st.columns(4)
+        for _i, _bpu in enumerate(["e-영업1", "e-영업2", "e-영업3", "e-영업4"]):
+            with _sum_bpu_cols[_i]:
+                _r = _sum_bpu_gmv.get(_bpu)
+                if _r is None:
+                    st.markdown(f"<div style='color:#9ca3af;'>{_bpu}: -</div>", unsafe_allow_html=True)
+                    continue
+                _stats = _r["stats"]
+                st.markdown(
+                    f"<div style='background:#f9fafb;border-radius:8px;padding:10px 12px;'>"
+                    f"<div style='font-size:0.74rem;color:#6b7280;'>{_bpu}</div>"
+                    f"<div style='font-size:1.0rem;font-weight:700;'>{_stats['current']:,.0f}</div>"
+                    f"<div style='font-size:0.7rem;'>{_sum_cfg['yoy_label']} {format_delta_html(_stats.get('yoy_delta'))}</div>"
+                    f"</div>", unsafe_allow_html=True,
+                )
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── 섹션 3: 카테고리 하이라이트 (거래액 전년비 최대상승/하락, 모든 BPU 합산) ──
+        st.markdown("#### 📈 카테고리 하이라이트 (거래액, 전 사업부 합산)")
+        if df_category.empty:
+            st.info("카테고리 데이터가 없습니다.")
+        else:
+            _sum_cat_base = df_category[
+                (df_category["카테고리"] != "전체") & (df_category["브랜드"] == "전체")
+                & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
+            ]
+            _sum_cat_daily = _sum_cat_base.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+            _sum_cat_rows = []
+            for _cat_name, _g in _sum_cat_daily.groupby("카테고리"):
+                _s = _g.set_index("날짜")["거래액"].sort_index()
+                _series = _s.resample(UNIT_CONFIG[unit]["rule"]).agg("mean")
+                if unit == "주별":
+                    _series.index = _series.index - pd.Timedelta(days=6)
+                _series = _series[_series.index <= _sum_ref]
+                _raw = _s[_s.index <= raw_cutoff_date(_sum_ref, unit)]
+                _stats = compute_kpi_deltas(_series, unit, raw_daily=_raw)
+                if _stats is None or not _stats["current"]:
+                    continue
+                _sum_cat_rows.append({"카테고리": _cat_name, "거래액": _stats["current"], "전년비": _stats.get("yoy_delta")})
+
+            _sum_cat_movers = [r for r in _sum_cat_rows if r["전년비"] is not None]
+            if len(_sum_cat_movers) >= 2:
+                _sum_cat_movers.sort(key=lambda r: r["전년비"], reverse=True)
+                _hl_cols = st.columns(4)
+                _highlights = (
+                    [(_sum_cat_movers[0], "최대 상승", "#16a34a"), (_sum_cat_movers[1], "2위 상승", "#16a34a")]
+                    if len(_sum_cat_movers) >= 4 else [(_sum_cat_movers[0], "최대 상승", "#16a34a")]
+                )
+                _highlights += (
+                    [(_sum_cat_movers[-1], "최대 하락", "#dc2626"), (_sum_cat_movers[-2], "2위 하락", "#dc2626")]
+                    if len(_sum_cat_movers) >= 4 else [(_sum_cat_movers[-1], "최대 하락", "#dc2626")]
+                )
+                for _i, (_r, _tag, _color) in enumerate(_highlights[:4]):
+                    with _hl_cols[_i]:
+                        st.markdown(
+                            f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'>"
+                            f"<div style='font-size:0.72rem;color:{_color};font-weight:600;'>{_tag}</div>"
+                            f"<div style='font-size:0.95rem;font-weight:700;'>{_r['카테고리']}</div>"
+                            f"<div style='font-size:0.78rem;'>{_r['거래액']:,.0f} · {format_delta_html(_r['전년비'])}</div>"
+                            f"</div>", unsafe_allow_html=True,
+                        )
+            else:
+                st.caption("전년비 계산 가능한 카테고리가 부족해요.")
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── 섹션 4: 카테고리 × 브랜드 피벗 테이블 (최근 30일 거래액, 전 사업부 합산) ──
+        st.markdown("#### 🗂️ 카테고리 × 브랜드 피벗 (최근 30일 거래액 합계, 전 사업부 합산)")
+        if df_category.empty:
+            st.info("카테고리 데이터가 없습니다.")
+        else:
+            _piv_start = _sum_ref - pd.Timedelta(days=29)
+            _piv_base = df_category[
+                (df_category["카테고리"] != "전체") & (df_category["브랜드"] != "전체")
+                & (df_category["날짜"] >= _piv_start) & (df_category["날짜"] <= _sum_ref)
+                & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
+            ]
+            if _piv_base.empty:
+                st.info("최근 30일 카테고리×브랜드 데이터가 없습니다.")
+            else:
+                _piv_sum = _piv_base.groupby(["카테고리", "브랜드"], as_index=False)["거래액"].sum()
+                # 브랜드가 너무 많으면(보통 60개 이상) 표가 못 읽을 정도로 커지니, 거래액
+                # 상위 N개 브랜드만 컬럼으로 남긴다.
+                _top_n_brands = 12
+                _brand_totals = _piv_sum.groupby("브랜드")["거래액"].sum().sort_values(ascending=False)
+                _top_brands = _brand_totals.head(_top_n_brands).index.tolist()
+                _piv_sum_top = _piv_sum[_piv_sum["브랜드"].isin(_top_brands)]
+                _pivot_tbl = _piv_sum_top.pivot_table(
+                    index="카테고리", columns="브랜드", values="거래액", aggfunc="sum", fill_value=0,
+                )
+                _pivot_tbl = _pivot_tbl[[b for b in _top_brands if b in _pivot_tbl.columns]]  # 거래액 큰 순으로 컬럼 정렬
+                _pivot_tbl["합계"] = _pivot_tbl.sum(axis=1)
+                _pivot_tbl = _pivot_tbl.sort_values("합계", ascending=False)
+                _pivot_tbl = _pivot_tbl.rename(columns={b: brand_label(b) for b in _pivot_tbl.columns if b != "합계"})
+
+                _styled = _pivot_tbl.style.format("{:,.0f}").background_gradient(
+                    cmap="Blues", subset=[c for c in _pivot_tbl.columns if c != "합계"],
+                )
+                st.dataframe(_styled, use_container_width=True, height=420)
+                st.caption(f"거래액 상위 {_top_n_brands}개 브랜드만 표시했어요 (전체 {len(_brand_totals)}개 브랜드 중).")
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # ── 섹션 5: 쿠폰 비용 스냅샷 ──
+        st.markdown("#### 🎟️ 쿠폰 비용 (이번 달)")
+        if df_coupon_daily.empty:
+            st.info("쿠폰 데이터가 없습니다.")
+        else:
+            _cp_month_start = _sum_ref.replace(day=1)
+            _cp_this_month = df_coupon_daily[
+                (df_coupon_daily["날짜"] >= _cp_month_start) & (df_coupon_daily["날짜"] <= _sum_ref)
+            ]
+            _cp_total = _cp_this_month["쿠폰할인"].sum()
+            _cp_gmv_month = df_traffic[
+                (df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")
+                & (df_traffic["날짜"] >= _cp_month_start) & (df_traffic["날짜"] <= _sum_ref)
+            ]["거래액"].sum()
+            _cp_rate = (_cp_total / _cp_gmv_month * 100) if _cp_gmv_month else None
+            _cp_cols = st.columns(3)
+            with _cp_cols[0]:
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'>"
+                    f"<div style='font-size:0.76rem;color:#6b7280;'>쿠폰할인(이번달 누계)</div>"
+                    f"<div style='font-size:1.05rem;font-weight:700;'>{_cp_total:,.0f}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with _cp_cols[1]:
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'>"
+                    f"<div style='font-size:0.76rem;color:#6b7280;'>거래액(이번달 누계)</div>"
+                    f"<div style='font-size:1.05rem;font-weight:700;'>{_cp_gmv_month:,.0f}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            with _cp_cols[2]:
+                _rate_str = f"{_cp_rate:.2f}%" if _cp_rate is not None else "-"
+                st.markdown(
+                    f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'>"
+                    f"<div style='font-size:0.76rem;color:#6b7280;'>비용률</div>"
+                    f"<div style='font-size:1.05rem;font-weight:700;color:#7c3aed;'>{_rate_str}</div></div>",
+                    unsafe_allow_html=True,
+                )
+            st.caption("자세한 쿠폰 분석은 5번 페이지에서 확인하세요.")
