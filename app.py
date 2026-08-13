@@ -1923,6 +1923,19 @@ if side["page"].startswith("1"):
         # 있었음(2번 페이지에서 먼저 발견됨) — 여기도 동일하게 자른다.
         if selected_period_date is not None and not tr_series.empty:
             tr_series = tr_series[tr_series.index <= selected_period_date]
+            # 위에서 tr_full은 '전체 원본'을 먼저 리샘플(평균)한 뒤에 잘랐기 때문에, 원본이
+            # 기준시점보다 더 뒤(예: 8/12)까지 있으면 마지막으로 남은 주(예: 8/10 라벨)의
+            # 평균값 자체에 기준시점 이후 날짜(8/11,8/12)가 이미 섞여 들어가 있을 수 있다.
+            # KPI 카드는 raw_daily를 기준시점까지 먼저 잘라서 이 문제가 없는데 차트만
+            # 걸려있었음 — 마지막 지점이 진행 중인(부분) 기간이면 실제 원본을 기준시점까지
+            # 자른 값으로 다시 계산해서 덮어쓴다.
+            _tr_is_partial, _tr_cur_days, _ = _partial_last_period(
+                s_raw[s_raw.index <= selected_period_date], unit
+            )
+            if _tr_is_partial and _tr_cur_days is not None and len(_tr_cur_days) > 0 and not tr_series.empty:
+                _corrected = s_raw.loc[_tr_cur_days].mean()
+                if pd.notna(_corrected):
+                    tr_series.iloc[-1] = _corrected
 
         # 일별이면 최근 30일 + 기간 조정
         if unit == "일별":
@@ -1970,7 +1983,9 @@ if side["page"].startswith("1"):
             # 마지막 지점이 진행 중인(부분) 주/월이면, 표(KPI카드)와 똑같이 '동요일 매칭
             # 평균'으로 계산한다 — 안 그러면 '이번 주 며칠치'를 '작년 그 주 전체 평균'과
             # 비교하는 격이라 차트 비교선이 표랑 다른 값을 보여주는 문제가 있었음.
-            _is_partial, _cur_days, _ = _partial_last_period(s_raw, unit)
+            _is_partial, _cur_days, _ = _partial_last_period(
+                s_raw[s_raw.index <= selected_period_date] if selected_period_date is not None else s_raw, unit
+            )
             for i, pd_date in enumerate(prev_dates):
                 if _is_partial and i == len(prev_dates) - 1 and _cur_days is not None:
                     _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cur_days])
@@ -2583,6 +2598,17 @@ if side["page"].startswith("2"):
             # 마지막 지점이 다른 값을 가리키는 버그가 있었음 — 여기서도 동일하게 자른다.
             if selected_period_date is not None and not cat_series.empty:
                 cat_series = cat_series[cat_series.index <= selected_period_date]
+                # 마지막 지점이 진행 중인(부분) 주/월이면, 원본이 기준시점보다 더 뒤까지
+                # 있을 때 그 평균값에 기준시점 이후 날짜가 섞여 들어가 있을 수 있다(리샘플을
+                # 먼저 하고 나중에 자르는 순서라서). KPI 카드처럼 실제 원본을 기준시점까지
+                # 자른 값으로 마지막 지점을 다시 계산해서 덮어쓴다.
+                _cat_is_partial2, _cat_cur_days2, _ = _partial_last_period(
+                    s_raw[s_raw.index <= selected_period_date], unit
+                )
+                if _cat_is_partial2 and _cat_cur_days2 is not None and len(_cat_cur_days2) > 0 and not cat_series.empty:
+                    _corrected2 = s_raw.loc[_cat_cur_days2].mean()
+                    if pd.notna(_corrected2):
+                        cat_series.iloc[-1] = _corrected2
 
             if unit == "일별" and not cat_series.empty:
                 _cat_max_d = cat_series.index.max().date()
@@ -2634,7 +2660,9 @@ if side["page"].startswith("2"):
                 yoy_actual = []
                 # 마지막 지점이 진행 중인(부분) 주/월이면 표(카테고리 실적 요약 표)와 동일하게
                 # '동요일 매칭 평균'으로 계산 (이유는 페이지1의 동일 로직 주석 참고)
-                _cat_is_partial, _cat_cur_days, _ = _partial_last_period(s_raw, unit)
+                _cat_is_partial, _cat_cur_days, _ = _partial_last_period(
+                    s_raw[s_raw.index <= selected_period_date] if selected_period_date is not None else s_raw, unit
+                )
                 for i, pd_date in enumerate(prev_dates):
                     if _cat_is_partial and i == len(prev_dates) - 1 and _cat_cur_days is not None:
                         _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cat_cur_days])
