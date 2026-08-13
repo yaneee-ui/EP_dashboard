@@ -23,7 +23,7 @@ from charts import main_trend_data
 from comparison_table import render_summary_table_html
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
-    resample_series, make_period_label, compute_kpi_deltas, week_of_month,
+    resample_series, make_period_label, compute_kpi_deltas, week_of_month, raw_cutoff_date,
     format_value, format_delta_html,
 )
 from utils import _match_mean, _partial_last_period
@@ -463,7 +463,7 @@ def compute_bpu_comparison_rows(df_traffic, unit="일별", selected_period_date=
         _s_raw = s
         if selected_period_date is not None and not series.empty:
             series = series[series.index <= selected_period_date]
-            _s_raw = s[s.index <= selected_period_date]
+            _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)]
         return series, _s_raw
 
     rows = []
@@ -546,7 +546,7 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
             series = series.iloc[:-1]
         if not series.empty:
             series = series[series.index <= selected_period_date]
-        _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+        _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
         stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
         if stats is None or not stats["current"]:
             continue
@@ -909,7 +909,7 @@ def compute_official_total(df_scope, unit, selected_period_date):
     series = series_full[series_full.index <= selected_period_date] if not series_full.empty else series_full
     if series.empty:
         return None, None
-    _s_raw = s_full[s_full.index <= selected_period_date] if selected_period_date is not None else s_full
+    _s_raw = s_full[s_full.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_full
     stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
     if stats is None:
         return None, None
@@ -939,7 +939,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         series = series_full[series_full.index <= selected_period_date] if not series_full.empty else series_full
         if series.empty:
             continue
-        _s_raw = s_full[s_full.index <= selected_period_date] if selected_period_date is not None else s_full
+        _s_raw = s_full[s_full.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_full
         # compute_kpi_deltas 재사용 — KPI 카드·요약표와 동일 기준(부분월이면 동요일 매칭)으로 전년비 계산
         _stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
         if _stats is None:
@@ -1784,7 +1784,7 @@ if side["page"].startswith("1"):
                     series = series.iloc[:-1]
             if not series.empty:
                 series = series[series.index <= selected_period_date]
-            _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+            _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
             stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             _kpi_computed[display_name] = (col_name, stats)
 
@@ -1801,7 +1801,7 @@ if side["page"].startswith("1"):
                 elif unit == "월마감" and not ff_series.empty and ff_s.index.max() < ff_series.index[-1]:
                     ff_series = ff_series.iloc[:-1]
                 ff_series = ff_series[ff_series.index <= selected_period_date] if not ff_series.empty else ff_series
-                _ff_s_raw = ff_s[ff_s.index <= selected_period_date] if selected_period_date is not None else ff_s
+                _ff_s_raw = ff_s[ff_s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else ff_s
                 _ff_stats = compute_kpi_deltas(ff_series, unit, raw_daily=_ff_s_raw)
             _ff_computed[display_name] = _ff_stats
 
@@ -1930,7 +1930,7 @@ if side["page"].startswith("1"):
             # 걸려있었음 — 마지막 지점이 진행 중인(부분) 기간이면 실제 원본을 기준시점까지
             # 자른 값으로 다시 계산해서 덮어쓴다.
             _tr_is_partial, _tr_cur_days, _ = _partial_last_period(
-                s_raw[s_raw.index <= selected_period_date], unit
+                s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)], unit
             )
             if _tr_is_partial and _tr_cur_days is not None and len(_tr_cur_days) > 0 and not tr_series.empty:
                 _corrected = s_raw.loc[_tr_cur_days].mean()
@@ -1984,7 +1984,7 @@ if side["page"].startswith("1"):
             # 평균'으로 계산한다 — 안 그러면 '이번 주 며칠치'를 '작년 그 주 전체 평균'과
             # 비교하는 격이라 차트 비교선이 표랑 다른 값을 보여주는 문제가 있었음.
             _is_partial, _cur_days, _ = _partial_last_period(
-                s_raw[s_raw.index <= selected_period_date] if selected_period_date is not None else s_raw, unit
+                s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_raw, unit
             )
             for i, pd_date in enumerate(prev_dates):
                 if _is_partial and i == len(prev_dates) - 1 and _cur_days is not None:
@@ -2034,7 +2034,7 @@ if side["page"].startswith("1"):
                 series = series.iloc[:-1]
             if not series.empty:
                 series = series[series.index <= selected_period_date]
-            _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+            _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
             stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             if stats is None:
                 body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
@@ -2060,7 +2060,7 @@ if side["page"].startswith("1"):
                 series_mem = series_mem.iloc[:-1]
             if not series_mem.empty:
                 series_mem = series_mem[series_mem.index <= selected_period_date]
-            _s_mem_raw = s_mem[s_mem.index <= selected_period_date] if selected_period_date is not None else s_mem
+            _s_mem_raw = s_mem[s_mem.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_mem
             stats_mem = compute_kpi_deltas(series_mem, unit, raw_daily=_s_mem_raw)
             if stats_mem is None:
                 body_rows.append("<tr><td>회원UV</td><td>-</td><td>-</td><td>-</td></tr>")
@@ -2230,7 +2230,7 @@ if side["page"].startswith("1"):
                 series = resample_series(df_ep_combo, metric_key, unit).dropna()
                 series = series[series.index <= selected_period_date]
                 _ep_raw = df_ep_combo.set_index(COL_DATE)[metric_key].sort_index()
-                _ep_raw = _ep_raw[_ep_raw.index <= selected_period_date]
+                _ep_raw = _ep_raw[_ep_raw.index <= raw_cutoff_date(selected_period_date, unit)]
                 stats = compute_kpi_deltas(series, unit, raw_daily=_ep_raw)
                 if stats:
                     _is_pct = "%" in metric_key or metric_key == "신규가입율"
@@ -2321,7 +2321,7 @@ if side["page"].startswith("1"):
             series = resample_series(df_ep_combo, metric_key, unit)
             series = series[series.index <= selected_period_date] if not series.empty else series
             _ep_raw2 = df_ep_combo.set_index(COL_DATE)[metric_key].sort_index()
-            _ep_raw2 = _ep_raw2[_ep_raw2.index <= selected_period_date]
+            _ep_raw2 = _ep_raw2[_ep_raw2.index <= raw_cutoff_date(selected_period_date, unit)]
             stats = compute_kpi_deltas(series, unit, raw_daily=_ep_raw2)
             if stats is None:
                 ep_body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
@@ -2399,7 +2399,7 @@ if side["page"].startswith("2"):
                     series = series.iloc[:-1]
                 if not series.empty:
                     series = series[series.index <= selected_period_date]
-                _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+                _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
                 stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
                 if stats is None or not stats["current"]:
                     continue
@@ -2460,7 +2460,7 @@ if side["page"].startswith("2"):
                 elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
                     series = series.iloc[:-1]
                 series = series[series.index <= selected_period_date] if not series.empty else series
-                _s_raw = s[s.index <= selected_period_date] if selected_period_date is not None else s
+                _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
                 _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit, raw_daily=_s_raw))
 
                 _ff_stats = None
@@ -2478,7 +2478,7 @@ if side["page"].startswith("2"):
                     elif unit == "월마감" and not ff_series.empty and ff_s.index.max() < ff_series.index[-1]:
                         ff_series = ff_series.iloc[:-1]
                     ff_series = ff_series[ff_series.index <= selected_period_date] if not ff_series.empty else ff_series
-                    _ff_s_raw = ff_s[ff_s.index <= selected_period_date] if selected_period_date is not None else ff_s
+                    _ff_s_raw = ff_s[ff_s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else ff_s
                     # compute_kpi_deltas를 그대로 재사용해서, 메인 지표와 정확히 같은 기준 시점
                     # (전기간/전년동기)의 FF 값을 뽑는다. 전년비교 기준연도(2025)에 FF가 활발했으므로,
                     # 지금(2026) 시점만 보면 0에 가깝지만 전년동기 쪽엔 값이 커질 수 있음.
@@ -2603,7 +2603,7 @@ if side["page"].startswith("2"):
                 # 먼저 하고 나중에 자르는 순서라서). KPI 카드처럼 실제 원본을 기준시점까지
                 # 자른 값으로 마지막 지점을 다시 계산해서 덮어쓴다.
                 _cat_is_partial2, _cat_cur_days2, _ = _partial_last_period(
-                    s_raw[s_raw.index <= selected_period_date], unit
+                    s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)], unit
                 )
                 if _cat_is_partial2 and _cat_cur_days2 is not None and len(_cat_cur_days2) > 0 and not cat_series.empty:
                     _corrected2 = s_raw.loc[_cat_cur_days2].mean()
@@ -2661,7 +2661,7 @@ if side["page"].startswith("2"):
                 # 마지막 지점이 진행 중인(부분) 주/월이면 표(카테고리 실적 요약 표)와 동일하게
                 # '동요일 매칭 평균'으로 계산 (이유는 페이지1의 동일 로직 주석 참고)
                 _cat_is_partial, _cat_cur_days, _ = _partial_last_period(
-                    s_raw[s_raw.index <= selected_period_date] if selected_period_date is not None else s_raw, unit
+                    s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_raw, unit
                 )
                 for i, pd_date in enumerate(prev_dates):
                     if _cat_is_partial and i == len(prev_dates) - 1 and _cat_cur_days is not None:
@@ -2698,7 +2698,7 @@ if side["page"].startswith("2"):
                 elif unit == "월마감" and not series2.empty and s2.index.max() < series2.index[-1]:
                     series2 = series2.iloc[:-1]
                 series2 = series2[series2.index <= selected_period_date] if not series2.empty else series2
-                _s2_raw = s2[s2.index <= selected_period_date] if selected_period_date is not None else s2
+                _s2_raw = s2[s2.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s2
                 stats2 = compute_kpi_deltas(series2, unit, raw_daily=_s2_raw)
                 if stats2 is None:
                     cat_summary_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
