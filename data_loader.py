@@ -67,15 +67,24 @@ def load_traffic_data() -> pd.DataFrame:
 
 
 CATEGORY_DATA_PATH = "ep_category.csv"
+CATEGORY_DATA_PATH_GZ = "ep_category.csv.gz"
 
 
 @st.cache_data(ttl=3600, show_spinner="카테고리 데이터를 불러오는 중...")
 def load_category_data() -> pd.DataFrame:
-    """카테고리/브랜드별 실적 데이터 로드 (전체 기간). 카테고리 레벨은 세그먼트별, 브랜드 레벨은 전체만."""
+    """카테고리/브랜드별 실적 데이터 로드 (전체 기간). 카테고리 레벨은 세그먼트별, 브랜드 레벨은 전체만.
+    gzip 압축본(ep_category.csv.gz)이 있으면 그걸 우선 쓴다 — 카테고리×브랜드 조합이 많으면
+    비압축 CSV가 25MB를 넘어 GitHub 웹 업로드 제한에 걸리기 쉬워서, 컨버터가 이제 압축본을
+    만들어준다. pandas가 파일 확장자(.gz)를 보고 알아서 압축을 풀어 읽어서 read_csv 호출
+    자체는 압축 여부와 무관하게 동일하다."""
     import os
-    if not os.path.exists(CATEGORY_DATA_PATH):
+    if os.path.exists(CATEGORY_DATA_PATH_GZ):
+        _path = CATEGORY_DATA_PATH_GZ
+    elif os.path.exists(CATEGORY_DATA_PATH):
+        _path = CATEGORY_DATA_PATH
+    else:
         return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"])
-    df = pd.read_csv(CATEGORY_DATA_PATH)
+    df = pd.read_csv(_path)
     df["날짜"] = pd.to_datetime(df["날짜"])
     _cat_cols = ["BPU", "카테고리", "브랜드"]
     if "회원구분" in df.columns:
