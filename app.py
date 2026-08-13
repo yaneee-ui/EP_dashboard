@@ -4067,9 +4067,30 @@ if side["page"].startswith("10"):
                 _pivot_tbl = _pivot_tbl.sort_values("합계", ascending=False)
                 _pivot_tbl = _pivot_tbl.rename(columns={b: brand_label(b) for b in _pivot_tbl.columns if b != "합계"})
 
-                _styled = _pivot_tbl.style.format("{:,.0f}").background_gradient(
-                    cmap="Blues", subset=[c for c in _pivot_tbl.columns if c != "합계"],
-                )
+                def _manual_heatmap(df, subset_cols):
+                    """matplotlib 없이 직접 흰색~파란색 보간해서 히트맵을 만든다
+                    (Styler.background_gradient()는 matplotlib이 꼭 있어야 하는데,
+                    배포 환경에 없어서 ImportError가 났음 — 이걸 피하려고 직접 구현).
+                    표 전체 기준(axis=None)으로 정규화해서, 컬럼(브랜드)마다 규모가
+                    달라도 실제 크기 그대로 비교되게 한다."""
+                    _vals = df[subset_cols].values.astype(float)
+                    _vmin, _vmax = float(_vals.min()), float(_vals.max())
+
+                    def _style_func(data):
+                        out = pd.DataFrame("", index=data.index, columns=data.columns)
+                        for _col in subset_cols:
+                            for _idx in data.index:
+                                _v = data.loc[_idx, _col]
+                                _ratio = (_v - _vmin) / (_vmax - _vmin) if _vmax > _vmin else 0.0
+                                _r = int(255 + (37 - 255) * _ratio)
+                                _g = int(255 + (99 - 255) * _ratio)
+                                _b = int(255 + (235 - 255) * _ratio)
+                                out.loc[_idx, _col] = f"background-color: rgb({_r},{_g},{_b})"
+                        return out
+
+                    return df.style.format("{:,.0f}").apply(_style_func, axis=None)
+
+                _styled = _manual_heatmap(_pivot_tbl, [c for c in _pivot_tbl.columns if c != "합계"])
                 st.dataframe(_styled, use_container_width=True, height=420)
                 st.caption(f"거래액 상위 {_top_n_brands}개 브랜드만 표시했어요 (전체 {len(_brand_totals)}개 브랜드 중).")
 
