@@ -358,6 +358,18 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     _bpu_keep = {"Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"}
     _bpu_label = {"Total": "전체"}
     left_rows = []
+    # 객단가는 거래액/구매객수 값이 나온 뒤에 그 두 값으로 다시 계산해야 해서(비율 지표는
+    # 날짜별 단순평균 금지 — 이 표에 있는 거래액/구매객수 숫자와 정확히 일치하도록),
+    # BPU별로 거래액·구매객수 값을 따로 모아둔다.
+    _gmv_by_bpu, _cnt_by_bpu = {}, {}
+    for r in _bpu_rows:
+        if r["bpu"] not in _bpu_keep or r["stats"] is None:
+            continue
+        if r["metric_label"] == "거래액(순결제)":
+            _gmv_by_bpu[r["bpu"]] = r["stats"]
+        elif r["metric_label"] == "구매객수":
+            _cnt_by_bpu[r["bpu"]] = r["stats"]
+
     for r in _bpu_rows:
         if r["bpu"] not in _bpu_keep:
             continue
@@ -365,11 +377,28 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         if stats is None:
             continue
         is_pct = r["is_pct"]
+        _cur_val, _yoy_val = stats["current"], stats.get("yoy_value")
+        if r["metric_label"] == "객단가":
+            _gmv, _cnt = _gmv_by_bpu.get(r["bpu"]), _cnt_by_bpu.get(r["bpu"])
+            if _gmv and _cnt:
+                _cur_val = _gmv["current"] / _cnt["current"] if _cnt["current"] else None
+                _yoy_val = (
+                    _gmv.get("yoy_value") / _cnt["yoy_value"]
+                    if _cnt.get("yoy_value") else None
+                )
+        _yoy_delta = ((_cur_val - _yoy_val) / _yoy_val * 100) if (_cur_val is not None and _yoy_val) else stats.get("yoy_delta")
+        # CR(구매전환율)은 지금 4.8처럼 '이미 100배 된 숫자'로 저장돼 있는데, 엑셀에서
+        # 그냥 숫자 옆에 %를 글자로 붙이는 대신 — 0.048처럼 소수로 저장하고 셀 서식을
+        # 퍼센트(0.0%)로 지정하면 엑셀이 알아서 "4.8%"로 보여준다(진짜 엑셀 percent
+        # 타입이라 다른 셀에서 참조 계산해도 정상 작동). 아래에서 cell.number_format으로
+        # 적용한다.
+        _cur_store = (_cur_val / 100) if (is_pct and _cur_val is not None) else _cur_val
+        _yoy_store = (_yoy_val / 100) if (is_pct and _yoy_val is not None) else _yoy_val
         left_rows.append({
             "지표": r["metric_label"], "구분": _bpu_label.get(r["bpu"], r["bpu"]),
-            col_prev: round(stats["yoy_value"], 1) if is_pct else round(stats["yoy_value"]) if stats.get("yoy_value") is not None else None,
-            col_cur: round(stats["current"], 1) if is_pct else round(stats["current"]),
-            "전년비(%)": round(stats["yoy_delta"], 1) if stats.get("yoy_delta") is not None else None,
+            col_prev: round(_yoy_store, 3) if is_pct else (round(_yoy_store) if _yoy_store is not None else None),
+            col_cur: round(_cur_store, 3) if is_pct else (round(_cur_store) if _cur_store is not None else None),
+            "전년비(%)": round(_yoy_delta, 1) if _yoy_delta is not None else None,
         })
     left_df = pd.DataFrame(left_rows)
 
@@ -389,6 +418,32 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         left_df.to_excel(writer, index=False, sheet_name="BPU별")
         right_df.to_excel(writer, index=False, sheet_name="카테고리별(거래액)")
+
+        # CR(구매전환율) 행의 값 셀에 엑셀 퍼센트 서식을 입혀서, 저장해둔 소수(0.048)가
+        # 화면엔 "4.8%"로 보이게 한다.
+        _ws_bpu = writer.sheets["BPU별"]
+        _pct_col_letters = [
+            _ws_bpu.cell(row=1, column=ci + 1).column_letter
+            for ci, cname in enumerate(left_df.columns) if cname in (col_prev, col_cur)
+        ]
+        for _ridx, _lbl in enumerate(left_df["지표"], start=2):  # 엑셀 행은 1=헤더, 2부터 데이터
+            if _lbl == "구매전환율(%)":
+                for _cl in _pct_col_letters:
+                    _ws_bpu[f"{_cl}{_ridx}"].number_format = "0.0%"
+
+        # 전년비(%) 컬럼: 증가=초록, 감소=[빨강]△(마이너스 기호 대신). 저장된 값은 이미
+        # "-11.0"처럼 퍼센트 숫자라(소수 아님) 서식에서 %를 그냥 곱하면(0.0%) 100배 더
+        # 커져버리니, 리터럴 문자 "%"를 따옴표로 감싸서 곱하기 없이 그대로 붙인다.
+        _YOY_DELTA_FMT = '[Green]0.0"%";[Red]"△"0.0"%"'
+        for _sheet_name, _df in [("BPU별", left_df), ("카테고리별(거래액)", right_df)]:
+            _ws = writer.sheets[_sheet_name]
+            if "전년비(%)" not in _df.columns:
+                continue
+            _delta_col_idx = list(_df.columns).index("전년비(%)") + 1
+            _delta_col_letter = _ws.cell(row=1, column=_delta_col_idx).column_letter
+            for _ridx in range(2, len(_df) + 2):
+                _ws[f"{_delta_col_letter}{_ridx}"].number_format = _YOY_DELTA_FMT
+
         for _ws in writer.sheets.values():
             for _col in _ws.columns:
                 _w = max((len(str(c.value)) for c in _col if c.value is not None), default=8)
@@ -436,11 +491,14 @@ def compute_bpu_comparison_rows(df_traffic, unit="일별", selected_period_date=
     BPU_COLS = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
     METRICS = [
         ("트래픽", "전체", "EP UV", False),
-        ("트래픽", "회원", "회원UV", False),
         ("거래액", "전체", "거래액(순결제)", False),
         ("구매객수", "전체", "구매객수", False),
         ("CR", "전체", "구매전환율(%)", True),
         ("객단가", "전체", "객단가", False),
+        ("트래픽", "회원", "회원UV", False),
+        ("거래액", "회원", "회원거래액", False),
+        ("트래픽", "신규", "신규UV", False),
+        ("거래액", "신규", "신규거래액", False),
     ]
     SUMMABLE_METRICS = {"트래픽", "거래액", "구매객수"}
     cfg = UNIT_CONFIG[unit]
@@ -530,6 +588,11 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
         d = d[d["회원구분"] == cat_segment]
     if ff_exclude:
         d = exclude_ff_brand(d)
+    if "거래액" not in d.columns:
+        raise ValueError(
+            "ep_category.csv에 '거래액' 컬럼이 없어요. 컨버터에서 만든 파일이 맞는지, "
+            "혹은 오래된 버전의 컨버터로 만든 파일은 아닌지 확인해주세요."
+        )
     d = d[d["브랜드"] == "전체"][["날짜", "카테고리", "거래액"]]
     if d.empty:
         return []
@@ -608,11 +671,27 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     else:
         long_df["전년비_표시"] = "-"
 
+    # 범례 문구를 간소화한다 — 파랑(cols[0])은 항상 "N년"(데이터의 최신 연도, 동적 계산이라
+    # 해가 바뀌어도 하드코딩 없이 자동으로 맞음), 하늘(cols[1])은 조회단위별로 미리 정한
+    # 짧은 문구로. 원래 컬럼명("거래액"/"전년동요일비(전년)" 등)은 이제 legend/tooltip에
+    # 안 보이고, 대신 아래 매핑된 라벨만 쓴다.
+    _YOY_LEGEND_LABEL = {
+        "일별": "전년 동요일", "주별": "전년 동일주차",
+        "월별": "전년 동월(동요일 기준)", "월마감": "전년 동월",
+    }
+    _cur_year_label = f"{int(pd.DatetimeIndex(chart_df.index).year.max()) % 100}년"
+    _yoy_display_label = _YOY_LEGEND_LABEL.get(unit, "전년")
+    _label_map = {cols[0]: _cur_year_label}
+    if len(cols) > 1:
+        _label_map[cols[1]] = _yoy_display_label
+    long_df["구분"] = long_df["구분"].map(lambda c: _label_map.get(c, c))
+    cols = [_label_map.get(c, c) for c in cols]  # 아래 색상 도메인도 같이 맞춘다
+
     # 전년 비교선의 툴팁 날짜를 실제 작년 날짜로 교체 (x축 위치는 올해 날짜 그대로 유지)
     long_df["_tooltip_date"] = long_df["날짜"]
     if yoy_actual_dates is not None:
         _actual_map = dict(zip(pd.DatetimeIndex(chart_df.index), pd.DatetimeIndex(yoy_actual_dates)))
-        _is_yoy_row = long_df["구분"].astype(str).str.contains("(전년)", regex=False)
+        _is_yoy_row = long_df["구분"] == _yoy_display_label
         long_df.loc[_is_yoy_row, "_tooltip_date"] = long_df.loc[_is_yoy_row, "날짜"].map(_actual_map)
 
     _is_monthly = unit in ("월별", "월마감")
@@ -3292,16 +3371,39 @@ if side["page"].startswith("5"):
                 _base = alt.Chart(_trend_df).encode(
                     x=alt.X("연월_label:O", title=None, sort=_month_order, axis=alt.Axis(labelAngle=-40))
                 )
+                # 막대를 클릭하면 그 날짜(구간)의 쿠폰명별 랭킹이 아래 표시되도록, 클릭
+                # 선택(click selection)을 막대에 건다. 선택된 막대는 진하게, 나머지는
+                # 흐리게 표시해서 "지금 뭘 클릭했는지" 눈에 보이게 한다.
+                _click_sel = alt.selection_point(fields=["연월_label"], on="click", empty=True, name="clicked")
                 _bar = _base.mark_bar(color="#93c5fd", size=18).encode(
                     y=alt.Y("쿠폰할인:Q", title="쿠폰할인", axis=alt.Axis(format="~s")),
+                    opacity=alt.condition(_click_sel, alt.value(1.0), alt.value(0.55)),
                     tooltip=[alt.Tooltip("연월_label:N", title="기간"), alt.Tooltip("쿠폰할인:Q", title="쿠폰할인", format=",.0f")],
-                )
+                ).add_params(_click_sel)
                 _line = _base.mark_line(color="#dc2626", strokeWidth=2, point=alt.OverlayMarkDef(size=45, filled=True)).encode(
                     y=alt.Y("비용률:Q", title="비용률(%)", axis=alt.Axis(format=".1f")),
                     tooltip=[alt.Tooltip("연월_label:N", title="기간"), alt.Tooltip("비용률:Q", title="비용률", format=".2f")],
                 )
                 _chart = alt.layer(_bar, _line).resolve_scale(y="independent").properties(height=350)
-                st.altair_chart(_chart, use_container_width=True)
+                _chart_click_key = f"coupon_chart_click_{coupon_bpu}_{coupon_type_sel}_{coupon_unit}"
+                _cp_event = st.altair_chart(
+                    _chart, use_container_width=True, on_select="rerun", key=_chart_click_key,
+                )
+                st.caption("💡 막대를 클릭하면 그 날짜(구간)의 쿠폰명별 할인액 랭킹을 아래에서 볼 수 있어요.")
+
+                # 클릭된 막대가 있으면 그 날짜를, 없으면 기존처럼 기준시점(_latest)을 랭킹 기준으로 쓴다.
+                _rank_date = _latest
+                _rank_date_is_clicked = False
+                try:
+                    _clicked_pts = _cp_event.selection.get("clicked", []) if _cp_event else []
+                except AttributeError:
+                    _clicked_pts = (_cp_event or {}).get("selection", {}).get("clicked", [])
+                if _clicked_pts:
+                    _clicked_label = _clicked_pts[0].get("연월_label")
+                    _label_to_period = dict(zip(_trend_df["연월_label"], _trend_df["연월"]))
+                    if _clicked_label in _label_to_period:
+                        _rank_date = _label_to_period[_clicked_label]
+                        _rank_date_is_clicked = True
 
                 _export_df = _trend_df.copy()
                 _export_df["연월"] = _export_df["연월_label"]
@@ -3310,22 +3412,23 @@ if side["page"].startswith("5"):
 
                 st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
-                # 쿠폰명별 랭킹 (최신 기간 기준)
-                st.markdown(f"**쿠폰명별 할인액 랭킹 · {_period_fmt(_latest)} 기준**")
+                # 쿠폰명별 랭킹 (클릭한 날짜가 있으면 그 날짜, 없으면 기준시점 기준)
+                _rank_title_suffix = " (클릭한 날짜)" if _rank_date_is_clicked else ""
+                st.markdown(f"**쿠폰명별 할인액 랭킹 · {_period_fmt(_rank_date)} 기준{_rank_title_suffix}**")
                 if coupon_unit == "월별":
                     if df_coupon_detail.empty:
                         st.info("쿠폰 상세 데이터가 없습니다. 사이드바에서 ep_coupon_daily.csv를 업로드해주세요.")
                         _detail_sub = None
                     else:
-                        _detail_sub = df_coupon_detail[df_coupon_detail["연월"] == _latest]
+                        _detail_sub = df_coupon_detail[df_coupon_detail["연월"] == _rank_date]
                 else:
                     if not _has_daily:
                         _detail_sub = None
                     else:
                         if coupon_unit == "일별":
-                            _detail_sub = df_coupon_daily[df_coupon_daily["날짜"] == _latest]
+                            _detail_sub = df_coupon_daily[df_coupon_daily["날짜"] == _rank_date]
                         else:  # 주별: 해당 주(월~일) 범위 합산
-                            _week_start, _week_end = _latest, _latest + pd.Timedelta(days=6)
+                            _week_start, _week_end = _rank_date, _rank_date + pd.Timedelta(days=6)
                             _detail_sub = df_coupon_daily[(df_coupon_daily["날짜"] >= _week_start) & (df_coupon_daily["날짜"] <= _week_end)]
 
                 if _detail_sub is None:
@@ -3518,13 +3621,44 @@ if side["page"].startswith("6"):
             )
 
             st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
+            def _style_yoy_delta(df):
+                """전년비(%) 컬럼: 증가=초록, 감소=빨강+△ (엑셀 서식과 동일 규칙)."""
+                def _fmt(v):
+                    if pd.isna(v):
+                        return ""
+                    return f"{v:.1f}%" if v >= 0 else f"△{abs(v):.1f}%"
+                def _color(v):
+                    if pd.isna(v):
+                        return ""
+                    return "color:#16a34a;" if v >= 0 else "color:#dc2626;"
+                sty = df.style
+                if "전년비(%)" in df.columns:
+                    sty = sty.format({"전년비(%)": _fmt}).map(_color, subset=["전년비(%)"])
+                return sty
+
             _pc1, _pc2 = st.columns(2)
             with _pc1:
                 st.markdown("**BPU별**")
-                st.dataframe(_pv_left, use_container_width=True, hide_index=True, height=360)
+                # 화면 미리보기용으로만 CR(구매전환율) 행을 "4.8%"같은 보기 좋은 문자열로
+                # 바꾼다 — 엑셀 파일 쪽은 진짜 퍼센트 셀서식을 쓰니 그대로(소수) 둬야
+                # 정상 작동하고, 여기 화면 표시본만 따로 포맷한다.
+                _pv_left_disp = _pv_left.copy()
+                _cr_mask = _pv_left_disp["지표"] == "구매전환율(%)"
+                _disp_cur_year = pd.Timestamp(_wk_ref).year
+                _disp_col_prev, _disp_col_cur = f"{_disp_cur_year - 1}년", f"{_disp_cur_year}년"
+                for _c in [_disp_col_prev, _disp_col_cur]:
+                    if _c in _pv_left_disp.columns:
+                        # float 컬럼에 문자열("6.0%")을 바로 대입하면 최신 pandas에서
+                        # dtype 에러가 나서, 먼저 object로 바꾼 뒤 대입한다.
+                        _pv_left_disp[_c] = _pv_left_disp[_c].astype(object)
+                        _pv_left_disp.loc[_cr_mask, _c] = _pv_left_disp.loc[_cr_mask, _c].apply(
+                            lambda v: f"{v*100:.1f}%" if pd.notna(v) else v
+                        )
+                st.dataframe(_style_yoy_delta(_pv_left_disp), use_container_width=True, hide_index=True, height=360)
             with _pc2:
                 st.markdown("**카테고리별 (거래액)**")
-                st.dataframe(_pv_right, use_container_width=True, hide_index=True, height=360)
+                st.dataframe(_style_yoy_delta(_pv_right), use_container_width=True, hide_index=True, height=360)
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
