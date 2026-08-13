@@ -210,6 +210,29 @@ def format_delta_html(delta) -> str:
     return "<span class='delta neutral'>- 0.0%</span>"
 
 
+def raw_cutoff_date(selected_period_date, unit):
+    """selected_period_date(주별/월별이면 그 기간의 '시작' 라벨: 주의 월요일, 달의 1일)를
+    raw_daily(일별 원본) 절삭용 '그 기간의 끝' 날짜로 바꾼다.
+
+    문제였던 것: KPI 카드/차트 여러 곳에서 raw_daily를 `s.index <= selected_period_date`로
+    잘랐는데, selected_period_date가 주의 '월요일 라벨'이다 보니, 실제로는 이미 존재하는
+    그 주의 화/수요일 등 데이터까지 통째로 버려지고 있었음(예: 기준시점=8/10인데 원본엔
+    8/12까지 있으면, 8/11·8/12가 이미 실제 데이터인데도 무시됨). 그 결과 '아직 하루치만
+    있다'고 잘못 판단해서 부분기간 보정이 과도하게 적용되는 문제가 있었음.
+
+    이 함수로 '그 기간의 끝'(주=일요일, 월=말일)까지 잘라야, 그 기간에 실제로 존재하는
+    날짜는 다 살리면서도 다음 기간(예: 다음 주) 데이터는 여전히 제외된다 — 원본이 기간
+    끝까지 없으면 그냥 있는 데까지만 자동으로 잡히니 안전하다."""
+    d = pd.Timestamp(selected_period_date)
+    if unit == "주별":
+        return d + pd.Timedelta(days=6)
+    elif unit in ("월별", "월마감"):
+        month_start = d.replace(day=1)
+        next_month = month_start + pd.offsets.MonthBegin(1)
+        return next_month - pd.Timedelta(days=1)
+    return d  # 일별은 그대로
+
+
 def week_of_month(date) -> int:
     """해당 날짜(그 주의 월요일)가 같은 달 안에서 몇 번째 주인지.
 
