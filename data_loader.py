@@ -78,13 +78,39 @@ def load_category_data() -> pd.DataFrame:
     만들어준다. pandas가 파일 확장자(.gz)를 보고 알아서 압축을 풀어 읽어서 read_csv 호출
     자체는 압축 여부와 무관하게 동일하다."""
     import os
+    import gzip
+
     if os.path.exists(CATEGORY_DATA_PATH_GZ):
         _path = CATEGORY_DATA_PATH_GZ
     elif os.path.exists(CATEGORY_DATA_PATH):
         _path = CATEGORY_DATA_PATH
     else:
         return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"])
-    df = pd.read_csv(_path)
+
+    # gzip 파일이 GitHub 업로드 과정에서 깨지는 경우가 있다(바이너리 파일을 텍스트로
+    # 취급해서 줄바꿈 문자가 변환되는 등). 그래서 압축 해제를 먼저 직접 시도해보고,
+    # 실패하면 '사실 압축 안 된 일반 CSV일 수도 있다'고 보고 그냥 텍스트로도 시도한다 —
+    # 대시보드가 통째로 죽는 것보다는 최대한 읽어보는 게 낫다.
+    if _path.endswith(".gz"):
+        try:
+            with gzip.open(_path, "rt", encoding="utf-8-sig") as f:
+                df = pd.read_csv(f)
+        except Exception:
+            # gzip 손상 시 zlib.error/EOFError/UnicodeDecodeError 등 다양한 예외가 날 수
+            # 있어서(테스트로 확인함), 폭넓게 잡고 '압축 안 된 일반 CSV일 수도 있다'고
+            # 보고 텍스트로 재시도한다.
+            try:
+                df = pd.read_csv(_path, encoding="utf-8-sig")
+            except Exception:
+                st.error(
+                    f"'{_path}' 파일을 읽을 수 없어요 — GitHub에 올릴 때 파일이 깨졌을 "
+                    "가능성이 높아요(바이너리 파일이 텍스트로 잘못 변환된 경우가 흔해요). "
+                    "컨버터에서 파일을 다시 받아서, 그대로(수정 없이) 업로드해보세요."
+                )
+                return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"])
+    else:
+        df = pd.read_csv(_path)
+
     df["날짜"] = pd.to_datetime(df["날짜"])
     _cat_cols = ["BPU", "카테고리", "브랜드"]
     if "회원구분" in df.columns:
