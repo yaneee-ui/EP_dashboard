@@ -668,7 +668,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     if _yoy_map:
         long_df["전년비"] = long_df["날짜"].map(_yoy_map)
         long_df["전년비_표시"] = long_df.apply(
-            lambda r: (f"{'▲' if r['전년비'] >= 0 else '▼'}{abs(r['전년비']):.1f}%"
+            lambda r: (f"{'▲' if r['전년비'] >= 0 else '△'}{abs(r['전년비']):.1f}%"
                        if r["구분"] == cols[0] and pd.notna(r["전년비"]) else "-"),
             axis=1,
         )
@@ -911,7 +911,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         if v is None:
             return "<span style='color:#9ca3af'>-</span>"
         color = "#16a34a" if v >= 0 else "#dc2626"
-        arrow = "▲" if v >= 0 else "▼"
+        arrow = "▲" if v >= 0 else "△"
         return f"<span style='color:{color};font-weight:600'>{arrow} {abs(v):.1f}%</span>"
 
     legend_items = []
@@ -3764,7 +3764,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
                 if _s25 is not None and _wk in _s25.index and pd.notna(_s25.loc[_wk]) and _s25.loc[_wk] != 0:
                     long_df.at[idx, "전년비"] = (long_df.at[idx, "값"] / _s25.loc[_wk] - 1) * 100
         long_df["전년비_표시"] = long_df["전년비"].apply(
-            lambda v: f"{'▲' if v >= 0 else '▼'}{abs(v):.1f}%" if pd.notna(v) else "-"
+            lambda v: f"{'▲' if v >= 0 else '△'}{abs(v):.1f}%" if pd.notna(v) else "-"
         )
 
         _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
