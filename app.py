@@ -3957,133 +3957,144 @@ if side["page"].startswith("10"):
 
         st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
-        # ── 섹션 2: BPU별 거래액 미니 비교 ──
-        st.markdown("#### 🏢 사업부(BPU)별 거래액")
-        _sum_bpu_gmv = {r["bpu"]: r for r in _sum_bpu_rows if r["metric_label"] == "거래액(순결제)" and r["stats"]}
-        _sum_bpu_cols = st.columns(4)
-        for _i, _bpu in enumerate(["e-영업1", "e-영업2", "e-영업3", "e-영업4"]):
-            with _sum_bpu_cols[_i]:
-                _r = _sum_bpu_gmv.get(_bpu)
-                if _r is None:
-                    st.markdown(f"<div style='color:#9ca3af;'>{_bpu}: -</div>", unsafe_allow_html=True)
+        # ── 섹션 2: BPU별 요약 실적 (전체 지표 x 전체 BPU 표) ──
+        st.markdown("#### 🏢 사업부(BPU)별 요약 실적")
+        _sum_bpu_order = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
+        _sum_bpu_display = {"Total": "전체"}
+        _sum_table_rows = []
+        for _mlabel in _sum_metric_order:
+            _row = {"지표": _mlabel}
+            for _bpu in _sum_bpu_order:
+                _match = [r for r in _sum_bpu_rows if r["metric_label"] == _mlabel and r["bpu"] == _bpu]
+                _r = _match[0] if _match else None
+                _bpu_col_label = _sum_bpu_display.get(_bpu, _bpu)
+                if _r is None or _r["stats"] is None:
+                    _row[_bpu_col_label] = "-"
                     continue
                 _stats = _r["stats"]
-                st.markdown(
-                    f"<div style='background:#f9fafb;border-radius:8px;padding:10px 12px;'>"
-                    f"<div style='font-size:0.74rem;color:#6b7280;'>{_bpu}</div>"
-                    f"<div style='font-size:1.0rem;font-weight:700;'>{_stats['current']:,.0f}</div>"
-                    f"<div style='font-size:0.7rem;'>{_sum_cfg['yoy_label']} {format_delta_html(_stats.get('yoy_delta'))}</div>"
-                    f"</div>", unsafe_allow_html=True,
-                )
+                _is_pct = _r["is_pct"]
+                _val_str = f"{_stats['current']:.1f}%" if _is_pct else f"{_stats['current']:,.0f}"
+                _yoy_d = _stats.get("yoy_delta")
+                _yoy_str = f" ({'+' if (_yoy_d or 0) >= 0 else ''}{_yoy_d:.1f}%)" if _yoy_d is not None else ""
+                _row[_bpu_col_label] = f"{_val_str}{_yoy_str}"
+            _sum_table_rows.append(_row)
+        _sum_table_df = pd.DataFrame(_sum_table_rows).set_index("지표")
+        st.dataframe(_sum_table_df, use_container_width=True)
+        st.caption(f"괄호 안은 {_sum_cfg['yoy_label']}. 5개 지표 x 7개 BPU 구분 전체를 한 번에 봐요 — 상세 필터는 1번 페이지에서.")
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
 
-        # ── 섹션 3: 카테고리 하이라이트 (거래액 전년비 최대상승/하락, 모든 BPU 합산) ──
-        st.markdown("#### 📈 카테고리 하이라이트 (거래액, 전 사업부 합산)")
+        # ── 섹션 3: 카테고리 하이라이트 (거래액 전년비 최대상승/하락, BPU별로 구분) ──
+        st.markdown("#### 📈 카테고리 하이라이트 (거래액 전년비, BPU별)")
         if df_category.empty:
             st.info("카테고리 데이터가 없습니다.")
         else:
-            _sum_cat_base = df_category[
-                (df_category["카테고리"] != "전체") & (df_category["브랜드"] == "전체")
-                & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
-            ]
-            _sum_cat_daily = _sum_cat_base.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
-            _sum_cat_rows = []
-            for _cat_name, _g in _sum_cat_daily.groupby("카테고리"):
-                _s = _g.set_index("날짜")["거래액"].sort_index()
-                _series = _s.resample(UNIT_CONFIG[unit]["rule"]).agg("mean")
-                if unit == "주별":
-                    _series.index = _series.index - pd.Timedelta(days=6)
-                _series = _series[_series.index <= _sum_ref]
-                _raw = _s[_s.index <= raw_cutoff_date(_sum_ref, unit)]
-                _stats = compute_kpi_deltas(_series, unit, raw_daily=_raw)
-                if _stats is None or not _stats["current"]:
-                    continue
-                _sum_cat_rows.append({"카테고리": _cat_name, "거래액": _stats["current"], "전년비": _stats.get("yoy_delta")})
-
-            _sum_cat_movers = [r for r in _sum_cat_rows if r["전년비"] is not None]
-            if len(_sum_cat_movers) >= 2:
-                _sum_cat_movers.sort(key=lambda r: r["전년비"], reverse=True)
-                _hl_cols = st.columns(4)
-                _highlights = (
-                    [(_sum_cat_movers[0], "최대 상승", "#16a34a"), (_sum_cat_movers[1], "2위 상승", "#16a34a")]
-                    if len(_sum_cat_movers) >= 4 else [(_sum_cat_movers[0], "최대 상승", "#16a34a")]
-                )
-                _highlights += (
-                    [(_sum_cat_movers[-1], "최대 하락", "#dc2626"), (_sum_cat_movers[-2], "2위 하락", "#dc2626")]
-                    if len(_sum_cat_movers) >= 4 else [(_sum_cat_movers[-1], "최대 하락", "#dc2626")]
-                )
-                for _i, (_r, _tag, _color) in enumerate(_highlights[:4]):
-                    with _hl_cols[_i]:
-                        st.markdown(
-                            f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:10px 12px;'>"
-                            f"<div style='font-size:0.72rem;color:{_color};font-weight:600;'>{_tag}</div>"
-                            f"<div style='font-size:0.95rem;font-weight:700;'>{_r['카테고리']}</div>"
-                            f"<div style='font-size:0.78rem;'>{_r['거래액']:,.0f} · {format_delta_html(_r['전년비'])}</div>"
-                            f"</div>", unsafe_allow_html=True,
-                        )
-            else:
-                st.caption("전년비 계산 가능한 카테고리가 부족해요.")
+            _hl_bpu_cols = st.columns(4)
+            for _i, _hbpu in enumerate(["e-영업1", "e-영업2", "e-영업3", "e-영업4"]):
+                with _hl_bpu_cols[_i]:
+                    st.markdown(f"<div style='font-weight:600;font-size:0.85rem;margin-bottom:4px;'>{_hbpu}</div>", unsafe_allow_html=True)
+                    _cat_base_b = df_category[
+                        (df_category["BPU"] == _hbpu) & (df_category["카테고리"] != "전체") & (df_category["브랜드"] == "전체")
+                        & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
+                    ]
+                    if _cat_base_b.empty:
+                        st.caption("데이터 없음")
+                        continue
+                    _cat_daily_b = _cat_base_b.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+                    _movers_b = []
+                    for _cat_name, _g in _cat_daily_b.groupby("카테고리"):
+                        _s = _g.set_index("날짜")["거래액"].sort_index()
+                        _series = _s.resample(UNIT_CONFIG[unit]["rule"]).agg("mean")
+                        if unit == "주별":
+                            _series.index = _series.index - pd.Timedelta(days=6)
+                        _series = _series[_series.index <= _sum_ref]
+                        _raw = _s[_s.index <= raw_cutoff_date(_sum_ref, unit)]
+                        _stats = compute_kpi_deltas(_series, unit, raw_daily=_raw)
+                        if _stats is None or not _stats["current"] or _stats.get("yoy_delta") is None:
+                            continue
+                        _movers_b.append({"카테고리": _cat_name, "거래액": _stats["current"], "전년비": _stats["yoy_delta"]})
+                    if len(_movers_b) < 2:
+                        st.caption("전년비 계산 가능한 카테고리 부족")
+                        continue
+                    _movers_b.sort(key=lambda r: r["전년비"], reverse=True)
+                    _top_up, _top_down = _movers_b[0], _movers_b[-1]
+                    st.markdown(
+                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;margin-bottom:6px;'>"
+                        f"<div style='font-size:0.68rem;color:#16a34a;font-weight:600;'>최대 상승</div>"
+                        f"<div style='font-size:0.85rem;font-weight:700;'>{_top_up['카테고리']}</div>"
+                        f"<div style='font-size:0.72rem;'>{_top_up['거래액']:,.0f} · {format_delta_html(_top_up['전년비'])}</div>"
+                        f"</div>"
+                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;'>"
+                        f"<div style='font-size:0.68rem;color:#dc2626;font-weight:600;'>최대 하락</div>"
+                        f"<div style='font-size:0.85rem;font-weight:700;'>{_top_down['카테고리']}</div>"
+                        f"<div style='font-size:0.72rem;'>{_top_down['거래액']:,.0f} · {format_delta_html(_top_down['전년비'])}</div>"
+                        f"</div>", unsafe_allow_html=True,
+                    )
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
 
-        # ── 섹션 4: 카테고리 × 브랜드 피벗 테이블 (최근 30일 거래액, 전 사업부 합산) ──
-        st.markdown("#### 🗂️ 카테고리 × 브랜드 피벗 (최근 30일 거래액 합계, 전 사업부 합산)")
+        # ── 섹션 4: 카테고리 × 브랜드 피벗 테이블 (최근 30일 거래액, e-영업1/2 각각 — 입점 제외) ──
+        st.markdown("#### 🗂️ 카테고리 × 브랜드 피벗 (최근 30일 거래액, 자사 e-영업1/2 — 입점 제외)")
         if df_category.empty:
             st.info("카테고리 데이터가 없습니다.")
         else:
             _piv_start = _sum_ref - pd.Timedelta(days=29)
-            _piv_base = df_category[
-                (df_category["카테고리"] != "전체") & (df_category["브랜드"] != "전체")
-                & (df_category["날짜"] >= _piv_start) & (df_category["날짜"] <= _sum_ref)
-                & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
-            ]
-            if _piv_base.empty:
-                st.info("최근 30일 카테고리×브랜드 데이터가 없습니다.")
-            else:
+
+            def _manual_heatmap(df, subset_cols):
+                """matplotlib 없이 직접 흰색~파란색 보간해서 히트맵을 만든다
+                (Styler.background_gradient()는 matplotlib이 꼭 있어야 하는데,
+                배포 환경에 없어서 ImportError가 났음 — 이걸 피하려고 직접 구현).
+                표 전체 기준(axis=None)으로 정규화해서, 컬럼(브랜드)마다 규모가
+                달라도 실제 크기 그대로 비교되게 한다."""
+                _vals = df[subset_cols].values.astype(float)
+                _vmin, _vmax = float(_vals.min()), float(_vals.max())
+
+                def _style_func(data):
+                    out = pd.DataFrame("", index=data.index, columns=data.columns)
+                    for _col in subset_cols:
+                        for _idx in data.index:
+                            _v = data.loc[_idx, _col]
+                            _ratio = (_v - _vmin) / (_vmax - _vmin) if _vmax > _vmin else 0.0
+                            _r = int(255 + (37 - 255) * _ratio)
+                            _g = int(255 + (99 - 255) * _ratio)
+                            _b = int(255 + (235 - 255) * _ratio)
+                            out.loc[_idx, _col] = f"background-color: rgb({_r},{_g},{_b})"
+                    return out
+
+                return df.style.format("{:,.0f}").apply(_style_func, axis=None)
+
+            def _render_cat_brand_pivot(bpu_value, top_n_brands=12):
+                _piv_base = df_category[
+                    (df_category["BPU"] == bpu_value)
+                    & (df_category["카테고리"] != "전체") & (df_category["브랜드"] != "전체")
+                    & (df_category["날짜"] >= _piv_start) & (df_category["날짜"] <= _sum_ref)
+                    & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
+                ]
+                if _piv_base.empty:
+                    st.info(f"{bpu_value}: 최근 30일 카테고리×브랜드 데이터가 없습니다.")
+                    return
                 _piv_sum = _piv_base.groupby(["카테고리", "브랜드"], as_index=False)["거래액"].sum()
-                # 브랜드가 너무 많으면(보통 60개 이상) 표가 못 읽을 정도로 커지니, 거래액
-                # 상위 N개 브랜드만 컬럼으로 남긴다.
-                _top_n_brands = 12
                 _brand_totals = _piv_sum.groupby("브랜드")["거래액"].sum().sort_values(ascending=False)
-                _top_brands = _brand_totals.head(_top_n_brands).index.tolist()
+                _top_brands = _brand_totals.head(top_n_brands).index.tolist()
                 _piv_sum_top = _piv_sum[_piv_sum["브랜드"].isin(_top_brands)]
                 _pivot_tbl = _piv_sum_top.pivot_table(
                     index="카테고리", columns="브랜드", values="거래액", aggfunc="sum", fill_value=0,
                 )
-                _pivot_tbl = _pivot_tbl[[b for b in _top_brands if b in _pivot_tbl.columns]]  # 거래액 큰 순으로 컬럼 정렬
+                _pivot_tbl = _pivot_tbl[[b for b in _top_brands if b in _pivot_tbl.columns]]
                 _pivot_tbl["합계"] = _pivot_tbl.sum(axis=1)
                 _pivot_tbl = _pivot_tbl.sort_values("합계", ascending=False)
                 _pivot_tbl = _pivot_tbl.rename(columns={b: brand_label(b) for b in _pivot_tbl.columns if b != "합계"})
 
-                def _manual_heatmap(df, subset_cols):
-                    """matplotlib 없이 직접 흰색~파란색 보간해서 히트맵을 만든다
-                    (Styler.background_gradient()는 matplotlib이 꼭 있어야 하는데,
-                    배포 환경에 없어서 ImportError가 났음 — 이걸 피하려고 직접 구현).
-                    표 전체 기준(axis=None)으로 정규화해서, 컬럼(브랜드)마다 규모가
-                    달라도 실제 크기 그대로 비교되게 한다."""
-                    _vals = df[subset_cols].values.astype(float)
-                    _vmin, _vmax = float(_vals.min()), float(_vals.max())
-
-                    def _style_func(data):
-                        out = pd.DataFrame("", index=data.index, columns=data.columns)
-                        for _col in subset_cols:
-                            for _idx in data.index:
-                                _v = data.loc[_idx, _col]
-                                _ratio = (_v - _vmin) / (_vmax - _vmin) if _vmax > _vmin else 0.0
-                                _r = int(255 + (37 - 255) * _ratio)
-                                _g = int(255 + (99 - 255) * _ratio)
-                                _b = int(255 + (235 - 255) * _ratio)
-                                out.loc[_idx, _col] = f"background-color: rgb({_r},{_g},{_b})"
-                        return out
-
-                    return df.style.format("{:,.0f}").apply(_style_func, axis=None)
-
+                st.markdown(f"**{bpu_value}**")
                 _styled = _manual_heatmap(_pivot_tbl, [c for c in _pivot_tbl.columns if c != "합계"])
-                st.dataframe(_styled, use_container_width=True, height=420)
-                st.caption(f"거래액 상위 {_top_n_brands}개 브랜드만 표시했어요 (전체 {len(_brand_totals)}개 브랜드 중).")
+                st.dataframe(_styled, use_container_width=True, height=380)
+                st.caption(f"거래액 상위 {top_n_brands}개 브랜드만 표시했어요 (전체 {len(_brand_totals)}개 브랜드 중).")
+
+            _render_cat_brand_pivot("e-영업1")
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+            _render_cat_brand_pivot("e-영업2")
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
