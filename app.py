@@ -1983,6 +1983,34 @@ if side["page"].startswith("1."):
 
 
         # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
+        # 일별 이외(주별/월별/월마감)는 "이번 기간에 실제로 어느 날짜까지 들어있는지"가
+        # 안 보이면 헷갈릴 수 있어서(예: 월별인데 이번 달이 아직 다 안 지났으면), 금년/전년
+        # 정확한 날짜 범위를 캡션으로 보여준다. _partial_last_period는 '부분기간'일 때만
+        # 날짜 목록을 주고 완성된 기간이면 None을 줘서(그건 그것대로 맞는 설계 — KPI
+        # 계산 자체엔 완성된 기간의 날짜 목록이 필요 없어서), 여기서는 그거에 기대지 않고
+        # 기간의 시작/끝을 직접 계산한다 — 완성된 기간이든 진행 중이든 항상 뜨게.
+        if unit != "일별" and selected_period_date is not None and _s_raw is not None and not _s_raw.empty:
+            _kc_s = (
+                selected_period_date - pd.Timedelta(days=selected_period_date.weekday())
+                if unit == "주별" else selected_period_date.replace(day=1)
+            )
+            _kc_e = min(_s_raw.index.max(), raw_cutoff_date(selected_period_date, unit))
+            if _kc_s <= _kc_e:
+                if unit == "월마감":
+                    _kp_s, _kp_e = _kc_s - pd.DateOffset(years=1), _kc_e - pd.DateOffset(years=1)
+                else:
+                    _kp_s, _kp_e = _kc_s - pd.Timedelta(days=364), _kc_e - pd.Timedelta(days=364)
+
+                def _md(d):
+                    return f"{d.month}/{d.day}"
+
+                _kpi_yoy_note = "전년 동월" if unit == "월마감" else "동요일 기준"
+                st.markdown(
+                    f"<div class='chart-caption'>📅 {_kc_s.year}년: {_md(_kc_s)}~{_md(_kc_e)}"
+                    f" &nbsp;vs&nbsp; {_kp_s.year}년({_kpi_yoy_note}): {_md(_kp_s)}~{_md(_kp_e)}</div>",
+                    unsafe_allow_html=True,
+                )
+
         kpi_cols = st.columns(5)
         for i, (col_name, display_name) in enumerate(all_items):
             with kpi_cols[i]:
