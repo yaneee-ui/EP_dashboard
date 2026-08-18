@@ -626,10 +626,6 @@ DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
 ]
 
-# 전일비 이 비율(%) 이상 급등/급락하면 차트에 자동으로 이상치 마커를 찍는다.
-# 사람이 직접 등록하는 DASHBOARD_EVENTS와 달리, 매번 데이터만 보고 자동으로 계산된다.
-ANOMALY_THRESHOLD_PCT = 20
-
 
 def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
@@ -668,7 +664,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     if _yoy_map:
         long_df["전년비"] = long_df["날짜"].map(_yoy_map)
         long_df["전년비_표시"] = long_df.apply(
-            lambda r: (f"{'▲' if r['전년비'] >= 0 else '△'}{abs(r['전년비']):.1f}%"
+            lambda r: (f"{'' if r['전년비'] >= 0 else '△'}{abs(r['전년비']):.1f}%"
                        if r["구분"] == cols[0] and pd.notna(r["전년비"]) else "-"),
             axis=1,
         )
@@ -700,7 +696,6 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     _is_monthly = unit in ("월별", "월마감")
     _event_rows = []
-    _anomaly_rows = []
     if _is_monthly:
         x_enc = alt.X(
             "날짜:T", title=None, timeUnit="yearmonth",
@@ -734,21 +729,6 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         for ev_date, ev_label in DASHBOARD_EVENTS:
             if ev_date.normalize() in set(pd.DatetimeIndex(_uniq_dates).normalize()):
                 _event_rows.append({"_date_label": ev_date.strftime("%m/%d"), "이벤트": ev_label})
-
-        # 전일비/전주비 급등/급락 자동 감지 — 금년(cols[0]) 라인 기준. 사람이 등록한
-        # 이벤트와는 별도 목록(_anomaly_rows)으로 관리해서, 차트에서 다른 색/모양으로
-        # 구분해 보여준다. (일별/주별 둘 다 여기로 오므로, 라벨만 단위에 맞게 바꾼다)
-        _anomaly_prev_label = "전주비" if unit == "주별" else "전일비"
-        _anomaly_rows = []
-        _cur_series_daily = _df[_df.columns[0]].sort_index()  # _df는 원본 컬럼명 그대로(cols는 이미 표시 라벨로 바뀐 뒤)
-        _pct_change = _cur_series_daily.pct_change() * 100
-        for _d, _chg in _pct_change.items():
-            if pd.notna(_chg) and abs(_chg) >= ANOMALY_THRESHOLD_PCT and _d in set(_uniq_dates):
-                _dir = "급등" if _chg > 0 else "급락"
-                _anomaly_rows.append({
-                    "_date_label": pd.Timestamp(_d).strftime("%m/%d"),
-                    "이상치": f"{_anomaly_prev_label} {_dir} {abs(_chg):.0f}%",
-                })
 
     chart = (
         alt.Chart(long_df)
@@ -786,29 +766,12 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
             )
             chart = alt.layer(chart, _ev_marker).resolve_scale(x="shared", y="shared")
 
-    if _anomaly_rows:
-        _an_df = pd.DataFrame(_anomaly_rows)
-        _main_vals2 = long_df[long_df["구분"] == cols[0]][["_date_label", "값"]]
-        _an_df = _an_df.merge(_main_vals2, on="_date_label", how="left").dropna(subset=["값"])
-        if not _an_df.empty:
-            _an_marker = alt.Chart(_an_df).mark_point(
-                shape="diamond", size=90, color="#f59e0b", filled=True, opacity=0.9,
-            ).encode(
-                x=alt.X("_date_label:O", sort=_label_order),
-                y=alt.Y("값:Q"),
-                tooltip=[alt.Tooltip("_date_label:N", title="날짜"), alt.Tooltip("이상치:N", title="이상치")],
-            )
-            chart = alt.layer(chart, _an_marker).resolve_scale(x="shared", y="shared")
-
     # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
     st.altair_chart(chart, use_container_width=True)
 
     if _event_rows:
         _ev_caption = "  ·  ".join(f"📌 {r['_date_label']} {r['이벤트']}" for r in _event_rows)
         st.caption(_ev_caption)
-    if _anomaly_rows:
-        _an_caption = "  ·  ".join(f"🔶 {r['_date_label']} {r['이상치']}" for r in _anomaly_rows)
-        st.caption(f"이상치 자동 감지({ANOMALY_THRESHOLD_PCT}% 이상 변동): {_an_caption}")
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
@@ -911,8 +874,8 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
         if v is None:
             return "<span style='color:#9ca3af'>-</span>"
         color = "#16a34a" if v >= 0 else "#dc2626"
-        arrow = "▲" if v >= 0 else "△"
-        return f"<span style='color:{color};font-weight:600'>{arrow} {abs(v):.1f}%</span>"
+        text = f"{abs(v):.1f}%" if v >= 0 else f"△ {abs(v):.1f}%"
+        return f"<span style='color:{color};font-weight:600'>{text}</span>"
 
     legend_items = []
     for i, (lab, val) in enumerate(zip(labels, values)):
@@ -3792,7 +3755,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
                 if _s25 is not None and _wk in _s25.index and pd.notna(_s25.loc[_wk]) and _s25.loc[_wk] != 0:
                     long_df.at[idx, "전년비"] = (long_df.at[idx, "값"] / _s25.loc[_wk] - 1) * 100
         long_df["전년비_표시"] = long_df["전년비"].apply(
-            lambda v: f"{'▲' if v >= 0 else '△'}{abs(v):.1f}%" if pd.notna(v) else "-"
+            lambda v: f"{'' if v >= 0 else '△'}{abs(v):.1f}%" if pd.notna(v) else "-"
         )
 
         _domain = [d for d in s_by_label.keys() if d in long_df["구분"].unique()]
