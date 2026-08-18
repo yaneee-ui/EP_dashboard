@@ -201,11 +201,11 @@ def format_value(value: float, metric: str) -> str:
 
 
 def format_delta_html(delta) -> str:
-    """증가=초록 ▲ / 감소=빨강 △ 로 대시보드 전체에서 통일된 표기를 쓴다."""
+    """증가=초록(기호 없음) / 감소=빨강 △ 로 대시보드 전체에서 통일된 표기를 쓴다."""
     if delta is None or pd.isna(delta):
         return "<span class='delta neutral'>-</span>"
     if delta > 0:
-        return f"<span class='delta up'>▲ {delta:.1f}%</span>"
+        return f"<span class='delta up'>{delta:.1f}%</span>"
     elif delta < 0:
         return f"<span class='delta down'>△ {abs(delta):.1f}%</span>"
     return "<span class='delta neutral'>- 0.0%</span>"
