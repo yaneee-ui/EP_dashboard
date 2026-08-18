@@ -19,7 +19,7 @@ def generate_auto_summary(payload, period_label="", extra_sections=None):
     톱무버 등 KPI 카드 밖의 다른 표 내용도 같이 담을 때 씀. 없으면 실적 섹션만 표시.
     HTML로 반환한다 — 카드 전체가 unsafe_allow_html로 그려지는데 마크다운 **볼드**를
     섞어 쓰면 일부만 볼드되는 등 렌더링이 깨지는 문제가 있어서, 처음부터 <b> 태그로 만든다.
-    색상(▲초록/△빨강)은 나머지 대시보드 전체에서 쓰는 format_delta_html을 그대로 재사용해서
+    색상(초록=증가/△빨강=감소)은 나머지 대시보드 전체에서 쓰는 format_delta_html을 그대로 재사용해서
     스타일을 통일한다."""
     if not payload and not extra_sections:
         return "<div style='color:#9ca3af;'>표시할 데이터가 없습니다.</div>"
@@ -60,11 +60,11 @@ def generate_auto_summary_plain(payload, period_label="", extra_sections=None):
             _bits = [f"{item['name']} {item.get('value', '-')}"]
             _pd_ = item.get("prev_delta")
             if _pd_ is not None:
-                _arrow = "▲" if _pd_ >= 0 else "△"
+                _arrow = "" if _pd_ >= 0 else "△"
                 _bits.append(f"{item.get('prev_label', '전기간')} {_arrow}{abs(_pd_):.1f}%")
             _yd_ = item.get("yoy_delta")
             if _yd_ is not None:
-                _arrow2 = "▲" if _yd_ >= 0 else "△"
+                _arrow2 = "" if _yd_ >= 0 else "△"
                 _bits.append(f"{item.get('yoy_label', '전년')} {_arrow2}{abs(_yd_):.1f}%")
             lines.append(" · ".join(_bits))
         return "\n".join(lines)
