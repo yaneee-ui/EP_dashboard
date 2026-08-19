@@ -308,7 +308,50 @@ def _week_labels_for_year(daily_df, metric, year):
     return labels
 
 
-def aggregate_ep(df, bpus, match_status, lowest_status):
+def _correct_partial_week_yoy(s_target_year, s_ref_year, raw_daily_target, raw_daily_ref, target_year, ref_year):
+    """s_target_year(예: 26년)의 마지막 주차가 아직 진행 중(부분)이면, s_ref_year(예: 25년)의
+    같은 주차 값도 '같은 요일 위치까지만' 반영하도록 재계산해서 돌려준다.
+
+    문제였던 것: _weekly_of_year가 각 연도를 독립적으로 리샘플(평균)하다 보니, 올해
+    최신 주차가 아직 2일치(예: 월·화)만 있어도 작년 같은 주차는 이미 다 지나서 7일
+    전체 평균이 그대로 나온다 — '올해 2일'을 '작년 7일'과 비교하는 불공정한 비교였음.
+    이 함수는 올해 마지막 주차에 실제로 존재하는 요일 위치(월=0~일=6)를 확인해서,
+    작년 같은 주차에서도 그 요일들에 해당하는 값만 뽑아 평균 내서 덮어쓴다.
+    (완성된 주차라면 그대로 반환 — 보정이 필요 없음)"""
+    if s_target_year.empty or raw_daily_target.empty or s_ref_year.empty:
+        return s_ref_year
+    last_week_num = s_target_year.index[-1]
+    if last_week_num not in s_ref_year.index:
+        return s_ref_year
+
+    _jan1_target = pd.Timestamp(f"{target_year}-01-01")
+    _mon0_target = _jan1_target - pd.Timedelta(days=_jan1_target.weekday())
+    _week_start_target = _mon0_target + pd.Timedelta(weeks=last_week_num - 1)
+    _week_end_target = _week_start_target + pd.Timedelta(days=6)
+
+    _actual_days_target = raw_daily_target[
+        (raw_daily_target.index >= _week_start_target) & (raw_daily_target.index <= _week_end_target)
+    ]
+    if _actual_days_target.empty or len(_actual_days_target) >= 7:
+        return s_ref_year  # 데이터가 없거나 이미 7일 다 있으면(완성된 주) 보정 필요 없음
+
+    _weekday_positions = sorted(set(d.weekday() for d in _actual_days_target.index))
+
+    _jan1_ref = pd.Timestamp(f"{ref_year}-01-01")
+    _mon0_ref = _jan1_ref - pd.Timedelta(days=_jan1_ref.weekday())
+    _week_start_ref = _mon0_ref + pd.Timedelta(weeks=last_week_num - 1)
+    _matching_ref_dates = [_week_start_ref + pd.Timedelta(days=wd) for wd in _weekday_positions]
+
+    _matched_vals = raw_daily_ref.reindex(_matching_ref_dates).dropna()
+    if _matched_vals.empty:
+        return s_ref_year
+
+    s_ref_year = s_ref_year.copy()
+    s_ref_year.loc[last_week_num] = _matched_vals.mean()
+    return s_ref_year
+
+
+
     """여러 BPU의 EP채널 데이터를 합산. 비율 지표는 재계산."""
     sub = df[(df[COL_BPU].isin(bpus)) & (df[COL_MATCH] == match_status) & (df[COL_LOWEST] == lowest_status)]
     if sub.empty:
@@ -3722,6 +3765,37 @@ def _render_weekly_segment_page(page_title, traffic_segment):
         st.info("데이터가 없습니다. 사이드바에서 ep_traffic.csv를 업로드해주세요.")
         return
 
+    # 최신(마지막) 주차의 정확한 날짜 범위를 26년/25년 둘 다 보여준다 — 부분주(진행중인
+    # 주)일 때 "정확히 며칠까지 들어있는지" 헷갈리기 쉬워서 (방금 발견한 부분주 비교
+    # 버그도 이런 확인 과정에서 나온 것).
+    _wk_ref_total = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+    if not _wk_ref_total.empty:
+        _wk_ref_26 = _wk_ref_total[_wk_ref_total["날짜"].dt.year == 2026]
+        if not _wk_ref_26.empty:
+            _wk_last_date_26 = _wk_ref_26["날짜"].max()
+            _wk_mon0_26 = pd.Timestamp("2026-01-01") - pd.Timedelta(days=pd.Timestamp("2026-01-01").weekday())
+            _wk_last_week_num = ((_wk_last_date_26 - _wk_mon0_26).days // 7) + 1
+            _wk_week_start_26 = _wk_mon0_26 + pd.Timedelta(weeks=_wk_last_week_num - 1)
+            _wk_actual_days_26 = _wk_ref_26[
+                (_wk_ref_26["날짜"] >= _wk_week_start_26) & (_wk_ref_26["날짜"] <= _wk_week_start_26 + pd.Timedelta(days=6))
+            ]["날짜"].sort_values()
+            if not _wk_actual_days_26.empty:
+                _wk_mon0_25 = pd.Timestamp("2025-01-01") - pd.Timedelta(days=pd.Timestamp("2025-01-01").weekday())
+                _wk_week_start_25 = _wk_mon0_25 + pd.Timedelta(weeks=_wk_last_week_num - 1)
+                _wk_weekday_positions = sorted(set(d.weekday() for d in _wk_actual_days_26))
+                _wk_matching_25 = [_wk_week_start_25 + pd.Timedelta(days=wd) for wd in _wk_weekday_positions]
+
+                def _md(d):
+                    return f"{d.month}/{d.day}"
+
+                _wk_26_rng = f"{_md(_wk_actual_days_26.min())}~{_md(_wk_actual_days_26.max())}"
+                _wk_25_rng = f"{_md(min(_wk_matching_25))}~{_md(max(_wk_matching_25))}"
+                _wk_partial_note = "" if len(_wk_actual_days_26) >= 7 else f" (진행 중 — {len(_wk_actual_days_26)}일치)"
+                st.caption(
+                    f"📅 최신 주차({_wk_last_week_num}주차) 기준: 26년 {_wk_26_rng}{_wk_partial_note}"
+                    f"  vs  25년(동요일) {_wk_25_rng}"
+                )
+
     def _render_weekly_yearly_chart(title, s_by_label, wk_range, color_scheme=None, y_domain=None, week_labels=None):
         """s_by_label: {라벨: Series(주차 정수 인덱스)} — 라벨 순서대로 그린다.
         wk_range: (시작주차, 끝주차) — 이 범위만 잘라서 표시.
@@ -3839,10 +3913,18 @@ def _render_weekly_segment_page(page_title, traffic_segment):
             s2025 = _weekly_of_year(_d, metric, 2025)
             s2026 = _weekly_of_year(_d, metric, 2026)
 
+            # 26년 마지막 주차가 아직 진행 중(부분)이면, 25년 같은 주차도 동일한 요일
+            # 위치까지만 반영하도록 보정한다 (안 그러면 '26년 며칠치'를 '25년 7일 전체'와
+            # 비교하는 불공정한 비교가 됨 — 2026-08-13에 실제로 이 문제가 있는 걸 확인함).
+            _raw_target = _d.set_index("날짜")[metric].sort_index()
+            s2025 = _correct_partial_week_yoy(s2026, s2025, _raw_target, _raw_target, 2026, 2025)
+
             s2025_ff = None
             if show_ff and kind == "single" and _base_ff is not None:
                 _d_ff = _base_ff[_base_ff["BPU"] == bpu_sel][["날짜", metric]]
                 s2025_ff = _weekly_of_year(_d_ff, metric, 2025)
+                _raw_ff_ref = _d_ff.set_index("날짜")[metric].sort_index()
+                s2025_ff = _correct_partial_week_yoy(s2026, s2025_ff, _raw_target, _raw_ff_ref, 2026, 2025)
 
             _series_map = {"25년": s2025, "26년": s2026}
             if s2025_ff is not None and not s2025_ff.empty:
