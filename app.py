@@ -2012,8 +2012,8 @@ if side["page"].startswith("1."):
 
                 _kpi_yoy_note = "전년 동월" if unit == "월마감" else "동요일 기준"
                 st.markdown(
-                    f"<div class='chart-caption'>📅 {_kc_s.year}년: {_md(_kc_s)}~{_md(_kc_e)}"
-                    f" &nbsp;vs&nbsp; {_kp_s.year}년({_kpi_yoy_note}): {_md(_kp_s)}~{_md(_kp_e)}</div>",
+                    f"<div class='chart-caption'>📅 {_kc_s.year}년: {_md(_kc_s)}-{_md(_kc_e)}"
+                    f" &nbsp;vs&nbsp; {_kp_s.year}년({_kpi_yoy_note}): {_md(_kp_s)}-{_md(_kp_e)}</div>",
                     unsafe_allow_html=True,
                 )
 
@@ -2173,9 +2173,9 @@ if side["page"].startswith("1."):
         if show_tr_yoy and not tr_series.empty:
             _yoy_s = prev_dates[0].strftime('%Y-%m-%d')
             _yoy_e = prev_dates[-1].strftime('%Y-%m-%d')
-            _yoy_note = f"<br/>전년 비교: {_yoy_s} ~ {_yoy_e} (동요일 기준)"
+            _yoy_note = f"<br/>전년 비교: {_yoy_s} - {_yoy_e} (동요일 기준)"
         st.markdown(
-            f"<div class='chart-caption'>올해: {_tr_start} ~ {_tr_end}{_yoy_note}</div>",
+            f"<div class='chart-caption'>올해: {_tr_start} - {_tr_end}{_yoy_note}</div>",
             unsafe_allow_html=True,
         )
 
@@ -3672,8 +3672,8 @@ if side["page"].startswith("6."):
             _wk_month_start = pd.Timestamp(_wk_ref).replace(day=1)
             _wk_cur_days = _all_dates[(_all_dates >= _wk_month_start) & (_all_dates <= pd.Timestamp(_wk_ref))]
             _wk_prev_days = pd.DatetimeIndex([d - pd.Timedelta(days=364) for d in _wk_cur_days])
-            _wk_cur_rng = f"{_wk_cur_days.min().strftime('%y.%m.%d')} ~ {_wk_cur_days.max().strftime('%m.%d')}" if len(_wk_cur_days) else "-"
-            _wk_prev_rng = f"{_wk_prev_days.min().strftime('%y.%m.%d')} ~ {_wk_prev_days.max().strftime('%m.%d')}" if len(_wk_prev_days) else "-"
+            _wk_cur_rng = f"{_wk_cur_days.min().strftime('%y.%m.%d')} - {_wk_cur_days.max().strftime('%m.%d')}" if len(_wk_cur_days) else "-"
+            _wk_prev_rng = f"{_wk_prev_days.min().strftime('%y.%m.%d')} - {_wk_prev_days.max().strftime('%m.%d')}" if len(_wk_prev_days) else "-"
 
             _wk_tr_max = df_traffic["날짜"].max() if not df_traffic.empty else None
             _wk_cat_max = df_category["날짜"].max() if not df_category.empty else None
@@ -3788,8 +3788,8 @@ def _render_weekly_segment_page(page_title, traffic_segment):
                 def _md(d):
                     return f"{d.month}/{d.day}"
 
-                _wk_26_rng = f"{_md(_wk_actual_days_26.min())}~{_md(_wk_actual_days_26.max())}"
-                _wk_25_rng = f"{_md(min(_wk_matching_25))}~{_md(max(_wk_matching_25))}"
+                _wk_26_rng = f"{_md(_wk_actual_days_26.min())}-{_md(_wk_actual_days_26.max())}"
+                _wk_25_rng = f"{_md(min(_wk_matching_25))}-{_md(max(_wk_matching_25))}"
                 _wk_partial_note = "" if len(_wk_actual_days_26) >= 7 else f" (진행 중 — {len(_wk_actual_days_26)}일치)"
                 st.caption(
                     f"📅 최신 주차({_wk_last_week_num}주차) 기준: 26년 {_wk_26_rng}{_wk_partial_note}"
