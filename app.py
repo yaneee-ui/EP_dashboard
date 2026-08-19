@@ -1561,14 +1561,56 @@ with _sticky:
         )
 
     # ========================================================
-    # 페이지 10: 종합 요약 — 별도 필터 없이 제목만 (페이지 자체가 최신일 기준 요약이라
-    # 복잡한 기간 선택 UI가 필요 없음)
+    # 페이지 10: 종합 요약 — 1/2번 페이지와 동일한 스타일로 기준시점(전역 조회단위 기준)
+    # + 세그먼트를 상단 고정 영역에 배치 (별도 조회단위 선택은 안 둠 — 사이드바 것과
+    # 중복돼서 혼란스러웠던 걸 반영해 제거)
     # ========================================================
     elif _page_num == "10":
+        _sum_period_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+        if _sum_period_base.empty:
+            _sum_period_base = df_traffic[df_traffic["BPU"] == "Total"]
+        _sum_period_s = (
+            _sum_period_base.set_index("날짜")["트래픽"].resample(UNIT_CONFIG[unit]["rule"]).mean().dropna()
+        )
+        if unit == "주별":
+            _sum_period_s.index = _sum_period_s.index - pd.Timedelta(days=6)
+        if unit == "월마감":
+            _sum_last_base_date = _sum_period_base["날짜"].max()
+            if not _sum_period_s.empty and _sum_last_base_date < _sum_period_s.index[-1]:
+                _sum_period_s = _sum_period_s.iloc[:-1]
+
+        _sum_period_labels = [make_period_label(d, unit) for d in _sum_period_s.index]
+        _sum_default_label = _sum_period_labels[-1] if _sum_period_labels else ""
+        _sum_prev_label_sel = st.session_state.get("sum_period_filter", _sum_default_label)
+        _sum_period_preview = _sum_prev_label_sel if _sum_prev_label_sel in _sum_period_labels else _sum_default_label
+        _sum_prev_segment = st.session_state.get("sum_segment_filter", "전체")
+
         st.markdown(
-            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            f"<div style='display:flex;align-items:baseline;gap:10px;flex-wrap:wrap;margin-bottom:6px;'>"
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>"
+            f"<span style='font-size:0.8rem;color:#6b7280;'>조회 단위: <b>{unit}</b> · 기준: <b>{_sum_period_preview}</b>"
+            f" · 세그먼트: <b>{_sum_prev_segment}</b></span>"
+            f"</div>",
             unsafe_allow_html=True,
         )
+
+        _sfc1, _sfc2, _sfc_spacer = st.columns([1.3, 1.3, 6])
+        with _sfc1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기준시점</div>", unsafe_allow_html=True)
+            if _sum_period_labels:
+                _sum_sel_label = st.selectbox(
+                    "기준시점", _sum_period_labels, index=len(_sum_period_labels) - 1,
+                    label_visibility="collapsed", key="sum_period_filter",
+                )
+                sum_selected_period_date = _sum_period_s.index[_sum_period_labels.index(_sum_sel_label)]
+            else:
+                sum_selected_period_date = df_traffic["날짜"].max() if not df_traffic.empty else pd.Timestamp.today()
+        with _sfc2:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>세그먼트</div>", unsafe_allow_html=True)
+            sum_segment = st.radio(
+                "세그먼트", ["전체", "회원", "신규"], horizontal=True,
+                label_visibility="collapsed", key="sum_segment_filter",
+            )
 
     # ========================================================
     # 페이지 7/8/9: 전체·회원·신규 실적(주차별) — 주차 범위 필터를 상단 고정 영역에 배치
@@ -1808,7 +1850,7 @@ st.markdown(
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
 if _page_num == "4":
     _spacer_height = 155
-elif _page_num in ("1", "2", "3"):
+elif _page_num in ("1", "2", "3", "10"):
     _spacer_height = 100
 else:
     _spacer_height = 65
@@ -4002,42 +4044,12 @@ if side["page"].startswith("9."):
 # (A: 핵심 지표 한눈에 + C: 카테고리×브랜드 피벗 테이블)
 # ============================================================
 if side["page"].startswith("10"):
-    st.markdown("### 🧭 종합 요약")
-    st.caption("여러 페이지에 흩어진 핵심 지표를 한 화면에 모았어요 — 상세 분석·필터링은 각 페이지에서 확인하세요.")
-
     if df_traffic.empty:
         st.info("데이터가 없습니다. 사이드바에서 데이터를 업로드해주세요.")
     else:
-        # ── 필터 3종: 조회단위 / 기준시점 / 세그먼트 ──
-        # (사이드바의 전역 조회단위와는 별개로, 이 페이지 전용으로 독립적으로 선택한다 —
-        # 요약 페이지만 다른 시점/단위로 보고 싶을 때가 있어서.)
-        _sum_f1, _sum_f2, _sum_f3 = st.columns([1.2, 1.6, 1.4])
-        with _sum_f1:
-            _sum_unit = st.radio("조회단위", ["일별", "주별", "월별", "월마감"], horizontal=True, key="sum_unit")
-        with _sum_f2:
-            _sum_total_dates = df_traffic[df_traffic["BPU"] == "Total"]["날짜"]
-            if _sum_total_dates.empty:
-                _sum_total_dates = df_traffic["날짜"]
-            _sum_period_series = pd.Series(1, index=pd.DatetimeIndex(_sum_total_dates)).sort_index()
-            _sum_period_full = _sum_period_series.resample(UNIT_CONFIG[_sum_unit]["rule"]).size()
-            _sum_period_idx = _sum_period_full[_sum_period_full > 0].index
-            if _sum_unit == "주별":
-                _sum_period_idx = _sum_period_idx - pd.Timedelta(days=6)
-            _sum_period_options = list(_sum_period_idx)
-            _sum_period_labels = [make_period_label(d, _sum_unit) for d in _sum_period_options]
-            if _sum_period_labels:
-                _sum_label_to_date = dict(zip(_sum_period_labels, _sum_period_options))
-                _sum_sel_label = st.selectbox(
-                    "기준시점", _sum_period_labels, index=len(_sum_period_labels) - 1, key="sum_period",
-                )
-                _sum_ref = pd.Timestamp(_sum_label_to_date[_sum_sel_label])
-            else:
-                _sum_ref = df_traffic["날짜"].max()
-        with _sum_f3:
-            _sum_segment = st.radio("세그먼트", ["전체", "회원", "신규"], horizontal=True, key="sum_segment")
-        unit = _sum_unit  # 이 페이지 안에서는 이후 전부 이 선택값을 쓴다 (사이드바 전역 unit 대신)
-
-        st.caption(f"📅 기준: {_sum_ref.strftime('%Y-%m-%d')} · 조회단위: {unit} · 세그먼트: {_sum_segment}")
+        _sum_ref = sum_selected_period_date
+        _sum_segment = sum_segment
+        # unit은 위 스티키 헤더에서 이미 사이드바 전역값 그대로 쓰고 있어서 별도 지정 불필요
 
         # ── 섹션 1: 핵심 지표 (전체 BPU) ──
         st.markdown("#### 📊 핵심 지표 (전체)")
@@ -4066,30 +4078,37 @@ if side["page"].startswith("10"):
 
         st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
-        # ── 섹션 2: BPU별 요약 실적 (전체 지표 x 전체 BPU 표) ──
+        # ── 섹션 2: BPU별 요약 실적 (전체 지표 x 전체 BPU 표, HTML 테이블로 증감률 색상 적용) ──
         st.markdown("#### 🏢 사업부(BPU)별 요약 실적")
         _sum_bpu_order = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
         _sum_bpu_display = {"Total": "전체"}
-        _sum_table_rows = []
+        _sum_header_html = "<th>지표</th>" + "".join(
+            f"<th>{_sum_bpu_display.get(b, b)}</th>" for b in _sum_bpu_order
+        )
+        _sum_body_rows = []
         for _mlabel in _sum_metric_order:
-            _row = {"지표": _mlabel}
+            _cells = [f"<td class='m'>{_mlabel}</td>"]
             for _bpu in _sum_bpu_order:
                 _match = [r for r in _sum_bpu_rows if r["metric_label"] == _mlabel and r["bpu"] == _bpu]
                 _r = _match[0] if _match else None
-                _bpu_col_label = _sum_bpu_display.get(_bpu, _bpu)
                 if _r is None or _r["stats"] is None:
-                    _row[_bpu_col_label] = "-"
+                    _cells.append("<td class='v'>-</td>")
                     continue
                 _stats = _r["stats"]
                 _is_pct = _r["is_pct"]
                 _val_str = f"{_stats['current']:.1f}%" if _is_pct else f"{_stats['current']:,.0f}"
                 _yoy_d = _stats.get("yoy_delta")
-                _yoy_str = f" ({format_delta_text(_yoy_d)})" if _yoy_d is not None else ""
-                _row[_bpu_col_label] = f"{_val_str}{_yoy_str}"
-            _sum_table_rows.append(_row)
-        _sum_table_df = pd.DataFrame(_sum_table_rows).set_index("지표")
-        st.dataframe(_sum_table_df, use_container_width=True)
-        st.caption(f"괄호 안은 {_sum_cfg['yoy_label']}. 5개 지표 x 7개 BPU 구분 전체를 한 번에 봐요 — 상세 필터는 1번 페이지에서.")
+                _delta_html = format_delta_html(_yoy_d) if _yoy_d is not None else ""
+                _cells.append(
+                    f"<td class='v'>{_val_str}<br/><span style='font-size:0.78em;font-weight:400;'>{_delta_html}</span></td>"
+                )
+            _sum_body_rows.append(f"<tr>{''.join(_cells)}</tr>")
+        st.markdown(
+            f"<table class='summary-table'><thead><tr>{_sum_header_html}</tr></thead>"
+            f"<tbody>{''.join(_sum_body_rows)}</tbody></table>",
+            unsafe_allow_html=True,
+        )
+        st.caption(f"괄호 없이 아래 작은 글씨가 {_sum_cfg['yoy_label']}. 5개 지표 x 7개 BPU 구분 전체를 한 번에 봐요 — 상세 필터는 1번 페이지에서.")
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
