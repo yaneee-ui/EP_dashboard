@@ -24,7 +24,7 @@ from comparison_table import render_summary_table_html
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
     resample_series, make_period_label, compute_kpi_deltas, week_of_month, raw_cutoff_date,
-    format_value, format_delta_html,
+    format_value, format_delta_html, format_delta_text,
 )
 from utils import _match_mean, _partial_last_period
 from styles import CUSTOM_CSS
@@ -3926,9 +3926,36 @@ if side["page"].startswith("10"):
     if df_traffic.empty:
         st.info("데이터가 없습니다. 사이드바에서 데이터를 업로드해주세요.")
     else:
-        # 이 페이지는 요약용이라 별도 기간 필터 없이, 데이터의 절대 최신 날짜를 기준으로 한다.
-        _sum_ref = df_traffic["날짜"].max()
-        st.caption(f"📅 기준: {_sum_ref.strftime('%Y-%m-%d')} (데이터 최신일) · 조회단위: {unit}")
+        # ── 필터 3종: 조회단위 / 기준시점 / 세그먼트 ──
+        # (사이드바의 전역 조회단위와는 별개로, 이 페이지 전용으로 독립적으로 선택한다 —
+        # 요약 페이지만 다른 시점/단위로 보고 싶을 때가 있어서.)
+        _sum_f1, _sum_f2, _sum_f3 = st.columns([1.2, 1.6, 1.4])
+        with _sum_f1:
+            _sum_unit = st.radio("조회단위", ["일별", "주별", "월별", "월마감"], horizontal=True, key="sum_unit")
+        with _sum_f2:
+            _sum_total_dates = df_traffic[df_traffic["BPU"] == "Total"]["날짜"]
+            if _sum_total_dates.empty:
+                _sum_total_dates = df_traffic["날짜"]
+            _sum_period_series = pd.Series(1, index=pd.DatetimeIndex(_sum_total_dates)).sort_index()
+            _sum_period_full = _sum_period_series.resample(UNIT_CONFIG[_sum_unit]["rule"]).size()
+            _sum_period_idx = _sum_period_full[_sum_period_full > 0].index
+            if _sum_unit == "주별":
+                _sum_period_idx = _sum_period_idx - pd.Timedelta(days=6)
+            _sum_period_options = list(_sum_period_idx)
+            _sum_period_labels = [make_period_label(d, _sum_unit) for d in _sum_period_options]
+            if _sum_period_labels:
+                _sum_label_to_date = dict(zip(_sum_period_labels, _sum_period_options))
+                _sum_sel_label = st.selectbox(
+                    "기준시점", _sum_period_labels, index=len(_sum_period_labels) - 1, key="sum_period",
+                )
+                _sum_ref = pd.Timestamp(_sum_label_to_date[_sum_sel_label])
+            else:
+                _sum_ref = df_traffic["날짜"].max()
+        with _sum_f3:
+            _sum_segment = st.radio("세그먼트", ["전체", "회원", "신규"], horizontal=True, key="sum_segment")
+        unit = _sum_unit  # 이 페이지 안에서는 이후 전부 이 선택값을 쓴다 (사이드바 전역 unit 대신)
+
+        st.caption(f"📅 기준: {_sum_ref.strftime('%Y-%m-%d')} · 조회단위: {unit} · 세그먼트: {_sum_segment}")
 
         # ── 섹션 1: 핵심 지표 (전체 BPU) ──
         st.markdown("#### 📊 핵심 지표 (전체)")
@@ -3975,7 +4002,7 @@ if side["page"].startswith("10"):
                 _is_pct = _r["is_pct"]
                 _val_str = f"{_stats['current']:.1f}%" if _is_pct else f"{_stats['current']:,.0f}"
                 _yoy_d = _stats.get("yoy_delta")
-                _yoy_str = f" ({'+' if (_yoy_d or 0) >= 0 else ''}{_yoy_d:.1f}%)" if _yoy_d is not None else ""
+                _yoy_str = f" ({format_delta_text(_yoy_d)})" if _yoy_d is not None else ""
                 _row[_bpu_col_label] = f"{_val_str}{_yoy_str}"
             _sum_table_rows.append(_row)
         _sum_table_df = pd.DataFrame(_sum_table_rows).set_index("지표")
@@ -3986,7 +4013,7 @@ if side["page"].startswith("10"):
         st.markdown("---")
 
         # ── 섹션 3: 카테고리 하이라이트 (거래액 전년비 최대상승/하락, BPU별로 구분) ──
-        st.markdown("#### 📈 카테고리 하이라이트 (거래액 전년비, BPU별)")
+        st.markdown(f"#### 📈 카테고리 하이라이트 (거래액 전년비, BPU별 · {_sum_segment})")
         if df_category.empty:
             st.info("카테고리 데이터가 없습니다.")
         else:
@@ -3996,7 +4023,7 @@ if side["page"].startswith("10"):
                     st.markdown(f"<div style='font-weight:600;font-size:0.85rem;margin-bottom:4px;'>{_hbpu}</div>", unsafe_allow_html=True)
                     _cat_base_b = df_category[
                         (df_category["BPU"] == _hbpu) & (df_category["카테고리"] != "전체") & (df_category["브랜드"] == "전체")
-                        & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
+                        & (df_category.get("회원구분", _sum_segment) == _sum_segment if "회원구분" in df_category.columns else True)
                     ]
                     if _cat_base_b.empty:
                         st.caption("데이터 없음")
@@ -4036,7 +4063,7 @@ if side["page"].startswith("10"):
         st.markdown("---")
 
         # ── 섹션 4: 카테고리 × 브랜드 피벗 테이블 (최근 30일 거래액, e-영업1/2 각각 — 입점 제외) ──
-        st.markdown("#### 🗂️ 카테고리 × 브랜드 피벗 (최근 30일 거래액, 자사 e-영업1/2 — 입점 제외)")
+        st.markdown(f"#### 🗂️ 카테고리 × 브랜드 피벗 (최근 30일 거래액, 자사 e-영업1/2 — 입점 제외 · {_sum_segment})")
         if df_category.empty:
             st.info("카테고리 데이터가 없습니다.")
         else:
@@ -4070,7 +4097,7 @@ if side["page"].startswith("10"):
                     (df_category["BPU"] == bpu_value)
                     & (df_category["카테고리"] != "전체") & (df_category["브랜드"] != "전체")
                     & (df_category["날짜"] >= _piv_start) & (df_category["날짜"] <= _sum_ref)
-                    & (df_category.get("회원구분", "전체") == "전체" if "회원구분" in df_category.columns else True)
+                    & (df_category.get("회원구분", _sum_segment) == _sum_segment if "회원구분" in df_category.columns else True)
                 ]
                 if _piv_base.empty:
                     st.info(f"{bpu_value}: 최근 30일 카테고리×브랜드 데이터가 없습니다.")
