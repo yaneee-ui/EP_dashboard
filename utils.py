@@ -211,6 +211,18 @@ def format_delta_html(delta) -> str:
     return "<span class='delta neutral'>- 0.0%</span>"
 
 
+def format_delta_text(delta) -> str:
+    """format_delta_html과 완전히 동일한 표기 규칙(증가=기호 없음/감소=△)의 텍스트 전용
+    버전. st.dataframe처럼 HTML이 렌더링 안 되는 곳(색상 없이 텍스트만)에서 쓴다."""
+    if delta is None or pd.isna(delta):
+        return "-"
+    if delta > 0:
+        return f"{delta:.1f}%"
+    elif delta < 0:
+        return f"△ {abs(delta):.1f}%"
+    return "- 0.0%"
+
+
 def raw_cutoff_date(selected_period_date, unit):
     """selected_period_date(주별/월별이면 그 기간의 '시작' 라벨: 주의 월요일, 달의 1일)를
     raw_daily(일별 원본) 절삭용 '그 기간의 끝' 날짜로 바꾼다.
