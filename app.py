@@ -4146,19 +4146,31 @@ if side["page"].startswith("10"):
                         st.caption("전년비 계산 가능한 카테고리 부족")
                         continue
                     _movers_b.sort(key=lambda r: r["전년비"], reverse=True)
-                    _top_up, _top_down = _movers_b[0], _movers_b[-1]
-                    st.markdown(
-                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;margin-bottom:6px;'>"
-                        f"<div style='font-size:0.68rem;color:#16a34a;font-weight:600;'>최대 상승</div>"
-                        f"<div style='font-size:0.85rem;font-weight:700;'>{_top_up['카테고리']}</div>"
-                        f"<div style='font-size:0.72rem;'>{_top_up['거래액']:,.0f} · {format_delta_html(_top_up['전년비'])}</div>"
-                        f"</div>"
-                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;'>"
-                        f"<div style='font-size:0.68rem;color:#dc2626;font-weight:600;'>최대 하락</div>"
-                        f"<div style='font-size:0.85rem;font-weight:700;'>{_top_down['카테고리']}</div>"
-                        f"<div style='font-size:0.72rem;'>{_top_down['거래액']:,.0f} · {format_delta_html(_top_down['전년비'])}</div>"
-                        f"</div>", unsafe_allow_html=True,
-                    )
+                    # 상위 2개(상승) + 하위 2개(하락) — 핏플랍 종료 영향으로 슈즈가 당분간
+                    # 계속 '최대 하락' 1위일 수 있어서, 그 다음(2위) 하락 카테고리도 봐야
+                    # 실제 이상 신호를 놓치지 않는다.
+                    _n_each = min(2, len(_movers_b) // 2) if len(_movers_b) >= 4 else 1
+                    _tops = _movers_b[:_n_each]
+                    _bottoms = _movers_b[-_n_each:][::-1] if _n_each > 0 else []  # 1위 하락부터 순서대로
+                    _cards_html = ""
+                    for _r in _tops:
+                        _cards_html += (
+                            f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;margin-bottom:6px;'>"
+                            f"<div style='font-size:0.68rem;color:#16a34a;font-weight:600;'>최대 상승</div>"
+                            f"<div style='font-size:0.85rem;font-weight:700;'>{_r['카테고리']}</div>"
+                            f"<div style='font-size:0.72rem;'>{_r['거래액']:,.0f} · {format_delta_html(_r['전년비'])}</div>"
+                            f"</div>"
+                        )
+                    for _rank, _r in enumerate(_bottoms, start=1):
+                        _tag = "최대 하락" if _rank == 1 else f"하락 {_rank}위"
+                        _cards_html += (
+                            f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;margin-bottom:6px;'>"
+                            f"<div style='font-size:0.68rem;color:#dc2626;font-weight:600;'>{_tag}</div>"
+                            f"<div style='font-size:0.85rem;font-weight:700;'>{_r['카테고리']}</div>"
+                            f"<div style='font-size:0.72rem;'>{_r['거래액']:,.0f} · {format_delta_html(_r['전년비'])}</div>"
+                            f"</div>"
+                        )
+                    st.markdown(_cards_html, unsafe_allow_html=True)
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
