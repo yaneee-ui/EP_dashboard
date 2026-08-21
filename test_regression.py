@@ -42,12 +42,13 @@ def _load_app_functions(*names):
         src = f.read()
     from utils import (
         UNIT_CONFIG, compute_kpi_deltas, raw_cutoff_date, _partial_last_period, _match_mean,
+        pct_delta_safe,
     )
     ns = {
         "pd": pd, "np": np, "io": io,
         "UNIT_CONFIG": UNIT_CONFIG, "compute_kpi_deltas": compute_kpi_deltas,
         "raw_cutoff_date": raw_cutoff_date, "_partial_last_period": _partial_last_period,
-        "_match_mean": _match_mean,
+        "_match_mean": _match_mean, "pct_delta_safe": pct_delta_safe,
         "BPU_GROUPS": {"자사": ["e-영업1", "e-영업2"], "입점": ["e-영업3", "e-영업4"]},
     }
     for name in names:
@@ -254,8 +255,32 @@ def test_converter_ffill_merged_cells():
 
 
 # ============================================================
-# 실행
+# 5. pct_delta_safe: 전년값이 음수일 때 부호가 뒤집히는 문제 — 2026-08-14 발견 버그
 # ============================================================
+def test_pct_delta_safe_handles_negative_base():
+    print("\n[7] pct_delta_safe — 분모(전년값)가 음수일 때도 부호가 직관적으로 맞는지")
+    from utils import pct_delta_safe
+
+    # 실제로 발견된 버그: 작년 반품/취소로 거래액이 마이너스였고, 올해는 플러스로
+    # 전환(명백한 개선)인데, 기존 공식은 이걸 "-405%"(하락)로 보여줬음.
+    d = pct_delta_safe(12619364, -4137818)
+    check(
+        "적자->흑자 전환은 양수(개선)로 표시돼야 함",
+        d is not None and d > 0,
+        f"got={d}",
+    )
+    check("그 크기도 정확히 405.0%", d is not None and abs(d - 405.0) < 0.1, f"got={d}")
+
+    # 반대 방향(흑자->적자 전환)도 확인 — 이건 음수(악화)로 나와야 정상
+    d2 = pct_delta_safe(-5, 10)
+    check("흑자->적자 전환은 음수(악화)로 표시돼야 함", d2 is not None and d2 < 0, f"got={d2}")
+
+    # 둘 다 양수인 일반적인 경우는 기존 공식과 완전히 동일해야 함(회귀 없음)
+    d3 = pct_delta_safe(15, 10)
+    check("일반적인 경우(둘 다 양수)는 기존 공식과 동일", d3 is not None and abs(d3 - 50.0) < 0.001, f"got={d3}")
+
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("EP 대시보드 회귀 테스트")
@@ -267,6 +292,7 @@ if __name__ == "__main__":
     test_ratio_metric_no_naive_average()
     test_bpu_weekly_report_aov_matches_gmv_over_count()
     test_converter_ffill_merged_cells()
+    test_pct_delta_safe_handles_negative_base()
 
     print()
     print("=" * 60)
