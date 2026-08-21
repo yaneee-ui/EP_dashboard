@@ -698,7 +698,14 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     _yoy_col = cols[1] if len(cols) > 1 else None
     _yoy_map = {}
     if _yoy_col is not None:
-        _yoy_pct = (_df[cols[0]] - _df[_yoy_col]) / _df[_yoy_col].abs() * 100
+        # 전년 데이터가 통째로 없으면(브랜드/카테고리 조합에 작년 실적이 아예 없는 경우)
+        # 이 컬럼이 전부 None이 되면서 dtype이 object로 잡혀서 .abs() 호출 시
+        # "TypeError: bad operand type for abs(): 'NoneType'"가 났음 — 숫자로 강제
+        # 변환(coerce)해서 방지한다(변환 안 되는 값은 NaN이 되고, NaN끼리 연산하면
+        # 결과도 NaN이라 이후 dropna 등에서 자연스럽게 걸러짐).
+        _yoy_numeric = pd.to_numeric(_df[_yoy_col], errors="coerce")
+        _cur_numeric = pd.to_numeric(_df[cols[0]], errors="coerce")
+        _yoy_pct = (_cur_numeric - _yoy_numeric) / _yoy_numeric.abs() * 100
         _yoy_map = _yoy_pct.to_dict()
 
     long_df = _df[cols].reset_index().melt("날짜", var_name="구분", value_name="값")
