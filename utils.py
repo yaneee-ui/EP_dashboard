@@ -186,10 +186,20 @@ def compute_kpi_deltas(series: pd.Series, unit: str, raw_daily: pd.Series = None
     }
 
 
-def _pct_delta(current, ref):
-    if ref is None or pd.isna(ref) or ref == 0 or pd.isna(current):
+def pct_delta_safe(current, ref):
+    """증감률(%) 계산. 분모(ref, 비교 대상 기간 값)가 음수일 때(예: 반품/취소로 그 기간
+    거래액이 마이너스였던 경우) 그냥 (current-ref)/ref로 나누면 부호가 뒤집혀서, '적자에서
+    흑자로 전환'(명백한 개선)인데도 마이너스(하락)로 표시되는 문제가 있었다 — 실제로
+    2026-08-14에 이 문제가 발견됨. 분모를 abs(ref)로 써서, '나아졌으면 항상 양수,
+    나빠졌으면 항상 음수'가 되도록 한다(분모 부호와 무관하게).
+    앱 전체(KPI 카드/표/랭킹 등)에서 증감률을 계산하는 곳은 전부 이 함수로 통일한다."""
+    if ref is None or pd.isna(ref) or ref == 0 or current is None or pd.isna(current):
         return None
-    return (current - ref) / ref * 100
+    return (current - ref) / abs(ref) * 100
+
+
+def _pct_delta(current, ref):
+    return pct_delta_safe(current, ref)
 
 
 def format_value(value: float, metric: str) -> str:
