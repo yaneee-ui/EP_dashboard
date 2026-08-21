@@ -280,6 +280,45 @@ def test_pct_delta_safe_handles_negative_base():
     check("일반적인 경우(둘 다 양수)는 기존 공식과 동일", d3 is not None and abs(d3 - 50.0) < 0.001, f"got={d3}")
 
 
+# ============================================================
+# 6. render_line_chart: 전년 데이터가 통째로 없을 때(object dtype) 크래시 안 나는지
+#    — 2026-08-14 발견 버그 ("TypeError: bad operand type for abs(): 'NoneType'")
+# ============================================================
+def test_render_line_chart_handles_missing_yoy_data():
+    print("\n[8] render_line_chart — 전년 데이터가 전부 없어도 안 죽는지")
+    app_path = os.path.join(_HERE, "app.py")
+    with open(app_path, encoding="utf-8") as f:
+        src = f.read()
+    start = src.index("DASHBOARD_EVENTS = [")
+    end = src.index("\ndef render_donut_chart")
+    func_src = src[start:end]
+
+    class _FakeSt:
+        def info(self, *a, **k): pass
+        def altair_chart(self, chart, **k): pass
+        def caption(self, txt): pass
+
+    ns = {"pd": pd, "st": _FakeSt()}
+    try:
+        exec(func_src, ns)
+    except Exception as e:
+        check("render_line_chart 소스 로드", False, f"exec 실패: {e}")
+        return
+    render_line_chart = ns["render_line_chart"]
+
+    dates = pd.date_range("2026-06-01", periods=5)
+    # 브랜드/카테고리 조합에 작년 실적이 아예 없으면 이 컬럼이 전부 None이 되면서
+    # object dtype이 되고, 예전 코드(.abs() 직접 호출)는 여기서 크래시났음.
+    chart_df = pd.DataFrame(
+        {"거래액": [100, 200, 150, 300, 250], "전년동요일비(전년)": [None] * 5}, index=dates
+    )
+    try:
+        render_line_chart(chart_df, unit="일별")
+        check("전년 데이터 전부 없어도 크래시 안 남", True)
+    except TypeError as e:
+        check("전년 데이터 전부 없어도 크래시 안 남", False, f"TypeError: {e}")
+
+
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -293,6 +332,7 @@ if __name__ == "__main__":
     test_bpu_weekly_report_aov_matches_gmv_over_count()
     test_converter_ffill_merged_cells()
     test_pct_delta_safe_handles_negative_base()
+    test_render_line_chart_handles_missing_yoy_data()
 
     print()
     print("=" * 60)
