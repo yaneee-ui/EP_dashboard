@@ -24,7 +24,7 @@ from comparison_table import render_summary_table_html
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
     resample_series, make_period_label, compute_kpi_deltas, week_of_month, raw_cutoff_date,
-    format_value, format_delta_html, format_delta_text,
+    format_value, format_delta_html, format_delta_text, pct_delta_safe,
 )
 from utils import _match_mean, _partial_last_period
 from styles import CUSTOM_CSS
@@ -429,7 +429,7 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
                     _gmv.get("yoy_value") / _cnt["yoy_value"]
                     if _cnt.get("yoy_value") else None
                 )
-        _yoy_delta = ((_cur_val - _yoy_val) / _yoy_val * 100) if (_cur_val is not None and _yoy_val) else stats.get("yoy_delta")
+        _yoy_delta = pct_delta_safe(_cur_val, _yoy_val) if (_cur_val is not None and _yoy_val) else stats.get("yoy_delta")
         # CR(구매전환율)은 지금 4.8처럼 '이미 100배 된 숫자'로 저장돼 있는데, 엑셀에서
         # 그냥 숫자 옆에 %를 글자로 붙이는 대신 — 0.048처럼 소수로 저장하고 셀 서식을
         # 퍼센트(0.0%)로 지정하면 엑셀이 알아서 "4.8%"로 보여준다(진짜 엑셀 percent
@@ -698,7 +698,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     _yoy_col = cols[1] if len(cols) > 1 else None
     _yoy_map = {}
     if _yoy_col is not None:
-        _yoy_pct = (_df[cols[0]] / _df[_yoy_col] - 1) * 100
+        _yoy_pct = (_df[cols[0]] - _df[_yoy_col]) / _df[_yoy_col].abs() * 100
         _yoy_map = _yoy_pct.to_dict()
 
     long_df = _df[cols].reset_index().melt("날짜", var_name="구분", value_name="값")
@@ -1113,7 +1113,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 _nm_disp = label_map.get(_nm, _nm) if label_map else _nm
                 _yv = None
                 if pd.notna(r["전년거래액"]) and r["전년거래액"] != 0:
-                    _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100
+                    _yv = pct_delta_safe(r["거래액"], r["전년거래액"])
                 _rank_payload.append({
                     "name": str(_nm_disp),
                     "current": float(r["거래액"]) if pd.notna(r["거래액"]) else 0.0,
@@ -1144,7 +1144,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         _pct_width = max(0, (r["거래액"] / _max_gmv * 100)) if _max_gmv > 0 else 0
         _has_prev = pd.notna(r["전년거래액"])
         _prev_pct_width = max(0, (r["전년거래액"] / _max_gmv * 100)) if _has_prev and _max_gmv > 0 else 0
-        _yoy_delta = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if _has_prev and r["전년거래액"] != 0 else None
+        _yoy_delta = pct_delta_safe(r["거래액"], r["전년거래액"]) if _has_prev and r["전년거래액"] != 0 else None
         _prev_val_str = f"{r['전년거래액']:,.0f}" if _has_prev else "-"
 
         _raw_label = r[group_col]
@@ -1182,7 +1182,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
             _values.append(float(r["거래액"]))
             _pv = float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else None
-            _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if (_pv is not None and r["전년거래액"] != 0) else None
+            _yv = pct_delta_safe(r["거래액"], r["전년거래액"]) if (_pv is not None and r["전년거래액"] != 0) else None
             _deltas.append({"prev": _pv, "yoy": _yv})
 
         _rest_df = _dn_pos.iloc[_top_n:] if len(_dn_pos) > _top_n else None
@@ -1190,7 +1190,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _rest_cur = float(_rest_df["거래액"].sum())
             if _rest_cur > 0:
                 _rest_prev = float(_rest_df["전년거래액"].sum(skipna=True)) if _rest_df["전년거래액"].notna().any() else None
-                _rest_yoy = ((_rest_cur / _rest_prev) - 1) * 100 if (_rest_prev and _rest_prev != 0) else None
+                _rest_yoy = pct_delta_safe(_rest_cur, _rest_prev) if (_rest_prev and _rest_prev != 0) else None
                 _labels.append(f"기타 ({len(_rest_df)}개)")
                 _values.append(_rest_cur)
                 _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy})
@@ -1203,7 +1203,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
             _values.append(float(r["거래액"]))
             _pv = float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else None
-            _yv = ((r["거래액"] / r["전년거래액"]) - 1) * 100 if (_pv is not None and r["전년거래액"] != 0) else None
+            _yv = pct_delta_safe(r["거래액"], r["전년거래액"]) if (_pv is not None and r["전년거래액"] != 0) else None
             _deltas.append({"prev": _pv, "yoy": _yv})
 
         # 전체 합계 기준 전년비 — official_total(카테고리=전체 등 진짜 전체값)이 있으면 그걸 우선 사용.
@@ -1216,7 +1216,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _tot_cur = float(share_df["거래액"].sum())
             _tot_prev = float(share_df["전년거래액"].sum(skipna=True)) if share_df["전년거래액"].notna().any() else None
         if _tot_prev and _tot_prev != 0:
-            _tot_yoy = ((_tot_cur / _tot_prev) - 1) * 100
+            _tot_yoy = pct_delta_safe(_tot_cur, _tot_prev)
             _center_sub = f"{_yoy_label_share} {_tot_yoy:+.1f}%"
         else:
             _center_sub = ""
@@ -2330,7 +2330,7 @@ if side["page"].startswith("1."):
                     c_str = f"{c_val:,.0f}"
                     p_str = f"{p_val:,.0f}" if p_val else "-"
 
-                yoy_d = ((c_val / p_val) - 1) * 100 if p_val and p_val != 0 else None
+                yoy_d = pct_delta_safe(c_val, p_val) if p_val and p_val != 0 else None
                 ytd_rows.append(
                     f"<tr><td class='m'>{label}</td><td class='v'>{c_str}</td>"
                     f"<td class='v'>{p_str}</td>"
@@ -3345,9 +3345,7 @@ if side["page"].startswith("5."):
                 _cur_rate = _combined.loc[_latest, "비용률"]
 
                 def _delta_pct(cur, ref):
-                    if ref is None or pd.isna(ref) or ref == 0:
-                        return None
-                    return (cur / ref - 1) * 100
+                    return pct_delta_safe(cur, ref)
 
                 # 전기간비/전년비는 선택 구간 밖 값도 찾을 수 있도록 _combined_full 기준으로 조회
                 _prev_coupon = _combined_full.loc[_prev_period, "쿠폰할인"] if _prev_period in _combined_full.index else None
@@ -3600,8 +3598,8 @@ if side["page"].startswith("5."):
                             _py_rate = _combined_full.loc[_py, "비용률"]
                         else:
                             _py_gmv = _py_coupon = _py_rate = None
-                        _gmv_yoy = ((_cur_gmv_m / _py_gmv) - 1) * 100 if _py_gmv else None
-                        _coupon_yoy = ((_cur_coupon_m / _py_coupon) - 1) * 100 if _py_coupon else None
+                        _gmv_yoy = pct_delta_safe(_cur_gmv_m, _py_gmv) if _py_gmv else None
+                        _coupon_yoy = pct_delta_safe(_cur_coupon_m, _py_coupon) if _py_coupon else None
                         _rate_yoy_pt = (_cur_rate_m - _py_rate) if (_py_rate is not None and pd.notna(_py_rate) and pd.notna(_cur_rate_m)) else None
                         _yoy_rows.append({
                             "연월": _m, "거래액": _cur_gmv_m, "작년거래액": _py_gmv, "거래액증감": _gmv_yoy,
@@ -3869,7 +3867,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
             for idx in long_df[_s26_mask].index:
                 _wk = long_df.at[idx, "주차"]
                 if _s25 is not None and _wk in _s25.index and pd.notna(_s25.loc[_wk]) and _s25.loc[_wk] != 0:
-                    long_df.at[idx, "전년비"] = (long_df.at[idx, "값"] / _s25.loc[_wk] - 1) * 100
+                    long_df.at[idx, "전년비"] = pct_delta_safe(long_df.at[idx, "값"], _s25.loc[_wk])
         long_df["전년비_표시"] = long_df["전년비"].apply(
             lambda v: f"{'' if v >= 0 else '△'}{abs(v):.1f}%" if pd.notna(v) else "-"
         )
@@ -4153,10 +4151,11 @@ if side["page"].startswith("10"):
                     _tops = _movers_b[:_n_each]
                     _bottoms = _movers_b[-_n_each:][::-1] if _n_each > 0 else []  # 1위 하락부터 순서대로
                     _cards_html = ""
-                    for _r in _tops:
+                    for _rank, _r in enumerate(_tops, start=1):
+                        _tag = "최대 상승" if _rank == 1 else f"상승 {_rank}위"
                         _cards_html += (
                             f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 10px;margin-bottom:6px;'>"
-                            f"<div style='font-size:0.68rem;color:#16a34a;font-weight:600;'>최대 상승</div>"
+                            f"<div style='font-size:0.68rem;color:#16a34a;font-weight:600;'>{_tag}</div>"
                             f"<div style='font-size:0.85rem;font-weight:700;'>{_r['카테고리']}</div>"
                             f"<div style='font-size:0.72rem;'>{_r['거래액']:,.0f} · {format_delta_html(_r['전년비'])}</div>"
                             f"</div>"
