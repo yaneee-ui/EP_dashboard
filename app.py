@@ -2949,25 +2949,6 @@ if side["page"].startswith("2."):
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-        # --- 카테고리별 트래픽 비중 (거래액 랭킹과 동일 로직, 지표만 트래픽) ---
-        _share_df_traffic = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
-        if bpu == "Total" or bpu in BPU_GROUPS:
-            _share_df_traffic = _share_df_traffic.groupby(["날짜", "카테고리"], as_index=False)["트래픽"].sum()
-        _official_all_df_traffic = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] == "전체")]
-        if bpu == "Total" or bpu in BPU_GROUPS:
-            _official_all_df_traffic = _official_all_df_traffic.groupby("날짜", as_index=False)["트래픽"].sum()
-        _official_cat_total_traffic = compute_official_total(_official_all_df_traffic, unit, selected_period_date, metric_col="트래픽")
-
-        render_revenue_ranking(_share_df_traffic, "카테고리", unit, selected_period_date, "카테고리별 트래픽 비중", f"{bpu} 기준",
-                               donut=True, official_total=_official_cat_total_traffic,
-                               metric_col="트래픽", metric_label="트래픽",
-                               bar_color_cur="#ea580c", bar_color_prev="#fdba74",
-                               donut_colors=["#ea580c", "#f97316", "#fb923c", "#fdba74", "#fed7aa",
-                                             "#c2410c", "#9a3412", "#7c2d12", "#fef3c7", "#fde68a", "#e2e8f0"],
-                               ai_key="cat_share_traffic", ai_context=f"카테고리별 트래픽 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
-
-        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-
         # --- 브랜드별 거래액 랭킹 ---
         # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
         # (브랜드 레벨 데이터는 세그먼트=전체만 존재하므로 cat_bpu_df_all_seg 사용)
@@ -2994,6 +2975,27 @@ if side["page"].startswith("2."):
                                label_map=BRAND_LABELS, hide_zero=True,
                                donut=True, official_total=_official_brand_total,
                                ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+        # --- 카테고리별 트래픽 비중 (거래액 랭킹과 동일 로직, 지표만 트래픽) ---
+        # 거래액 섹션(카테고리+브랜드) 다음에 트래픽 섹션(카테고리+브랜드)이 오도록,
+        # 지표 단위로 묶어서 배치한다 (레벨 단위로 번갈아 나오면 헷갈린다는 피드백 반영).
+        _share_df_traffic = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _share_df_traffic = _share_df_traffic.groupby(["날짜", "카테고리"], as_index=False)["트래픽"].sum()
+        _official_all_df_traffic = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] == "전체")]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _official_all_df_traffic = _official_all_df_traffic.groupby("날짜", as_index=False)["트래픽"].sum()
+        _official_cat_total_traffic = compute_official_total(_official_all_df_traffic, unit, selected_period_date, metric_col="트래픽")
+
+        render_revenue_ranking(_share_df_traffic, "카테고리", unit, selected_period_date, "카테고리별 트래픽 비중", f"{bpu} 기준",
+                               donut=True, official_total=_official_cat_total_traffic,
+                               metric_col="트래픽", metric_label="트래픽",
+                               bar_color_cur="#ea580c", bar_color_prev="#fdba74",
+                               donut_colors=["#ea580c", "#f97316", "#fb923c", "#fdba74", "#fed7aa",
+                                             "#c2410c", "#9a3412", "#7c2d12", "#fef3c7", "#fde68a", "#e2e8f0"],
+                               ai_key="cat_share_traffic", ai_context=f"카테고리별 트래픽 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
