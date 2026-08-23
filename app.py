@@ -1045,7 +1045,7 @@ def compute_official_total(df_scope, unit, selected_period_date, metric_col="거
     return stats["current"], stats.get("yoy_value")
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None, metric_col="거래액", metric_label="거래액"):
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None, metric_col="거래액", metric_label="거래액", bar_color_cur="#2563eb", bar_color_prev="#7dd3fc", donut_colors=None):
     """
     official_total: (현재값, 작년값) 튜플이 주어지면, 도넛 중앙의 '총 {지표}'를
     개별 항목 합산이 아니라 이 값으로 표시한다. (카테고리/브랜드가 여러 개 겹치는 거래는
@@ -1163,7 +1163,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             "<div style='display:flex;align-items:center;margin-bottom:3px;'>"
             f"<div style='width:{_label_width}px;flex-shrink:0;font-size:0.8rem;color:#374151;font-weight:600;'>{_display_label}</div>"
             "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:20px;margin:0 10px;position:relative;'>"
-            f"<div style='width:{_pct_width:.1f}%;background:#2563eb;height:100%;border-radius:4px;'></div>"
+            f"<div style='width:{_pct_width:.1f}%;background:{bar_color_cur};height:100%;border-radius:4px;'></div>"
             "</div>"
             f"<div style='width:190px;flex-shrink:0;text-align:right;font-size:0.82rem;color:#374151;'>"
             f"{r['값']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
@@ -1171,7 +1171,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             "<div style='display:flex;align-items:center;'>"
             f"<div style='width:{_label_width}px;flex-shrink:0;'></div>"
             "<div style='flex:1;background:#f1f2f4;border-radius:4px;height:14px;margin:0 10px;position:relative;'>"
-            f"<div style='width:{_prev_pct_width:.1f}%;background:#7dd3fc;height:100%;border-radius:4px;'></div>"
+            f"<div style='width:{_prev_pct_width:.1f}%;background:{bar_color_prev};height:100%;border-radius:4px;'></div>"
             "</div>"
             f"<div style='width:190px;flex-shrink:0;text-align:right;font-size:0.76rem;color:#9ca3af;'>"
             f"{_prev_val_str}{f' · {_yoy_label_share} ' + format_delta_html(_yoy_delta) if _yoy_delta is not None else ''}</div>"
@@ -1230,6 +1230,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
 
         render_donut_chart(
             _labels, _values,
+            colors=donut_colors,
             center_title=f"총 {metric_label}",
             center_value=f"{_tot_cur:,.0f}",
             center_sub=_center_sub,
@@ -1251,8 +1252,8 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
             st.markdown(
                 "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
-                "<span><span style='display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:2px;margin-right:4px;'></span>올해</span>"
-                "<span><span style='display:inline-block;width:10px;height:10px;background:#7dd3fc;border-radius:2px;margin-right:4px;'></span>작년(동시점)</span>"
+                f"<span><span style='display:inline-block;width:10px;height:10px;background:{bar_color_cur};border-radius:2px;margin-right:4px;'></span>올해</span>"
+                f"<span><span style='display:inline-block;width:10px;height:10px;background:{bar_color_prev};border-radius:2px;margin-right:4px;'></span>작년(동시점)</span>"
                 "</div>" + "".join(bar_rows_html),
                 unsafe_allow_html=True,
             )
@@ -1261,8 +1262,8 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     st.markdown(
         "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
         "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
-        "<span><span style='display:inline-block;width:10px;height:10px;background:#2563eb;border-radius:2px;margin-right:4px;'></span>올해</span>"
-        "<span><span style='display:inline-block;width:10px;height:10px;background:#7dd3fc;border-radius:2px;margin-right:4px;'></span>작년(동시점)</span>"
+        f"<span><span style='display:inline-block;width:10px;height:10px;background:{bar_color_cur};border-radius:2px;margin-right:4px;'></span>올해</span>"
+        f"<span><span style='display:inline-block;width:10px;height:10px;background:{bar_color_prev};border-radius:2px;margin-right:4px;'></span>작년(동시점)</span>"
         "</div>"
         + "".join(bar_rows_html) +
         "</div>",
@@ -2960,6 +2961,9 @@ if side["page"].startswith("2."):
         render_revenue_ranking(_share_df_traffic, "카테고리", unit, selected_period_date, "카테고리별 트래픽 비중", f"{bpu} 기준",
                                donut=True, official_total=_official_cat_total_traffic,
                                metric_col="트래픽", metric_label="트래픽",
+                               bar_color_cur="#ea580c", bar_color_prev="#fdba74",
+                               donut_colors=["#ea580c", "#f97316", "#fb923c", "#fdba74", "#fed7aa",
+                                             "#c2410c", "#9a3412", "#7c2d12", "#fef3c7", "#fde68a", "#e2e8f0"],
                                ai_key="cat_share_traffic", ai_context=f"카테고리별 트래픽 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
@@ -3014,6 +3018,9 @@ if side["page"].startswith("2."):
                                label_map=BRAND_LABELS, hide_zero=True,
                                donut=True, official_total=_official_brand_total_traffic,
                                metric_col="트래픽", metric_label="트래픽",
+                               bar_color_cur="#ea580c", bar_color_prev="#fdba74",
+                               donut_colors=["#ea580c", "#f97316", "#fb923c", "#fdba74", "#fed7aa",
+                                             "#c2410c", "#9a3412", "#7c2d12", "#fef3c7", "#fde68a", "#e2e8f0"],
                                ai_key="brand_rank_traffic", ai_context=f"브랜드별 트래픽 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
