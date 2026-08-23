@@ -47,15 +47,45 @@ def load_data(uploaded_file=None, file_name=None) -> pd.DataFrame:
 
 
 TRAFFIC_DATA_PATH = "ep_traffic.csv"
+TRAFFIC_DATA_PATH_FIXED = "ep_traffic_2025.csv"
+
+
+def _read_traffic_csv(path):
+    df = pd.read_csv(path)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    return df
 
 
 @st.cache_data(ttl=3600, show_spinner="트래픽 데이터를 불러오는 중...")
 def load_traffic_data() -> pd.DataFrame:
     """EP실적 데이터 (트래픽/거래액/구매객수/CR/객단가) 로드.
     다른 로더(load_category_data 등)와 동일하게 문자열은 category, 숫자는 float32로
-    캐스팅해서 메모리를 줄인다 — 예전엔 이 최적화가 이 로더에만 빠져 있었음."""
-    df = pd.read_csv(TRAFFIC_DATA_PATH)
-    df["날짜"] = pd.to_datetime(df["날짜"])
+    캐스팅해서 메모리를 줄인다 — 예전엔 이 최적화가 이 로더에만 빠져 있었음.
+
+    25년 데이터는 더 이상 바뀌지 않는 '고정' 값이라, 매번 변환·업로드할 때마다
+    같이 넣지 않아도 되도록 두 파일로 나눠서 관리한다:
+      - ep_traffic_2025.csv (고정 아카이브, 한 번만 올려두면 됨 — 있으면만 사용)
+      - ep_traffic.csv (계속 갱신하는 최신 데이터 — 26년만 있어도 되고, 예전처럼
+        전체 기간을 다 담고 있어도 됨)
+    두 파일을 합칠 때 날짜+BPU+회원구분이 겹치면(예: ep_traffic.csv에 실수로 25년
+    데이터가 같이 들어있는 경우) 최신 파일(ep_traffic.csv) 쪽 값을 우선한다."""
+    import os
+
+    frames = []
+    if os.path.exists(TRAFFIC_DATA_PATH_FIXED):
+        frames.append(_read_traffic_csv(TRAFFIC_DATA_PATH_FIXED))
+    if os.path.exists(TRAFFIC_DATA_PATH):
+        frames.append(_read_traffic_csv(TRAFFIC_DATA_PATH))
+
+    if not frames:
+        return pd.DataFrame(columns=["날짜", "BPU", "회원구분", "CR", "객단가", "거래액", "구매객수", "트래픽"])
+
+    df = pd.concat(frames, ignore_index=True)
+    _dedup_keys = [c for c in ["날짜", "BPU", "회원구분"] if c in df.columns]
+    if _dedup_keys:
+        # 마지막(= ep_traffic.csv, 최신 갱신본)에 나온 값이 우선하도록 keep="last"
+        df = df.drop_duplicates(subset=_dedup_keys, keep="last")
+
     if "BPU" in df.columns:
         df["BPU"] = df["BPU"].astype("category")
     if "회원구분" in df.columns:
@@ -68,50 +98,89 @@ def load_traffic_data() -> pd.DataFrame:
 
 CATEGORY_DATA_PATH = "ep_category.csv"
 CATEGORY_DATA_PATH_GZ = "ep_category.csv.gz"
+CATEGORY_DATA_PATH_FIXED = "ep_category_2025.csv"
+CATEGORY_DATA_PATH_FIXED_GZ = "ep_category_2025.csv.gz"
+
+_CATEGORY_EMPTY_COLS = ["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"]
 
 
-@st.cache_data(ttl=3600, show_spinner="카테고리 데이터를 불러오는 중...")
-def load_category_data() -> pd.DataFrame:
-    """카테고리/브랜드별 실적 데이터 로드 (전체 기간). 카테고리 레벨은 세그먼트별, 브랜드 레벨은 전체만.
-    gzip 압축본(ep_category.csv.gz)이 있으면 그걸 우선 쓴다 — 카테고리×브랜드 조합이 많으면
-    비압축 CSV가 25MB를 넘어 GitHub 웹 업로드 제한에 걸리기 쉬워서, 컨버터가 이제 압축본을
-    만들어준다. pandas가 파일 확장자(.gz)를 보고 알아서 압축을 풀어 읽어서 read_csv 호출
-    자체는 압축 여부와 무관하게 동일하다."""
-    import os
+def _read_category_csv_file(path):
+    """gz든 아니든 안전하게 읽는다 (깨진 gzip이면 일반 텍스트로 폴백).
+    실패하면 None을 반환(호출부에서 에러 메시지 표시 여부를 결정)."""
     import gzip
 
-    if os.path.exists(CATEGORY_DATA_PATH_GZ):
-        _path = CATEGORY_DATA_PATH_GZ
-    elif os.path.exists(CATEGORY_DATA_PATH):
-        _path = CATEGORY_DATA_PATH
-    else:
-        return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"])
-
-    # gzip 파일이 GitHub 업로드 과정에서 깨지는 경우가 있다(바이너리 파일을 텍스트로
-    # 취급해서 줄바꿈 문자가 변환되는 등). 그래서 압축 해제를 먼저 직접 시도해보고,
-    # 실패하면 '사실 압축 안 된 일반 CSV일 수도 있다'고 보고 그냥 텍스트로도 시도한다 —
-    # 대시보드가 통째로 죽는 것보다는 최대한 읽어보는 게 낫다.
-    if _path.endswith(".gz"):
+    if path.endswith(".gz"):
         try:
-            with gzip.open(_path, "rt", encoding="utf-8-sig") as f:
-                df = pd.read_csv(f)
+            with gzip.open(path, "rt", encoding="utf-8-sig") as f:
+                return pd.read_csv(f)
         except Exception:
             # gzip 손상 시 zlib.error/EOFError/UnicodeDecodeError 등 다양한 예외가 날 수
             # 있어서(테스트로 확인함), 폭넓게 잡고 '압축 안 된 일반 CSV일 수도 있다'고
             # 보고 텍스트로 재시도한다.
             try:
-                df = pd.read_csv(_path, encoding="utf-8-sig")
+                return pd.read_csv(path, encoding="utf-8-sig")
             except Exception:
-                st.error(
-                    f"'{_path}' 파일을 읽을 수 없어요 — GitHub에 올릴 때 파일이 깨졌을 "
-                    "가능성이 높아요(바이너리 파일이 텍스트로 잘못 변환된 경우가 흔해요). "
-                    "컨버터에서 파일을 다시 받아서, 그대로(수정 없이) 업로드해보세요."
-                )
-                return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "트래픽", "거래액", "구매객수", "CR", "객단가"])
-    else:
-        df = pd.read_csv(_path)
+                return None
+    return pd.read_csv(path)
 
+
+@st.cache_data(ttl=3600, show_spinner="카테고리 데이터를 불러오는 중...")
+def load_category_data() -> pd.DataFrame:
+    """카테고리/브랜드별 실적 데이터 로드 (전체 기간). 카테고리 레벨은 세그먼트별, 브랜드 레벨은 전체만.
+    gzip 압축본(.csv.gz)이 있으면 그걸 우선 쓴다 — 카테고리×브랜드 조합이 많으면 비압축
+    CSV가 25MB를 넘어 GitHub 웹 업로드 제한에 걸리기 쉬워서, 컨버터가 이제 압축본을
+    만들어준다.
+
+    25년 데이터는 더 이상 바뀌지 않는 '고정' 값이라, 매번 변환·업로드할 때마다 같이
+    넣지 않아도 되도록 두 파일로 나눠서 관리한다:
+      - ep_category_2025.csv(.gz) (고정 아카이브, 한 번만 올려두면 됨 — 있으면만 사용)
+      - ep_category.csv(.gz) (계속 갱신하는 최신 데이터 — 26년만 있어도 되고, 예전처럼
+        전체 기간을 다 담고 있어도 됨)
+    두 파일을 합칠 때 날짜+BPU+카테고리+브랜드+회원구분이 겹치면(예: 최신 파일에 실수로
+    25년 데이터가 같이 들어있는 경우) 최신 파일 쪽 값을 우선한다."""
+    import os
+
+    def _pick_path(gz_path, plain_path):
+        if os.path.exists(gz_path):
+            return gz_path
+        if os.path.exists(plain_path):
+            return plain_path
+        return None
+
+    _fixed_path = _pick_path(CATEGORY_DATA_PATH_FIXED_GZ, CATEGORY_DATA_PATH_FIXED)
+    _current_path = _pick_path(CATEGORY_DATA_PATH_GZ, CATEGORY_DATA_PATH)
+
+    frames = []
+    _read_failed_path = None
+    for _p in [_fixed_path, _current_path]:
+        if _p is None:
+            continue
+        _df = _read_category_csv_file(_p)
+        if _df is None:
+            _read_failed_path = _p
+            continue
+        frames.append(_df)
+
+    if _read_failed_path is not None and not frames:
+        st.error(
+            f"'{_read_failed_path}' 파일을 읽을 수 없어요 — GitHub에 올릴 때 파일이 깨졌을 "
+            "가능성이 높아요(바이너리 파일이 텍스트로 잘못 변환된 경우가 흔해요). "
+            "컨버터에서 파일을 다시 받아서, 그대로(수정 없이) 업로드해보세요."
+        )
+        return pd.DataFrame(columns=_CATEGORY_EMPTY_COLS)
+    elif _read_failed_path is not None:
+        st.warning(f"'{_read_failed_path}' 파일은 못 읽었지만, 나머지 파일로 계속 진행할게요.")
+
+    if not frames:
+        return pd.DataFrame(columns=_CATEGORY_EMPTY_COLS)
+
+    df = pd.concat(frames, ignore_index=True)
     df["날짜"] = pd.to_datetime(df["날짜"])
+    _dedup_keys = [c for c in ["날짜", "BPU", "카테고리", "브랜드", "회원구분"] if c in df.columns]
+    if _dedup_keys and len(frames) > 1:
+        # 마지막(=현재 파일, 최신 갱신본)에 나온 값이 우선하도록 keep="last"
+        df = df.drop_duplicates(subset=_dedup_keys, keep="last")
+
     _cat_cols = ["BPU", "카테고리", "브랜드"]
     if "회원구분" in df.columns:
         _cat_cols.append("회원구분")
