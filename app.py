@@ -1020,15 +1020,15 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     components.html(doc, height=frame_h, scrolling=False)
 
 
-def compute_official_total(df_scope, unit, selected_period_date):
+def compute_official_total(df_scope, unit, selected_period_date, metric_col="거래액"):
     """df_scope(보통 카테고리='전체'&브랜드='전체' 등으로 필터된 단일 그룹)의
-    거래액을 조회단위로 리샘플하여 (현재값, 전년동기값) 튜플로 반환.
+    metric_col(기본 거래액) 값을 조회단위로 리샘플하여 (현재값, 전년동기값) 튜플로 반환.
     도넛 중앙에 표시할 '진짜 전체값'을 개별 항목 합산과 별개로 정확히 구하기 위함.
     compute_kpi_deltas를 그대로 재사용해서, 진행 중인(부분) 달/주에도 KPI 카드·요약표와
     똑같은 기준(같은 날짜 수만큼 동요일 매칭)으로 전년비가 계산되도록 한다."""
     if df_scope.empty:
         return None, None
-    s_full = df_scope.set_index("날짜")["거래액"].sort_index()
+    s_full = df_scope.set_index("날짜")[metric_col].sort_index()
     _agg = "sum" if unit == "월마감" else "mean"
     series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
     if unit == "주별":
@@ -1045,20 +1045,20 @@ def compute_official_total(df_scope, unit, selected_period_date):
     return stats["current"], stats.get("yoy_value")
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None):
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None, metric_col="거래액", metric_label="거래액"):
     """
-    official_total: (현재값, 작년값) 튜플이 주어지면, 도넛 중앙의 '총 거래액'을
+    official_total: (현재값, 작년값) 튜플이 주어지면, 도넛 중앙의 '총 {지표}'를
     개별 항목 합산이 아니라 이 값으로 표시한다. (카테고리/브랜드가 여러 개 겹치는 거래는
     개별 항목 합산이 실제 전체보다 커질 수 있어, KPI 카드와 항상 일치시키기 위함)
 
-    group_col(카테고리 또는 브랜드) 기준 거래액 랭킹을 올해/작년 이중 막대로 렌더링.
+    group_col(카테고리 또는 브랜드) 기준 값 랭킹을 올해/작년 이중 막대로 렌더링.
     label_map이 주어지면 표시 라벨을 매핑해서 보여준다 (예: 브랜드코드 -> 브랜드명).
-    hide_zero=True면 올해/작년 거래액이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외.
+    hide_zero=True면 올해/작년 값이 둘 다 0(또는 0에 가까움)인 항목은 목록에서 제외.
     ai_key가 주어지면 'AI 인사이트' 버튼과 결과 박스를 함께 표시한다.
     """
     rows = []
     for name in sorted(sub_df[group_col].unique()):
-        s_full = sub_df[sub_df[group_col] == name].set_index("날짜")["거래액"].sort_index()
+        s_full = sub_df[sub_df[group_col] == name].set_index("날짜")[metric_col].sort_index()
         _agg = "sum" if unit == "월마감" else "mean"
         series_full = s_full.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
         if unit == "주별":
@@ -1082,7 +1082,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             if _cur_zero and _prev_zero:
                 continue
 
-        rows.append({group_col: name, "거래액": cur_val, "전년거래액": prev_val})
+        rows.append({group_col: name, "값": cur_val, "전년값": prev_val})
 
     if ai_key:
         _rk_c1, _rk_c2 = st.columns([4, 1])
@@ -1098,12 +1098,12 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         st.info("해당 조건에 데이터가 없습니다.")
         return
 
-    share_df = pd.DataFrame(rows).sort_values("거래액", ascending=False).reset_index(drop=True)
-    _total_gmv = share_df["거래액"].sum()
-    share_df["비중"] = (share_df["거래액"] / _total_gmv * 100) if _total_gmv > 0 else 0
+    share_df = pd.DataFrame(rows).sort_values("값", ascending=False).reset_index(drop=True)
+    _total_gmv = share_df["값"].sum()
+    share_df["비중"] = (share_df["값"] / _total_gmv * 100) if _total_gmv > 0 else 0
     _max_gmv = max(
-        share_df["거래액"].max() if not share_df.empty else 1,
-        share_df["전년거래액"].max(skipna=True) if share_df["전년거래액"].notna().any() else 0,
+        share_df["값"].max() if not share_df.empty else 1,
+        share_df["전년값"].max(skipna=True) if share_df["전년값"].notna().any() else 0,
         1,
     )
     _yoy_label_share = UNIT_CONFIG[unit]["yoy_label"]
@@ -1119,12 +1119,12 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 _nm = r[group_col]
                 _nm_disp = label_map.get(_nm, _nm) if label_map else _nm
                 _yv = None
-                if pd.notna(r["전년거래액"]) and r["전년거래액"] != 0:
-                    _yv = pct_delta_safe(r["거래액"], r["전년거래액"])
+                if pd.notna(r["전년값"]) and r["전년값"] != 0:
+                    _yv = pct_delta_safe(r["값"], r["전년값"])
                 _rank_payload.append({
                     "name": str(_nm_disp),
-                    "current": float(r["거래액"]) if pd.notna(r["거래액"]) else 0.0,
-                    "prev": float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else 0.0,
+                    "current": float(r["값"]) if pd.notna(r["값"]) else 0.0,
+                    "prev": float(r["전년값"]) if pd.notna(r["전년값"]) else 0.0,
                     "share": float(r["비중"]),
                     "yoy": round(float(_yv), 1) if _yv is not None else None,
                 })
@@ -1148,11 +1148,11 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
 
     bar_rows_html = []
     for _, r in share_df.iterrows():
-        _pct_width = max(0, (r["거래액"] / _max_gmv * 100)) if _max_gmv > 0 else 0
-        _has_prev = pd.notna(r["전년거래액"])
-        _prev_pct_width = max(0, (r["전년거래액"] / _max_gmv * 100)) if _has_prev and _max_gmv > 0 else 0
-        _yoy_delta = pct_delta_safe(r["거래액"], r["전년거래액"]) if _has_prev and r["전년거래액"] != 0 else None
-        _prev_val_str = f"{r['전년거래액']:,.0f}" if _has_prev else "-"
+        _pct_width = max(0, (r["값"] / _max_gmv * 100)) if _max_gmv > 0 else 0
+        _has_prev = pd.notna(r["전년값"])
+        _prev_pct_width = max(0, (r["전년값"] / _max_gmv * 100)) if _has_prev and _max_gmv > 0 else 0
+        _yoy_delta = pct_delta_safe(r["값"], r["전년값"]) if _has_prev and r["전년값"] != 0 else None
+        _prev_val_str = f"{r['전년값']:,.0f}" if _has_prev else "-"
 
         _raw_label = r[group_col]
         _display_label = label_map.get(_raw_label, _raw_label) if label_map else _raw_label
@@ -1166,7 +1166,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             f"<div style='width:{_pct_width:.1f}%;background:#2563eb;height:100%;border-radius:4px;'></div>"
             "</div>"
             f"<div style='width:190px;flex-shrink:0;text-align:right;font-size:0.82rem;color:#374151;'>"
-            f"{r['거래액']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
+            f"{r['값']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
             "</div>"
             "<div style='display:flex;align-items:center;'>"
             f"<div style='width:{_label_width}px;flex-shrink:0;'></div>"
@@ -1181,36 +1181,36 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
     # --- 도넛 차트 모드: 구성비를 한눈에 + 전년비 상세는 접이식 ---
     if donut:
         _top_n = 10
-        _dn_pos = share_df[share_df["거래액"] > 0].copy()
-        _dn_neg = share_df[share_df["거래액"] < 0].copy()
+        _dn_pos = share_df[share_df["값"] > 0].copy()
+        _dn_neg = share_df[share_df["값"] < 0].copy()
         _labels, _values, _deltas = [], [], []
         for _, r in _dn_pos.head(_top_n).iterrows():
             _nm = r[group_col]
             _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
-            _values.append(float(r["거래액"]))
-            _pv = float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else None
-            _yv = pct_delta_safe(r["거래액"], r["전년거래액"]) if (_pv is not None and r["전년거래액"] != 0) else None
+            _values.append(float(r["값"]))
+            _pv = float(r["전년값"]) if pd.notna(r["전년값"]) else None
+            _yv = pct_delta_safe(r["값"], r["전년값"]) if (_pv is not None and r["전년값"] != 0) else None
             _deltas.append({"prev": _pv, "yoy": _yv})
 
         _rest_df = _dn_pos.iloc[_top_n:] if len(_dn_pos) > _top_n else None
         if _rest_df is not None and len(_rest_df) > 0:
-            _rest_cur = float(_rest_df["거래액"].sum())
+            _rest_cur = float(_rest_df["값"].sum())
             if _rest_cur > 0:
-                _rest_prev = float(_rest_df["전년거래액"].sum(skipna=True)) if _rest_df["전년거래액"].notna().any() else None
+                _rest_prev = float(_rest_df["전년값"].sum(skipna=True)) if _rest_df["전년값"].notna().any() else None
                 _rest_yoy = pct_delta_safe(_rest_cur, _rest_prev) if (_rest_prev and _rest_prev != 0) else None
                 _labels.append(f"기타 ({len(_rest_df)}개)")
                 _values.append(_rest_cur)
                 _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy})
 
-        # 거래액이 마이너스인 항목(반품 등으로 순거래액이 음수)도 도넛에 그대로 포함시킨다.
+        # 값이 마이너스인 항목(반품 등으로 순값이 음수)도 도넛에 그대로 포함시킨다.
         # top_n/기타 묶음과는 무관하게 항상 개별 조각으로 넣어서 묻히지 않게 함
         # (render_donut_chart 쪽에서 절대값 크기로 조각을 그리고 빨간 점선으로 구분해서 보여줌).
-        for _, r in _dn_neg.sort_values("거래액").iterrows():
+        for _, r in _dn_neg.sort_values("값").iterrows():
             _nm = r[group_col]
             _labels.append(str(label_map.get(_nm, _nm) if label_map else _nm))
-            _values.append(float(r["거래액"]))
-            _pv = float(r["전년거래액"]) if pd.notna(r["전년거래액"]) else None
-            _yv = pct_delta_safe(r["거래액"], r["전년거래액"]) if (_pv is not None and r["전년거래액"] != 0) else None
+            _values.append(float(r["값"]))
+            _pv = float(r["전년값"]) if pd.notna(r["전년값"]) else None
+            _yv = pct_delta_safe(r["값"], r["전년값"]) if (_pv is not None and r["전년값"] != 0) else None
             _deltas.append({"prev": _pv, "yoy": _yv})
 
         # 전체 합계 기준 전년비 — official_total(카테고리=전체 등 진짜 전체값)이 있으면 그걸 우선 사용.
@@ -1218,10 +1218,10 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         #  KPI 카드의 진짜 전체값보다 커질 수 있음 — 그래서 중앙 표시는 항상 official_total과 일치시킴)
         if official_total is not None:
             _tot_cur, _tot_prev = official_total
-            _tot_cur = float(_tot_cur) if _tot_cur is not None else float(share_df["거래액"].sum())
+            _tot_cur = float(_tot_cur) if _tot_cur is not None else float(share_df["값"].sum())
         else:
-            _tot_cur = float(share_df["거래액"].sum())
-            _tot_prev = float(share_df["전년거래액"].sum(skipna=True)) if share_df["전년거래액"].notna().any() else None
+            _tot_cur = float(share_df["값"].sum())
+            _tot_prev = float(share_df["전년값"].sum(skipna=True)) if share_df["전년값"].notna().any() else None
         if _tot_prev and _tot_prev != 0:
             _tot_yoy = pct_delta_safe(_tot_cur, _tot_prev)
             _center_sub = f"{_yoy_label_share} {_tot_yoy:+.1f}%"
@@ -1230,7 +1230,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
 
         render_donut_chart(
             _labels, _values,
-            center_title="총 거래액",
+            center_title=f"총 {metric_label}",
             center_value=f"{_tot_cur:,.0f}",
             center_sub=_center_sub,
             deltas=_deltas,
@@ -1238,13 +1238,13 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         )
         if official_total is not None:
             st.caption(
-                "ℹ️ 중앙 '총 거래액'은 KPI카드와 동일한 전체 집계값이에요. "
+                f"ℹ️ 중앙 '총 {metric_label}'은 KPI카드와 동일한 전체 집계값이에요. "
                 "여러 카테고리/브랜드에 걸친 거래가 있으면, 아래 항목별 값을 다 더한 합계는 "
                 "이 값과 정확히 일치하지 않을 수 있어요(항목 간 중복 집계 가능)."
             )
         if len(_dn_neg) > 0:
             st.caption(
-                "🔴 빨간 점 항목은 거래액이 마이너스예요(반품 등으로 환불이 매출보다 많은 경우). "
+                "🔴 빨간 점 항목은 값이 마이너스예요(반품 등으로 환불이 매출보다 많은 경우). "
                 "도넛 조각으로는 표시되지 않고, 오른쪽 목록에 실제 마이너스 값 그대로 표시돼요."
             )
 
@@ -2948,6 +2948,22 @@ if side["page"].startswith("2."):
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
+        # --- 카테고리별 트래픽 비중 (거래액 랭킹과 동일 로직, 지표만 트래픽) ---
+        _share_df_traffic = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _share_df_traffic = _share_df_traffic.groupby(["날짜", "카테고리"], as_index=False)["트래픽"].sum()
+        _official_all_df_traffic = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] == "전체")]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _official_all_df_traffic = _official_all_df_traffic.groupby("날짜", as_index=False)["트래픽"].sum()
+        _official_cat_total_traffic = compute_official_total(_official_all_df_traffic, unit, selected_period_date, metric_col="트래픽")
+
+        render_revenue_ranking(_share_df_traffic, "카테고리", unit, selected_period_date, "카테고리별 트래픽 비중", f"{bpu} 기준",
+                               donut=True, official_total=_official_cat_total_traffic,
+                               metric_col="트래픽", metric_label="트래픽",
+                               ai_key="cat_share_traffic", ai_context=f"카테고리별 트래픽 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
         # --- 브랜드별 거래액 랭킹 ---
         # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
         # (브랜드 레벨 데이터는 세그먼트=전체만 존재하므로 cat_bpu_df_all_seg 사용)
@@ -2974,6 +2990,31 @@ if side["page"].startswith("2."):
                                label_map=BRAND_LABELS, hide_zero=True,
                                donut=True, official_total=_official_brand_total,
                                ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        # --- 브랜드별 트래픽 랭킹 (거래액 랭킹과 동일 로직, 지표만 트래픽) ---
+        if selected_cat == "전체":
+            _brand_share_df_traffic = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == "전체") & (cat_bpu_df_all_seg["브랜드"] != "전체")]
+        else:
+            _brand_share_df_traffic = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] != "전체")]
+        if _has_segment:
+            _brand_share_df_traffic = _brand_share_df_traffic[_brand_share_df_traffic["회원구분"] == "전체"]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _brand_share_df_traffic = _brand_share_df_traffic.groupby(["날짜", "브랜드"], as_index=False)["트래픽"].sum()
+
+        _official_brand_scope_df_traffic = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] == "전체")]
+        if _has_segment:
+            _official_brand_scope_df_traffic = _official_brand_scope_df_traffic[_official_brand_scope_df_traffic["회원구분"] == "전체"]
+        if bpu == "Total" or bpu in BPU_GROUPS:
+            _official_brand_scope_df_traffic = _official_brand_scope_df_traffic.groupby("날짜", as_index=False)["트래픽"].sum()
+        _official_brand_total_traffic = compute_official_total(_official_brand_scope_df_traffic, unit, selected_period_date, metric_col="트래픽")
+
+        render_revenue_ranking(_brand_share_df_traffic, "브랜드", unit, selected_period_date, "브랜드별 트래픽 랭킹", _brand_subtitle,
+                               label_map=BRAND_LABELS, hide_zero=True,
+                               donut=True, official_total=_official_brand_total_traffic,
+                               metric_col="트래픽", metric_label="트래픽",
+                               ai_key="brand_rank_traffic", ai_context=f"브랜드별 트래픽 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
