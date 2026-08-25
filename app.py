@@ -351,7 +351,7 @@ def _correct_partial_week_yoy(s_target_year, s_ref_year, raw_daily_target, raw_d
     return s_ref_year
 
 
-
+def aggregate_ep(df, bpus, match_status, lowest_status):
     """여러 BPU의 EP채널 데이터를 합산. 비율 지표는 재계산."""
     sub = df[(df[COL_BPU].isin(bpus)) & (df[COL_MATCH] == match_status) & (df[COL_LOWEST] == lowest_status)]
     if sub.empty:
@@ -822,6 +822,74 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     if _event_rows:
         _ev_caption = "  ·  ".join(f"📌 {r['_date_label']} {r['이벤트']}" for r in _event_rows)
         st.caption(_ev_caption)
+
+
+FORECAST_BPU_ROWS = {"Total": None, "자사": BPU_GROUPS["자사"], "정상": ["e-영업1"], "이월": ["e-영업2"], "입점": BPU_GROUPS["입점"]}
+
+
+def compute_monthly_forecast_series(df, num_col, den_col, year, bpu_list, segment="전체"):
+    """1~12월 각각의 (분자합계, 분모합계)를 계산한다. 진행 중인(마지막) 달은 일할계산으로
+    마감예상 처리 — 지금까지의 합계를 경과일수로 나눠 이번 달 전체 일수만큼 곱해서 추정.
+    완성된(지나간) 달은 그대로 실제 합계, 아직 시작 안 한 달은 (0, 0).
+    den_col이 None이면 절대값 지표(거래액/트래픽 등)라 분모 계산은 건너뛴다."""
+    sub = df[df["BPU"] == "Total"] if bpu_list is None else df[df["BPU"].isin(bpu_list)]
+    if "회원구분" in sub.columns and segment in sub["회원구분"].unique().tolist():
+        sub = sub[sub["회원구분"] == segment]
+    _abs_last = df["날짜"].max()
+    nums, dens = [], []
+    for m in range(1, 13):
+        m_start = pd.Timestamp(year, m, 1)
+        m_end = (m_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+        if m_start > _abs_last:
+            nums.append(0.0)
+            dens.append(0.0 if den_col else None)
+            continue
+        month_data = sub[(sub["날짜"] >= m_start) & (sub["날짜"] <= min(m_end, _abs_last))]
+        days_elapsed = month_data["날짜"].nunique()
+        if days_elapsed == 0:
+            nums.append(0.0)
+            dens.append(0.0 if den_col else None)
+            continue
+        days_in_month = m_end.day
+        num_sum = month_data[num_col].sum()
+        den_sum = month_data[den_col].sum() if den_col else None
+        _is_partial = m_end > _abs_last  # 이번 달 마지막날이 아직 안 지났으면 진행 중
+        if _is_partial:
+            num_sum = num_sum / days_elapsed * days_in_month
+            if den_sum is not None:
+                den_sum = den_sum / days_elapsed * days_in_month
+        nums.append(num_sum)
+        dens.append(den_sum)
+    return nums, dens
+
+
+def build_forecast_table(df_traffic, metric_label, num_col, den_col, year, segment="전체", is_ratio=False, ratio_scale=1.0):
+    """지표 하나(예: 거래액)에 대해 Total/자사/정상/이월/입점 5개 행 x 1~12월+합계 컬럼의
+    DataFrame을 만든다. is_ratio=True면 분자/분모를 각각 예상한 뒤 나눠서 비율을 재계산한다
+    (비율 지표는 절대 단순평균 금지 원칙 — 예상 CR = 예상 구매객수/예상 트래픽 이런 식으로)."""
+    rows = []
+    for row_name, bpu_list in FORECAST_BPU_ROWS.items():
+        nums, dens = compute_monthly_forecast_series(df_traffic, num_col, den_col, year, bpu_list, segment)
+        if is_ratio:
+            vals = [
+                (n / d * ratio_scale) if (d and d != 0) else (0.0 if n == 0 else None)
+                for n, d in zip(nums, dens)
+            ]
+        else:
+            vals = nums
+        row = {"구분": row_name}
+        for m, v in enumerate(vals, start=1):
+            row[f"{m}월"] = v
+        if is_ratio:
+            _tot_num = sum(nums)
+            _tot_den = sum(d for d in dens if d)
+            row["합계"] = (_tot_num / _tot_den * ratio_scale) if _tot_den else 0.0
+        else:
+            row["합계"] = sum(nums)
+        rows.append(row)
+    df_out = pd.DataFrame(rows).set_index("구분")
+    df_out.attrs["metric_label"] = metric_label
+    return df_out
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
@@ -1302,7 +1370,7 @@ with _sticky:
         "3": "📋 누적 데이터", "4": "📋 누적 데이터 (카테고리)",
         "5": "🎟️ 쿠폰 비용 분석", "6": "📑 주간보고용",
         "7": "📅 전체 실적 (주차별)", "8": "📅 회원 실적 (주차별)", "9": "📅 신규 실적 (주차별)",
-        "10": "🧭 종합 요약",
+        "10": "🧭 종합 요약", "11": "📈 마감 예상 실적",
     }
 
     # ========================================================
@@ -1621,6 +1689,20 @@ with _sticky:
             )
 
     # ========================================================
+    # 페이지 11: 마감 예상 실적 — 연도 하나만 고르면 되는 단순한 필터라 셀렉트박스 하나만
+    # ========================================================
+    elif _page_num == "11":
+        _fc_years = sorted(df_traffic["날짜"].dt.year.unique().tolist(), reverse=True) if not df_traffic.empty else [pd.Timestamp.today().year]
+        st.markdown(
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            unsafe_allow_html=True,
+        )
+        _fc_col1, _fc_spacer = st.columns([1, 6])
+        with _fc_col1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>연도</div>", unsafe_allow_html=True)
+            forecast_year = st.selectbox("연도", _fc_years, index=0, label_visibility="collapsed", key="forecast_year_filter")
+
+    # ========================================================
     # 페이지 7/8/9: 전체·회원·신규 실적(주차별) — 주차 범위 필터를 상단 고정 영역에 배치
     # (세 페이지가 세그먼트만 다르고 주차 필터 UI는 동일해서 하나로 묶음)
     # ========================================================
@@ -1858,7 +1940,7 @@ st.markdown(
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
 if _page_num == "4":
     _spacer_height = 155
-elif _page_num in ("1", "2", "3", "10"):
+elif _page_num in ("1", "2", "3", "10", "11"):
     _spacer_height = 100
 else:
     _spacer_height = 65
@@ -3184,16 +3266,65 @@ if side["page"].startswith("3."):
             body_rows.append(f"<tr><td class='m'>{row_label}</td>{''.join(cells)}</tr>")
             export_rows.append(export_row)
 
+        # --- 합계 행: 절대값 지표는 선택 기간 전체 합산, 비율 지표(CR/객단가/원부매칭율/
+        # 최저가율)는 분자·분모를 각각 합산한 뒤 재계산한다(단순 평균 금지 원칙 그대로).
+        # (엑셀 다운로드에도 포함되도록, export_rows 조립보다 먼저 계산해서 앞에 끼워넣는다.) ---
+        _tot_cur_range = (
+            _cum_tr[(_cum_tr["날짜"] >= pd.Timestamp(cum_start)) & (_cum_tr["날짜"] <= pd.Timestamp(cum_end))]
+            if not _cum_tr.empty else pd.DataFrame()
+        )
+        _tot_ep_range = (
+            _cum_ep[(_cum_ep[COL_DATE] >= pd.Timestamp(cum_start)) & (_cum_ep[COL_DATE] <= pd.Timestamp(cum_end))]
+            if not _cum_ep.empty else pd.DataFrame()
+        )
+        _tot_vals = {}
+        for _m in ["트래픽", "거래액", "구매객수"]:
+            _tot_vals[_m] = _tot_cur_range[_m].sum() if not _tot_cur_range.empty else None
+        _tot_vals["CR"] = (
+            (_tot_vals["구매객수"] / _tot_vals["트래픽"] * 100)
+            if _tot_vals["트래픽"] else None
+        )
+        _tot_vals["객단가"] = (
+            (_tot_vals["거래액"] / _tot_vals["구매객수"])
+            if _tot_vals["구매객수"] else None
+        )
+        for _m in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
+            _tot_vals[_m] = _tot_ep_range[_m].sum() if not _tot_ep_range.empty else None
+        _tot_vals["원부매칭율(%)"] = (
+            (_tot_vals["평균 원부매칭 상품수"] / _tot_vals["평균 EP 전시 상품수"] * 100)
+            if _tot_vals["평균 EP 전시 상품수"] else None
+        )
+        _tot_vals["최저가율(%)"] = (
+            (_tot_vals["평균 최저가 상품수"] / _tot_vals["평균 EP 전시 상품수"] * 100)
+            if _tot_vals["평균 EP 전시 상품수"] else None
+        )
+        _tot_cells = []
+        _tot_export_row = {"구분": "합계"}
+        for key, label, is_pct in COLS:
+            v = _tot_vals.get(key)
+            if v is None or pd.isna(v):
+                _tot_cells.append("<td>-</td>")
+                _tot_export_row[label] = None
+            elif is_pct:
+                _tot_cells.append(f"<td>{v:.1f}%</td>")
+                _tot_export_row[label] = float(v)
+            else:
+                _tot_cells.append(f"<td>{v:,.0f}</td>")
+                _tot_export_row[label] = float(v)
+        _total_row_html = f"<tr style='background:#f3f4f6;font-weight:700;'><td class='m'>합계</td>{''.join(_tot_cells)}</tr>"
+        export_rows.insert(0, _tot_export_row)
+
         _tc1, _tc2 = st.columns([4, 1])
         with _tc1:
             st.markdown(f"**누적 데이터**  ·  <span style='color:#6b7280;font-size:0.85rem'>{len(all_dates)}개 기간</span>", unsafe_allow_html=True)
         with _tc2:
             _fname = f"누적데이터_{bpu}_{cum_unit}_{cum_start}_{cum_end}.xlsx".replace(" ", "")
             render_excel_download(pd.DataFrame(export_rows), _fname)
+
         table_html = (
             "<div style='overflow-x:auto;'><table class='summary-table'>"
             f"<thead><tr>{header_html}</tr></thead>"
-            f"<tbody>{''.join(body_rows)}</tbody></table></div>"
+            f"<tbody>{_total_row_html}{''.join(body_rows)}</tbody></table></div>"
         )
         st.markdown(table_html, unsafe_allow_html=True)
 
@@ -4334,3 +4465,117 @@ if side["page"].startswith("10"):
                     unsafe_allow_html=True,
                 )
             st.caption("자세한 쿠폰 분석은 5번 페이지에서 확인하세요.")
+
+
+# ============================================================
+# 페이지 11: 마감 예상 실적 — 진행 중인 달을 일할계산으로 마감까지 추정해서
+# Total/자사/정상/이월/입점 x 1~12월 표로 보여준다.
+# ============================================================
+if side["page"].startswith("11."):
+    st.markdown("### 📈 마감 예상 실적")
+    st.caption(
+        "진행 중인(아직 안 끝난) 달은 지금까지 실적을 경과일수로 나눠 이번 달 전체 일수만큼 "
+        "곱한 '일할계산' 방식으로 마감 시점 예상치를 추정해요. 지나간 달은 실제 확정값 그대로예요. "
+        "비율 지표(CR/객단가)는 분자/분모를 각각 예상한 뒤 나눠서 계산해요(단순 평균 아님)."
+    )
+
+    if df_traffic.empty:
+        st.info("데이터가 없습니다. 사이드바에서 ep_traffic.csv를 업로드해주세요.")
+    else:
+        _fc_abs_last = df_traffic["날짜"].max()
+        _fc_cur_month_start = _fc_abs_last.replace(day=1)
+        _fc_cur_month_end = (_fc_cur_month_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+        _fc_is_partial_month = (_fc_abs_last.year == forecast_year) and (_fc_cur_month_end > _fc_abs_last) and (_fc_cur_month_start <= _fc_abs_last)
+        _fc_cur_month_num = _fc_abs_last.month if _fc_abs_last.year == forecast_year else None
+
+        if _fc_is_partial_month:
+            _fc_days_elapsed = df_traffic[
+                (df_traffic["날짜"] >= _fc_cur_month_start) & (df_traffic["날짜"] <= _fc_abs_last)
+            ]["날짜"].nunique()
+            st.caption(
+                f"📅 마감예상 대상: {_fc_cur_month_num}월 (지금까지 {_fc_days_elapsed}일 실적 → "
+                f"{_fc_cur_month_end.day}일 기준으로 환산)"
+            )
+
+        def _style_forecast_table(df, is_pct=False, is_currency_like=False):
+            """마감예상 달 컬럼은 배경을 살짝 강조하고, 0(아직 안 온 달)은 빈칸(-)으로 표시."""
+            _month_cols = [c for c in df.columns if c != "합계"]
+
+            def _fmt(v):
+                if v is None or pd.isna(v):
+                    return "-"
+                if v == 0:
+                    return "-"
+                if is_pct:
+                    return f"{v:.1f}%"
+                return f"{v:,.0f}"
+
+            def _style_func(data):
+                out = pd.DataFrame("", index=data.index, columns=data.columns)
+                if _fc_is_partial_month and f"{_fc_cur_month_num}월" in out.columns:
+                    out[f"{_fc_cur_month_num}월"] = "background-color: #fef3c7; font-weight: 600;"
+                return out
+
+            return df.style.format(_fmt).apply(_style_func, axis=None)
+
+        _fc_metric_defs = [
+            ("거래액", "거래액", None, False, False),
+            ("트래픽", "트래픽", None, False, False),
+            ("구매객수", "구매객수", None, False, False),
+            ("객단가", "거래액", "구매객수", True, False),
+            ("구매전환율(CR)", "구매객수", "트래픽", True, True),
+        ]
+
+        for _label, _num_col, _den_col, _is_ratio, _is_pct in _fc_metric_defs:
+            st.markdown(f"#### {_label}")
+            _tbl = build_forecast_table(
+                df_traffic, _label, _num_col, _den_col, forecast_year,
+                is_ratio=_is_ratio, ratio_scale=100 if _is_pct else 1.0,
+            )
+            _styled = _style_forecast_table(_tbl, is_pct=_is_pct)
+            st.dataframe(_styled, use_container_width=True)
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+
+        # --- 전년비 (마감예상 달 vs 작년 같은 달 실제값) ---
+        if _fc_is_partial_month:
+            st.markdown("---")
+            st.markdown(f"#### 📊 {_fc_cur_month_num}월 마감예상 vs 작년 {_fc_cur_month_num}월")
+            _fc_yoy_rows = []
+            for _label, _num_col, _den_col, _is_ratio, _is_pct in _fc_metric_defs:
+                _cur_tbl = build_forecast_table(
+                    df_traffic, _label, _num_col, _den_col, forecast_year,
+                    is_ratio=_is_ratio, ratio_scale=100 if _is_pct else 1.0,
+                )
+                _prev_tbl = build_forecast_table(
+                    df_traffic, _label, _num_col, _den_col, forecast_year - 1,
+                    is_ratio=_is_ratio, ratio_scale=100 if _is_pct else 1.0,
+                )
+                _col_name = f"{_fc_cur_month_num}월"
+                for _row_name in FORECAST_BPU_ROWS.keys():
+                    _cur_v = _cur_tbl.loc[_row_name, _col_name] if _col_name in _cur_tbl.columns else None
+                    _prev_v = _prev_tbl.loc[_row_name, _col_name] if _col_name in _prev_tbl.columns else None
+                    _yoy = pct_delta_safe(_cur_v, _prev_v) if (_cur_v is not None and _prev_v) else None
+                    _fc_yoy_rows.append({
+                        "지표": _label, "구분": _row_name,
+                        "마감예상": _cur_v, "작년실적": _prev_v, "전년비": _yoy,
+                    })
+            _fc_yoy_df = pd.DataFrame(_fc_yoy_rows)
+
+            def _fmt_yoy_val(v):
+                return "-" if v is None or pd.isna(v) or v == 0 else f"{v:,.1f}"
+
+            def _fmt_yoy_pct(v):
+                return format_delta_text(v) if v is not None else "-"
+
+            _fc_yoy_styled = _fc_yoy_df.style.format(
+                {"마감예상": _fmt_yoy_val, "작년실적": _fmt_yoy_val, "전년비": _fmt_yoy_pct}
+            ).map(
+                lambda v: ("color:#16a34a;" if v >= 0 else "color:#dc2626;") if isinstance(v, (int, float)) and pd.notna(v) else "",
+                subset=["전년비"],
+            )
+            st.dataframe(_fc_yoy_styled, use_container_width=True, height=400)
+
+        st.info(
+            "ℹ️ 비용/비용률(쿠폰 관련)과 전시상품수(EP채널 데이터)는 별도 데이터소스라 "
+            "아직 이 표에 없어요 — 필요하시면 이어서 추가해드릴게요."
+        )
