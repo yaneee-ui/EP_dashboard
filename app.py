@@ -494,6 +494,92 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     return buf.getvalue(), left_df, right_df
 
 
+def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_cur_month_num):
+    """마감 예상 실적을 사용자가 보여준 양식(구분 | 1~12월 | 전년비)대로 엑셀 한 시트에
+    지표별 섹션을 쌓아서 만든다. 진행 중인(마감예상) 달 컬럼은 노란 배경으로 강조하고,
+    전년비는 증가=초록/감소=빨강으로 색칠한다."""
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+
+    wb_buf = io.BytesIO()
+    import openpyxl
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "마감예상"
+
+    HEADER_FILL = PatternFill("solid", fgColor="D9D9D9")
+    FORECAST_FILL = PatternFill("solid", fgColor="FFF2CC")
+    SECTION_FONT = Font(bold=True)
+    UP_FONT = Font(color="16A34A")
+    DOWN_FONT = Font(color="DC2626")
+
+    _ep_scope = df_ep[(df_ep[COL_MATCH] == "Total") & (df_ep[COL_LOWEST] == "Total")].rename(
+        columns={COL_DATE: "날짜", COL_BPU: "BPU"}
+    )
+    _sections = [
+        ("거래액", df_traffic, "거래액", None, False, False),
+        ("비용", df_coupon_daily, "쿠폰할인", None, False, False),
+        ("트래픽", df_traffic, "트래픽", None, False, False),
+        ("구매객수", df_traffic, "구매객수", None, False, False),
+        ("객단가", df_traffic, "거래액", "구매객수", True, False),
+        ("구매전환율(CR)", df_traffic, "구매객수", "트래픽", True, True),
+        ("전시상품수", _ep_scope, "평균 EP 전시 상품수", None, False, False),
+    ]
+
+    row_idx = 1
+    for label, src_df, num_col, den_col, is_ratio, is_pct in _sections:
+        ws.cell(row=row_idx, column=1, value=label).font = SECTION_FONT
+        row_idx += 1
+        header = ["구분"] + [f"{m}월" for m in range(1, 13)] + ["합계"]
+        if fc_cur_month_num:
+            header.append(f"전년비({fc_cur_month_num}월)")
+        for c, h in enumerate(header, start=1):
+            cell = ws.cell(row=row_idx, column=c, value=h)
+            cell.fill = HEADER_FILL
+            cell.font = Font(bold=True)
+        header_row = row_idx
+        row_idx += 1
+
+        if src_df is None or src_df.empty:
+            ws.cell(row=row_idx, column=1, value="(데이터 없음)")
+            row_idx += 2
+            continue
+
+        _cur_tbl = build_forecast_table(src_df, label, num_col, den_col, forecast_year, is_ratio=is_ratio, ratio_scale=100 if is_pct else 1.0)
+        _prev_tbl = None
+        if fc_cur_month_num:
+            _prev_tbl = build_forecast_table(src_df, label, num_col, den_col, forecast_year - 1, is_ratio=is_ratio, ratio_scale=100 if is_pct else 1.0)
+
+        for row_name in FORECAST_BPU_ROWS.keys():
+            ws.cell(row=row_idx, column=1, value=row_name)
+            for m in range(1, 13):
+                col = m + 1
+                v = _cur_tbl.loc[row_name, f"{m}월"]
+                cell = ws.cell(row=row_idx, column=col, value=None if (v is None or pd.isna(v) or v == 0) else round(float(v), 2 if is_pct else 0))
+                if fc_cur_month_num and m == fc_cur_month_num:
+                    cell.fill = FORECAST_FILL
+            _tot_v = _cur_tbl.loc[row_name, "합계"]
+            ws.cell(row=row_idx, column=14, value=None if (_tot_v is None or pd.isna(_tot_v)) else round(float(_tot_v), 2 if is_pct else 0))
+            if fc_cur_month_num and _prev_tbl is not None:
+                _cv = _cur_tbl.loc[row_name, f"{fc_cur_month_num}월"]
+                _pv = _prev_tbl.loc[row_name, f"{fc_cur_month_num}월"]
+                _yoy = pct_delta_safe(_cv, _pv) if (_cv is not None and _pv) else None
+                _cell = ws.cell(row=row_idx, column=15, value=None if _yoy is None else round(_yoy, 1))
+                if _yoy is not None:
+                    _cell.font = UP_FONT if _yoy >= 0 else DOWN_FONT
+                    _cell.number_format = '+0.0"%";-0.0"%"'
+            row_idx += 1
+        row_idx += 1  # 섹션 사이 빈 줄
+
+    ws.column_dimensions["A"].width = 12
+    for c in range(2, 16):
+        ws.column_dimensions[get_column_letter(c)].width = 12
+    ws.freeze_panes = "B2"
+
+    wb.save(wb_buf)
+    return wb_buf.getvalue()
+
+
 def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드"):
     """DataFrame을 엑셀 파일로 변환해 다운로드 버튼으로 제공."""
     buf = io.BytesIO()
@@ -1367,10 +1453,10 @@ with _sticky:
 
     _page_titles = {
         "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약",
-        "3": "📋 누적 데이터", "4": "📋 누적 데이터 (카테고리)",
-        "5": "🎟️ 쿠폰 비용 분석", "6": "📑 주간보고용",
-        "7": "📅 전체 실적 (주차별)", "8": "📅 회원 실적 (주차별)", "9": "📅 신규 실적 (주차별)",
-        "10": "🧭 종합 요약", "11": "📈 마감 예상 실적",
+        "3": "📋 누적 데이터", "4": "🏷️ 누적 데이터 (카테고리)",
+        "5": "🎟️ 쿠폰 비용 분석",
+        "6": "📅 전체 실적 (주차별)", "7": "👤 회원 실적 (주차별)", "8": "✨ 신규 실적 (주차별)",
+        "9": "🧭 종합 요약", "10": "📈 마감 예상 실적", "11": "📑 주간보고용",
     }
 
     # ========================================================
@@ -1630,7 +1716,7 @@ with _sticky:
     # 페이지 6: 주간보고용은 자체 필터(기준 시점)를 페이지 본문에서 처리하므로,
     # 여기서는 간단한 제목만 표시
     # ========================================================
-    elif _page_num == "6":
+    elif _page_num == "11":
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -1641,7 +1727,7 @@ with _sticky:
     # + 세그먼트를 상단 고정 영역에 배치 (별도 조회단위 선택은 안 둠 — 사이드바 것과
     # 중복돼서 혼란스러웠던 걸 반영해 제거)
     # ========================================================
-    elif _page_num == "10":
+    elif _page_num == "9":
         _sum_period_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
         if _sum_period_base.empty:
             _sum_period_base = df_traffic[df_traffic["BPU"] == "Total"]
@@ -1691,7 +1777,7 @@ with _sticky:
     # ========================================================
     # 페이지 11: 마감 예상 실적 — 연도 하나만 고르면 되는 단순한 필터라 셀렉트박스 하나만
     # ========================================================
-    elif _page_num == "11":
+    elif _page_num == "10":
         _fc_years = sorted(df_traffic["날짜"].dt.year.unique().tolist(), reverse=True) if not df_traffic.empty else [pd.Timestamp.today().year]
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
@@ -1706,7 +1792,7 @@ with _sticky:
     # 페이지 7/8/9: 전체·회원·신규 실적(주차별) — 주차 범위 필터를 상단 고정 영역에 배치
     # (세 페이지가 세그먼트만 다르고 주차 필터 UI는 동일해서 하나로 묶음)
     # ========================================================
-    elif _page_num in ("7", "8", "9"):
+    elif _page_num in ("6", "7", "8"):
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -1940,7 +2026,7 @@ st.markdown(
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
 if _page_num == "4":
     _spacer_height = 155
-elif _page_num in ("1", "2", "3", "10", "11"):
+elif _page_num in ("1", "2", "3", "9", "10"):
     _spacer_height = 100
 else:
     _spacer_height = 65
@@ -3840,7 +3926,7 @@ if side["page"].startswith("5."):
 # ============================================================
 # 페이지 6: 주간보고용 (전년동요일 요약 엑셀 다운로드)
 # ============================================================
-if side["page"].startswith("6."):
+if side["page"].startswith("11."):
     st.markdown("---")
     st.markdown("### 📑 주간보고용 · 전년동요일 요약")
 
@@ -4215,13 +4301,13 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     _render_section(f"{traffic_segment} 거래액", "거래액", traffic_segment, show_ff=True)
 
 
-if side["page"].startswith("7."):
+if side["page"].startswith("6."):
     _render_weekly_segment_page("전체 실적", "전체")
 
-if side["page"].startswith("8."):
+if side["page"].startswith("7."):
     _render_weekly_segment_page("회원 실적", "회원")
 
-if side["page"].startswith("9."):
+if side["page"].startswith("8."):
     _render_weekly_segment_page("신규 실적", "신규")
 
 
@@ -4229,7 +4315,7 @@ if side["page"].startswith("9."):
 # 페이지 10: 종합 요약 — 여기저기 흩어진 핵심 지표를 한 화면에 모음
 # (A: 핵심 지표 한눈에 + C: 카테고리×브랜드 피벗 테이블)
 # ============================================================
-if side["page"].startswith("10"):
+if side["page"].startswith("9."):
     if df_traffic.empty:
         st.info("데이터가 없습니다. 사이드바에서 데이터를 업로드해주세요.")
     else:
@@ -4471,7 +4557,7 @@ if side["page"].startswith("10"):
 # 페이지 11: 마감 예상 실적 — 진행 중인 달을 일할계산으로 마감까지 추정해서
 # Total/자사/정상/이월/입점 x 1~12월 표로 보여준다.
 # ============================================================
-if side["page"].startswith("11."):
+if side["page"].startswith("10."):
     st.markdown("### 📈 마감 예상 실적")
     st.caption(
         "진행 중인(아직 안 끝난) 달은 지금까지 실적을 경과일수로 나눠 이번 달 전체 일수만큼 "
@@ -4496,6 +4582,14 @@ if side["page"].startswith("11."):
                 f"📅 마감예상 대상: {_fc_cur_month_num}월 (지금까지 {_fc_days_elapsed}일 실적 → "
                 f"{_fc_cur_month_end.day}일 기준으로 환산)"
             )
+
+        _fc_excel_bytes = build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, _fc_cur_month_num)
+        st.download_button(
+            "⬇️ 엑셀 다운로드 (마감예상 전체)",
+            data=_fc_excel_bytes,
+            file_name=f"마감예상실적_{forecast_year}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        )
 
         def _style_forecast_table(df, is_pct=False, is_currency_like=False):
             """마감예상 달 컬럼은 배경을 살짝 강조하고, 0(아직 안 온 달)은 빈칸(-)으로 표시."""
