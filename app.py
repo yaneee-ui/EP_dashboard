@@ -4575,7 +4575,43 @@ if side["page"].startswith("11."):
             )
             st.dataframe(_fc_yoy_styled, use_container_width=True, height=400)
 
-        st.info(
-            "ℹ️ 비용/비용률(쿠폰 관련)과 전시상품수(EP채널 데이터)는 별도 데이터소스라 "
-            "아직 이 표에 없어요 — 필요하시면 이어서 추가해드릴게요."
-        )
+        # --- 비용/비용률 (쿠폰 데이터, df_coupon_daily) ---
+        if not df_coupon_daily.empty:
+            st.markdown("#### 비용 (쿠폰할인)")
+            _tbl_cost = build_forecast_table(df_coupon_daily, "비용", "쿠폰할인", None, forecast_year)
+            st.dataframe(_style_forecast_table(_tbl_cost), use_container_width=True)
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+
+            # 비용률 = 비용(쿠폰할인) ÷ 거래액 — 분자(쿠폰)와 분모(거래액)가 서로 다른
+            # 데이터소스(df_coupon_daily / df_traffic)라 build_forecast_table 하나로는 못
+            # 만들고, 각각 예상한 뒤 행 단위로 나눠서 직접 합친다(단순 평균 아님 원칙 유지).
+            st.markdown("#### 비용률")
+            _rate_rows = []
+            for _row_name, _bpu_list in FORECAST_BPU_ROWS.items():
+                _cost_nums, _ = compute_monthly_forecast_series(df_coupon_daily, "쿠폰할인", None, forecast_year, _bpu_list)
+                _gmv_nums, _ = compute_monthly_forecast_series(df_traffic, "거래액", None, forecast_year, _bpu_list)
+                _row = {"구분": _row_name}
+                for _m in range(1, 13):
+                    _c, _g = _cost_nums[_m - 1], _gmv_nums[_m - 1]
+                    _row[f"{_m}월"] = (_c / _g * 100) if _g else (0.0 if _c == 0 else None)
+                _tot_c, _tot_g = sum(_cost_nums), sum(_gmv_nums)
+                _row["합계"] = (_tot_c / _tot_g * 100) if _tot_g else 0.0
+                _rate_rows.append(_row)
+            _tbl_rate = pd.DataFrame(_rate_rows).set_index("구분")
+            st.dataframe(_style_forecast_table(_tbl_rate, is_pct=True), use_container_width=True)
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+        else:
+            st.info("쿠폰 데이터가 없어서 비용/비용률은 건너뛰었어요 (사이드바에서 ep_coupon_daily.csv를 업로드하면 나와요).")
+
+        # --- 전시상품수 (EP채널 데이터, df_ep) ---
+        # df_ep는 원부매칭여부/최저가여부라는 추가 필터 축이 있어서, '전체(Total/Total)'
+        # 기준으로 먼저 좁혀야 df_traffic과 같은 방식(BPU만 보는)으로 다룰 수 있다.
+        _ep_total_scope = df_ep[(df_ep[COL_MATCH] == "Total") & (df_ep[COL_LOWEST] == "Total")]
+        if not _ep_total_scope.empty:
+            st.markdown("#### 전시상품수")
+            _ep_scope_renamed = _ep_total_scope.rename(columns={COL_DATE: "날짜", COL_BPU: "BPU"})
+            _tbl_disp = build_forecast_table(_ep_scope_renamed, "전시상품수", "평균 EP 전시 상품수", None, forecast_year)
+            st.dataframe(_style_forecast_table(_tbl_disp), use_container_width=True)
+            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
+        else:
+            st.info("EP채널 데이터가 없어서 전시상품수는 건너뛰었어요 (사이드바에서 ep_data_long.csv를 업로드하면 나와요).")
