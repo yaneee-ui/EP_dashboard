@@ -298,7 +298,11 @@ def test_render_line_chart_handles_missing_yoy_data():
         def altair_chart(self, chart, **k): pass
         def caption(self, txt): pass
 
-    ns = {"pd": pd, "st": _FakeSt()}
+    # render_donut_chart 앞에 새로 추가된 마감예상 관련 함수들(compute_monthly_forecast_series
+    # 등)이 이 추출 범위에 같이 딸려 들어오는데, 그 함수들은 모듈 최상단에서 정의된
+    # BPU_GROUPS를 참조해서 미리 네임스페이스에 넣어줘야 함(실제 앱에서는 이미 정의돼
+    # 있어서 문제없음 — 이건 순전히 이 테스트의 추출 범위 문제).
+    ns = {"pd": pd, "st": _FakeSt(), "BPU_GROUPS": {"자사": ["e-영업1", "e-영업2"], "입점": ["e-영업3", "e-영업4"]}}
     try:
         exec(func_src, ns)
     except Exception as e:
