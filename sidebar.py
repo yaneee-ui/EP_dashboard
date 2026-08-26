@@ -29,23 +29,44 @@ def render_sidebar():
     # --- 메뉴 (페이지 선택) ---
     st.sidebar.markdown("**메뉴**")
     _menu_options = [
-        "1. 실적 요약", "2. 카테고리 실적 요약", "3. 누적 데이터", "4. 누적 데이터 (카테고리)",
-        "5. 쿠폰 비용 분석", "6. 전체 실적 (주차별)", "7. 회원 실적 (주차별)", "8. 신규 실적 (주차별)",
-        "9. 종합 요약", "10. 마감 예상 실적", "11. 주간보고용",
+        "1. 실적 요약", "2. 카테고리 실적 요약", "3. 종합 요약",
+        "4. 누적 데이터", "5. 누적 데이터 (카테고리)",
+        "6. 전체 실적 (주차별)", "7. 회원 실적 (주차별)", "8. 신규 실적 (주차별)",
+        "9. 쿠폰 비용 분석", "10. 마감 예상 실적", "11. 주간보고용",
     ]
     _menu_emoji = {
-        "1": "📊", "2": "🗂️", "3": "📋", "4": "🏷️", "5": "🎟️",
-        "6": "📅", "7": "👤", "8": "✨", "9": "🧭", "10": "📈", "11": "📑",
+        "1": "📊", "2": "🗂️", "3": "🧭",
+        "4": "📋", "5": "🏷️",
+        "6": "📅", "7": "👤", "8": "✨",
+        "9": "🎟️", "10": "📈", "11": "📑",
     }
 
     def _menu_display(opt):
         _num, _label = opt.split(". ", 1)
         return f"{_menu_emoji.get(_num, '•')} {_label}"
 
+    # 그룹(실적요약/종합요약 · 누적데이터 · 주차별 실적 · 쿠폰/마감예상/주간보고) 사이에
+    # 구분선을 넣는다 — 4번째·6번째·9번째 옵션 위에 border-top을 그어서 표현.
+    st.markdown(
+        """
+        <style>
+        .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(4),
+        .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(6),
+        .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(9) {
+            border-top: 1px solid #e5e7eb;
+            margin-top: 6px !important;
+            padding-top: 6px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
     page = st.sidebar.radio(
         "메뉴", _menu_options,
         format_func=_menu_display,
         label_visibility="collapsed",
+        key="main_menu_radio",
     )
 
     st.sidebar.divider()
