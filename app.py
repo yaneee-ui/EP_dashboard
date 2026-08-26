@@ -457,10 +457,23 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
             })
     right_df = pd.DataFrame(right_rows)
 
+    # --- 시트3: 카테고리별 (트래픽, e-영업1~4 각각) — 시트2와 동일 로직, 지표만 트래픽 ---
+    right_rows_traffic = []
+    for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+        for r in compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col="트래픽"):
+            right_rows_traffic.append({
+                "BPU": bv, "카테고리": r["카테고리"],
+                col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
+                col_cur: round(r["current"]),
+                "전년비(%)": round(r["yoy_delta"], 1) if r.get("yoy_delta") is not None else None,
+            })
+    right_df_traffic = pd.DataFrame(right_rows_traffic)
+
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         left_df.to_excel(writer, index=False, sheet_name="BPU별")
         right_df.to_excel(writer, index=False, sheet_name="카테고리별(거래액)")
+        right_df_traffic.to_excel(writer, index=False, sheet_name="카테고리별(트래픽)")
 
         # CR(구매전환율) 행의 값 셀에 엑셀 퍼센트 서식을 입혀서, 저장해둔 소수(0.048)가
         # 화면엔 "4.8%"로 보이게 한다.
@@ -478,7 +491,7 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         # "-11.0"처럼 퍼센트 숫자라(소수 아님) 서식에서 %를 그냥 곱하면(0.0%) 100배 더
         # 커져버리니, 리터럴 문자 "%"를 따옴표로 감싸서 곱하기 없이 그대로 붙인다.
         _YOY_DELTA_FMT = '[Green]0.0"%";[Red]"△"0.0"%"'
-        for _sheet_name, _df in [("BPU별", left_df), ("카테고리별(거래액)", right_df)]:
+        for _sheet_name, _df in [("BPU별", left_df), ("카테고리별(거래액)", right_df), ("카테고리별(트래픽)", right_df_traffic)]:
             _ws = writer.sheets[_sheet_name]
             if "전년비(%)" not in _df.columns:
                 continue
@@ -491,7 +504,7 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
             for _col in _ws.columns:
                 _w = max((len(str(c.value)) for c in _col if c.value is not None), default=8)
                 _ws.column_dimensions[_col[0].column_letter].width = min(_w + 3, 40)
-    return buf.getvalue(), left_df, right_df
+    return buf.getvalue(), left_df, right_df, right_df_traffic
 
 
 def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_cur_month_num):
@@ -727,9 +740,9 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         st.markdown(table_html, unsafe_allow_html=True)
 
 
-def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date):
+def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date, metric_col="거래액"):
     """2번 페이지 '카테고리별 요약'표와 완전히 동일한 규칙(세그먼트 필터·핏플랍 제외·
-    compute_kpi_deltas)으로 특정 BPU 하나의 카테고리별 거래액 stats를 계산한다.
+    compute_kpi_deltas)으로 특정 BPU 하나의 카테고리별 metric_col(기본 거래액) stats를 계산한다.
     '전체' 카테고리 행도 포함해서 맨 위에 오도록 반환."""
     d = df_category[df_category["BPU"] == bpu_value]
     if d.empty:
@@ -738,12 +751,12 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
         d = d[d["회원구분"] == cat_segment]
     if ff_exclude:
         d = exclude_ff_brand(d)
-    if "거래액" not in d.columns:
+    if metric_col not in d.columns:
         raise ValueError(
-            "ep_category.csv에 '거래액' 컬럼이 없어요. 컨버터에서 만든 파일이 맞는지, "
+            f"ep_category.csv에 '{metric_col}' 컬럼이 없어요. 컨버터에서 만든 파일이 맞는지, "
             "혹은 오래된 버전의 컨버터로 만든 파일은 아닌지 확인해주세요."
         )
-    d = d[d["브랜드"] == "전체"][["날짜", "카테고리", "거래액"]]
+    d = d[d["브랜드"] == "전체"][["날짜", "카테고리", metric_col]]
     if d.empty:
         return []
 
@@ -751,7 +764,7 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
     _agg = "sum" if unit == "월마감" else "mean"
     rows = []
     for cat_name, g in d.groupby("카테고리"):
-        s = g.set_index("날짜")["거래액"].sort_index()
+        s = g.set_index("날짜")[metric_col].sort_index()
         series = s.resample(cfg["rule"]).agg(_agg)
         if unit == "주별":
             series.index = series.index - pd.Timedelta(days=6)
@@ -4054,7 +4067,7 @@ if side["page"].startswith("11."):
             )
 
         try:
-            _wk_xlsx, _pv_left, _pv_right = build_weekly_report_excel(
+            _wk_xlsx, _pv_left, _pv_right, _pv_right_traffic = build_weekly_report_excel(
                 _wk_unit, _wk_ref, df_traffic, df_category, _wk_cat_segment, _wk_ff_exclude
             )
 
@@ -4112,7 +4125,7 @@ if side["page"].startswith("11."):
                     sty = sty.format({"전년비(%)": _fmt}).map(_color, subset=["전년비(%)"])
                 return sty
 
-            _pc1, _pc2 = st.columns(2)
+            _pc1, _pc2, _pc3 = st.columns(3)
             with _pc1:
                 st.markdown("**BPU별**")
                 # 화면 미리보기용으로만 CR(구매전환율) 행을 "4.8%"같은 보기 좋은 문자열로
@@ -4134,6 +4147,9 @@ if side["page"].startswith("11."):
             with _pc2:
                 st.markdown("**카테고리별 (거래액)**")
                 st.dataframe(_style_yoy_delta(_pv_right), use_container_width=True, hide_index=True, height=360)
+            with _pc3:
+                st.markdown("**카테고리별 (트래픽)**")
+                st.dataframe(_style_yoy_delta(_pv_right_traffic), use_container_width=True, hide_index=True, height=360)
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
