@@ -3931,6 +3931,42 @@ if side["page"].startswith("5."):
                 else:
                     st.caption("ℹ️ 전년비 비교표는 월별 조회에서만 제공돼요 (일별/주별 전년비교는 아직 지원 예정 기능이에요).")
 
+        # --- 구분별(자사/정상/이월/입점) 현재까지 비용·비용률 — 올해 1월 1일부터 최신 날짜까지
+        # 실제(예상 아님) 누적. 상단 매체 필터(coupon_bpu)와 무관하게 전체 구분을 한번에 보여준다. ---
+        st.markdown("---")
+        _cost_abs_last = df_traffic["날짜"].max() if not df_traffic.empty else df_coupon_daily["날짜"].max()
+        _cost_ytd_start = pd.Timestamp(_cost_abs_last.year, 1, 1)
+        st.markdown(
+            f"**구분별 비용 현황**  ·  <span style='color:#6b7280;font-size:0.85rem'>"
+            f"{_cost_ytd_start.strftime('%Y-%m-%d')} ~ {_cost_abs_last.strftime('%Y-%m-%d')} 누적(실적, 예상 아님)</span>",
+            unsafe_allow_html=True,
+        )
+        _cost_rows = []
+        for _row_name, _bpu_list in FORECAST_BPU_ROWS.items():
+            if _bpu_list is None:
+                _cost_sub = (
+                    df_coupon_daily[df_coupon_daily["BPU"] == "Total"]
+                    if "Total" in df_coupon_daily["BPU"].unique().tolist()
+                    else df_coupon_daily[df_coupon_daily["BPU"].isin(["e-영업1", "e-영업2", "e-영업3", "e-영업4"])]
+                )
+                _gmv_sub = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+            else:
+                _cost_sub = df_coupon_daily[df_coupon_daily["BPU"].isin(_bpu_list)]
+                _gmv_sub = df_traffic[(df_traffic["BPU"].isin(_bpu_list)) & (df_traffic["회원구분"] == "전체")]
+            _cost_sub = _cost_sub[(_cost_sub["날짜"] >= _cost_ytd_start) & (_cost_sub["날짜"] <= _cost_abs_last)]
+            _gmv_sub = _gmv_sub[(_gmv_sub["날짜"] >= _cost_ytd_start) & (_gmv_sub["날짜"] <= _cost_abs_last)]
+            _cost_v = _cost_sub["쿠폰할인"].sum() if not _cost_sub.empty else 0.0
+            _gmv_v = _gmv_sub["거래액"].sum() if not _gmv_sub.empty else 0.0
+            _rate_v = (_cost_v / _gmv_v * 100) if _gmv_v else None
+            _cost_rows.append({"구분": _row_name, "비용(쿠폰할인)": _cost_v, "거래액": _gmv_v, "비용률": _rate_v})
+        _cost_df = pd.DataFrame(_cost_rows).set_index("구분")
+        _cost_styled = _cost_df.style.format({
+            "비용(쿠폰할인)": lambda v: f"{v:,.0f}",
+            "거래액": lambda v: f"{v:,.0f}",
+            "비용률": lambda v: "-" if v is None or pd.isna(v) else f"{v:.2f}%",
+        })
+        st.dataframe(_cost_styled, use_container_width=True)
+
 
 # ============================================================
 # 페이지 6: 주간보고용 (전년동요일 요약 엑셀 다운로드)
@@ -4066,6 +4102,82 @@ if side["page"].startswith("11."):
                 st.dataframe(_style_yoy_delta(_pv_right), use_container_width=True, hide_index=True, height=360)
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
+
+        # --- 최근 4주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
+        st.markdown("---")
+        st.markdown("**최근 4주 일평균**")
+        _wk4_abs_last = df_traffic["날짜"].max()
+        _wk4_ref_monday = _wk4_abs_last - pd.Timedelta(days=_wk4_abs_last.weekday())
+        _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(3, -1, -1)]  # 오래된 주 -> 최신 주 순
+        _wk4_labels = [f"{d.month}월 {week_of_month(d)}주차" for d in _wk4_starts]
+
+        _wk4_metric_defs = [
+            ("거래액", "거래액", None, False),
+            ("트래픽", "트래픽", None, False),
+            ("구매객수", "구매객수", None, False),
+            ("CR", "구매객수", "트래픽", True),
+            ("객단가", "거래액", "구매객수", True),
+        ]
+
+        def _wk4_series_for(bpu_list, num_col, den_col):
+            sub = df_traffic if bpu_list is None else df_traffic[df_traffic["BPU"].isin(bpu_list)]
+            sub = sub[(sub["BPU"] == "Total") & (sub["회원구분"] == "전체")] if bpu_list is None else sub[sub["회원구분"] == "전체"]
+            # bpu_list가 여러 개(자사=e1+e2, 입점=e3+e4)면 날짜별로 먼저 합산해야 한다 —
+            # 그냥 이어붙이기만 하면 나중에 .mean()을 취할 때 'e1값과 e2값의 평균'이 돼버려서
+            # (실제로 원하는 e1+e2 합산의 절반으로) 반토막 나는 버그가 있었음.
+            _cols = [num_col] + ([den_col] if den_col else [])
+            if bpu_list is not None and len(bpu_list) > 1:
+                sub = sub.groupby("날짜", as_index=False)[_cols].sum()
+            s_num = sub.set_index("날짜")[num_col].sort_index()
+            s_den = sub.set_index("날짜")[den_col].sort_index() if den_col else None
+            return s_num, s_den
+
+        _wk4_sections_html = ""
+        for _label, _num_col, _den_col, _is_ratio in _wk4_metric_defs:
+            _wk4_sections_html += f"<tr><td colspan='7' style='background:#eef2ff;font-weight:700;'>{_label}</td></tr>"
+            for _row_name, _bpu_list in FORECAST_BPU_ROWS.items():
+                _s_num, _s_den = _wk4_series_for(_bpu_list, _num_col, _den_col)
+                _wk_vals = []
+                for _ws in _wk4_starts:
+                    _we = _ws + pd.Timedelta(days=6)
+                    _num_wk = _s_num[(_s_num.index >= _ws) & (_s_num.index <= _we)]
+                    if _is_ratio:
+                        _den_wk = _s_den[(_s_den.index >= _ws) & (_s_den.index <= _we)]
+                        _v = (_num_wk.sum() / _den_wk.sum() * (100 if _label == "CR" else 1)) if _den_wk.sum() else None
+                    else:
+                        _v = _num_wk.mean() if not _num_wk.empty else None
+                    _wk_vals.append(_v)
+                _latest_v, _prev_v = _wk_vals[-1], _wk_vals[-2]
+                _wow = pct_delta_safe(_latest_v, _prev_v) if (_latest_v is not None and _prev_v) else None
+                # 전년비: 최신 주와 동일한 요일 위치(364일 전) 매칭
+                _yoy_start = _wk4_starts[-1] - pd.Timedelta(days=364)
+                _yoy_end = _yoy_start + pd.Timedelta(days=6)
+                _num_yoy = _s_num[(_s_num.index >= _yoy_start) & (_s_num.index <= _yoy_end)]
+                if _is_ratio:
+                    _den_yoy = _s_den[(_s_den.index >= _yoy_start) & (_s_den.index <= _yoy_end)]
+                    _yoy_v = (_num_yoy.sum() / _den_yoy.sum() * (100 if _label == "CR" else 1)) if _den_yoy.sum() else None
+                else:
+                    _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
+                _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
+
+                def _fmt_wk(v):
+                    if v is None or pd.isna(v):
+                        return "-"
+                    return f"{v:.1f}%" if _label == "CR" else f"{v:,.0f}"
+
+                _cells = "".join(f"<td style='text-align:right;'>{_fmt_wk(v)}</td>" for v in _wk_vals)
+                _wk4_sections_html += (
+                    f"<tr><td class='m'>{_row_name}</td>{_cells}"
+                    f"<td style='text-align:right;'>{format_delta_html(_wow)}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(_yoy)}</td></tr>"
+                )
+        _wk4_header = "".join(f"<th>{l}</th>" for l in _wk4_labels)
+        st.markdown(
+            "<div style='overflow-x:auto;'><table class='summary-table'>"
+            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th></tr></thead>"
+            f"<tbody>{_wk4_sections_html}</tbody></table></div>",
+            unsafe_allow_html=True,
+        )
 
 
 # ============================================================
