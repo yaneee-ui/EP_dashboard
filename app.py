@@ -3935,7 +3935,21 @@ if side["page"].startswith("5."):
         # 실제(예상 아님) 누적. 상단 매체 필터(coupon_bpu)와 무관하게 전체 구분을 한번에 보여준다. ---
         st.markdown("---")
         _cost_abs_last = df_traffic["날짜"].max() if not df_traffic.empty else df_coupon_daily["날짜"].max()
-        _cost_ytd_start = pd.Timestamp(_cost_abs_last.year, 1, 1)
+        # 상단 필터(조회단위 coupon_unit, 선택 기간 _combined)에 맞춰 실제 선택된 범위를
+        # 그대로 반영한다 — 이전엔 무조건 올해 1/1~오늘로 고정이었는데, 사용자가 위에서
+        # 일별/주별/월별로 기간을 바꾸면 이 표도 같이 바뀌어야 한다는 피드백을 반영.
+        if not _chart_series.empty:
+            _cost_ytd_start = _chart_series.index.min()
+            if coupon_unit == "주별":
+                _cost_abs_last = min(_chart_series.index.max() + pd.Timedelta(days=6), _cost_abs_last)
+            elif coupon_unit == "월별":
+                _cost_abs_last = min(
+                    (_chart_series.index.max() + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1), _cost_abs_last
+                )
+            else:
+                _cost_abs_last = min(_chart_series.index.max(), _cost_abs_last)
+        else:
+            _cost_ytd_start = pd.Timestamp(_cost_abs_last.year, 1, 1)
         st.markdown(
             f"**구분별 비용 현황**  ·  <span style='color:#6b7280;font-size:0.85rem'>"
             f"{_cost_ytd_start.strftime('%Y-%m-%d')} ~ {_cost_abs_last.strftime('%Y-%m-%d')} 누적(실적, 예상 아님)</span>",
@@ -4132,9 +4146,8 @@ if side["page"].startswith("11."):
             s_den = sub.set_index("날짜")[den_col].sort_index() if den_col else None
             return s_num, s_den
 
-        _wk4_sections_html = ""
+        _wk4_all_rows = []  # HTML/엑셀 공통으로 쓸 구조화된 결과
         for _label, _num_col, _den_col, _is_ratio in _wk4_metric_defs:
-            _wk4_sections_html += f"<tr><td colspan='7' style='background:#eef2ff;font-weight:700;'>{_label}</td></tr>"
             for _row_name, _bpu_list in FORECAST_BPU_ROWS.items():
                 _s_num, _s_den = _wk4_series_for(_bpu_list, _num_col, _den_col)
                 _wk_vals = []
@@ -4159,24 +4172,89 @@ if side["page"].startswith("11."):
                 else:
                     _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
                 _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
+                _wk4_all_rows.append({
+                    "지표": _label, "구분": _row_name, "값": _wk_vals,
+                    "전주비": _wow, "전년비": _yoy, "is_pct": _label == "CR",
+                })
 
-                def _fmt_wk(v):
-                    if v is None or pd.isna(v):
-                        return "-"
-                    return f"{v:.1f}%" if _label == "CR" else f"{v:,.0f}"
+        # --- HTML 표 ---
+        _wk4_sections_html = ""
+        _cur_metric = None
+        for _r in _wk4_all_rows:
+            if _r["지표"] != _cur_metric:
+                _cur_metric = _r["지표"]
+                _wk4_sections_html += f"<tr><td colspan='7' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
 
-                _cells = "".join(f"<td style='text-align:right;'>{_fmt_wk(v)}</td>" for v in _wk_vals)
-                _wk4_sections_html += (
-                    f"<tr><td class='m'>{_row_name}</td>{_cells}"
-                    f"<td style='text-align:right;'>{format_delta_html(_wow)}</td>"
-                    f"<td style='text-align:right;'>{format_delta_html(_yoy)}</td></tr>"
-                )
+            def _fmt_wk(v, is_pct):
+                if v is None or pd.isna(v):
+                    return "-"
+                return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
+
+            _cells = "".join(f"<td style='text-align:right;'>{_fmt_wk(v, _r['is_pct'])}</td>" for v in _r["값"])
+            _wk4_sections_html += (
+                f"<tr><td class='m'>{_r['구분']}</td>{_cells}"
+                f"<td style='text-align:right;'>{format_delta_html(_r['전주비'])}</td>"
+                f"<td style='text-align:right;'>{format_delta_html(_r['전년비'])}</td></tr>"
+            )
         _wk4_header = "".join(f"<th>{l}</th>" for l in _wk4_labels)
         st.markdown(
             "<div style='overflow-x:auto;'><table class='summary-table'>"
             f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th></tr></thead>"
             f"<tbody>{_wk4_sections_html}</tbody></table></div>",
             unsafe_allow_html=True,
+        )
+
+        # --- 엑셀 다운로드 (CR은 진짜 %서식으로) ---
+        from openpyxl.styles import Font, PatternFill
+        import openpyxl
+        _wk4_wb = openpyxl.Workbook()
+        _wk4_ws = _wk4_wb.active
+        _wk4_ws.title = "최근4주"
+        _wk4_header_fill = PatternFill("solid", fgColor="D9D9D9")
+        _wk4_section_font = Font(bold=True)
+        _wk4_up_font = Font(color="16A34A")
+        _wk4_down_font = Font(color="DC2626")
+
+        _wk4_col_headers = ["구분"] + _wk4_labels + ["전주비", "전년비"]
+        _wk4_ws.append(_wk4_col_headers)
+        for _c in range(1, len(_wk4_col_headers) + 1):
+            _cell = _wk4_ws.cell(row=1, column=_c)
+            _cell.fill = _wk4_header_fill
+            _cell.font = Font(bold=True)
+
+        _cur_metric = None
+        for _r in _wk4_all_rows:
+            if _r["지표"] != _cur_metric:
+                _cur_metric = _r["지표"]
+                _wk4_ws.append([_cur_metric])
+                _wk4_ws.cell(row=_wk4_ws.max_row, column=1).font = _wk4_section_font
+            _row_vals = [_r["구분"]]
+            for v in _r["값"]:
+                _row_vals.append(None if v is None or pd.isna(v) else (round(v / 100, 4) if _r["is_pct"] else round(v)))
+            _row_vals.append(None if _r["전주비"] is None else round(_r["전주비"] / 100, 4))
+            _row_vals.append(None if _r["전년비"] is None else round(_r["전년비"] / 100, 4))
+            _wk4_ws.append(_row_vals)
+            _rr = _wk4_ws.max_row
+            if _r["is_pct"]:
+                for _c in range(2, 2 + len(_wk4_labels)):
+                    _wk4_ws.cell(row=_rr, column=_c).number_format = "0.0%"
+            for _c, _val in [(2 + len(_wk4_labels), _r["전주비"]), (3 + len(_wk4_labels), _r["전년비"])]:
+                _cell = _wk4_ws.cell(row=_rr, column=_c)
+                _cell.number_format = '+0.0"%";-0.0"%"'
+                if _val is not None:
+                    _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
+
+        for _c in range(1, len(_wk4_col_headers) + 1):
+            _wk4_ws.column_dimensions[openpyxl.utils.get_column_letter(_c)].width = 13
+        _wk4_ws.freeze_panes = "B2"
+
+        _wk4_buf = io.BytesIO()
+        _wk4_wb.save(_wk4_buf)
+        st.download_button(
+            "⬇️ 엑셀 다운로드 (최근 4주 일평균)",
+            data=_wk4_buf.getvalue(),
+            file_name=f"최근4주일평균_{_wk4_abs_last.strftime('%Y%m%d')}.xlsx",
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
 
