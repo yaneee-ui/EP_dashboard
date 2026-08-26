@@ -1482,18 +1482,17 @@ with _sticky:
     ]
 
     _page_titles = {
-        "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약",
-        "3": "📋 누적 데이터", "4": "🏷️ 누적 데이터 (카테고리)",
-        "5": "🎟️ 쿠폰 비용 분석",
+        "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약", "3": "🧭 종합 요약",
+        "4": "📋 누적 데이터", "5": "🏷️ 누적 데이터 (카테고리)",
         "6": "📅 전체 실적 (주차별)", "7": "👤 회원 실적 (주차별)", "8": "✨ 신규 실적 (주차별)",
-        "9": "🧭 종합 요약", "10": "📈 마감 예상 실적", "11": "📑 주간보고용",
+        "9": "🎟️ 쿠폰 비용 분석", "10": "📈 마감 예상 실적", "11": "📑 주간보고용",
     }
 
     # ========================================================
     # 페이지 5: 쿠폰 비용 분석 — 매체/쿠폰유형/기준일자(또는 기준시점)를
     # 1·2번 페이지와 동일하게 상단 고정 필터로 올림
     # ========================================================
-    if _page_num == "5":
+    if _page_num == "9":
         _cp_bpu_options_top = (
             [b for b in ["Total", "자사", "입점", "e-영업1", "e-영업2", "e-영업3", "e-영업4"] if b in df_coupon["BPU"].unique()]
             if not df_coupon.empty else []
@@ -1757,7 +1756,7 @@ with _sticky:
     # + 세그먼트를 상단 고정 영역에 배치 (별도 조회단위 선택은 안 둠 — 사이드바 것과
     # 중복돼서 혼란스러웠던 걸 반영해 제거)
     # ========================================================
-    elif _page_num == "9":
+    elif _page_num == "3":
         _sum_period_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
         if _sum_period_base.empty:
             _sum_period_base = df_traffic[df_traffic["BPU"] == "Total"]
@@ -1874,7 +1873,7 @@ with _sticky:
             unsafe_allow_html=True,
         )
 
-        _is_cum_cat_page = _page_num == "4"
+        _is_cum_cat_page = _page_num == "5"
         gc1, gc2, gc3, gc4, gc5, _gc_spacer = st.columns([1, 1, 1, 1, 1, 3])
 
         with gc1:
@@ -1965,7 +1964,7 @@ with _sticky:
 
         # 페이지3(누적 데이터)/4(카테고리)는 둘째 줄에 세그먼트(고객 구분) 필터 추가
         cum_segment = "전체"
-        if _page_num == "3":
+        if _page_num == "4":
             _cum_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_traffic["회원구분"].unique()]
             if len(_cum_seg_options) > 1:
                 st.markdown("<div style='margin-top:8px;'></div>", unsafe_allow_html=True)
@@ -1973,7 +1972,7 @@ with _sticky:
                     "고객 구분", _cum_seg_options, horizontal=True,
                     key="cum_seg_filter", label_visibility="collapsed",
                 )
-        elif _page_num == "4":
+        elif _page_num == "5":
             _has_cum_cat_segment = "회원구분" in df_category.columns
             if _has_cum_cat_segment and selected_brand == "전체":
                 _cum_cat_seg_options = [s for s in ["전체", "회원", "비회원", "신규", "기존"] if s in df_category["회원구분"].unique()]
@@ -2054,9 +2053,9 @@ st.markdown(
 )
 
 # 고정된 필터 영역이 차지하던 자리만큼, 아래 콘텐츠가 가려지지 않도록 여백 확보
-if _page_num == "4":
+if _page_num == "5":
     _spacer_height = 155
-elif _page_num in ("1", "2", "3", "9", "10"):
+elif _page_num in ("1", "2", "4", "3", "10"):
     _spacer_height = 100
 else:
     _spacer_height = 65
@@ -3264,7 +3263,7 @@ if side["page"].startswith("2."):
 # ============================================================
 # 페이지 3: 누적 데이터 (EP실적 + EP채널 합쳐서 기간별 표)
 # ============================================================
-if side["page"].startswith("3."):
+if side["page"].startswith("4."):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
@@ -3448,7 +3447,7 @@ if side["page"].startswith("3."):
 # ============================================================
 # 페이지 4: 누적 데이터 (카테고리)
 # ============================================================
-if side["page"].startswith("4."):
+if side["page"].startswith("5."):
     st.markdown("---")
     st.markdown(
         f"<div class='chart-caption'>매체: <b>{bpu}</b> · 기간유형: <b>{cum_unit}</b> · 집계: <b>{cum_agg_mode}</b> · "
@@ -3551,7 +3550,7 @@ if side["page"].startswith("4."):
 # ============================================================
 # 페이지 5: 쿠폰 비용 분석
 # ============================================================
-if side["page"].startswith("5."):
+if side["page"].startswith("9."):
     st.markdown("---")
 
     _has_daily = not df_coupon_daily.empty
@@ -4545,7 +4544,7 @@ if side["page"].startswith("8."):
 # 페이지 10: 종합 요약 — 여기저기 흩어진 핵심 지표를 한 화면에 모음
 # (A: 핵심 지표 한눈에 + C: 카테고리×브랜드 피벗 테이블)
 # ============================================================
-if side["page"].startswith("9."):
+if side["page"].startswith("3."):
     if df_traffic.empty:
         st.info("데이터가 없습니다. 사이드바에서 데이터를 업로드해주세요.")
     else:
@@ -4780,7 +4779,7 @@ if side["page"].startswith("9."):
                     f"<div style='font-size:1.05rem;font-weight:700;color:#7c3aed;'>{_rate_str}</div></div>",
                     unsafe_allow_html=True,
                 )
-            st.caption("자세한 쿠폰 분석은 5번 페이지에서 확인하세요.")
+            st.caption("자세한 쿠폰 분석은 9번 페이지에서 확인하세요.")
 
 
 # ============================================================
