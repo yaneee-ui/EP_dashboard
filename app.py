@@ -533,6 +533,7 @@ def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_c
         header = ["구분"] + [f"{m}월" for m in range(1, 13)] + ["합계"]
         if fc_cur_month_num:
             header.append(f"전년비({fc_cur_month_num}월)")
+            header.append(f"작년({fc_cur_month_num}월)")
         for c, h in enumerate(header, start=1):
             cell = ws.cell(row=row_idx, column=c, value=h)
             cell.fill = HEADER_FILL
@@ -555,24 +556,44 @@ def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_c
             for m in range(1, 13):
                 col = m + 1
                 v = _cur_tbl.loc[row_name, f"{m}월"]
-                cell = ws.cell(row=row_idx, column=col, value=None if (v is None or pd.isna(v) or v == 0) else round(float(v), 2 if is_pct else 0))
+                if v is None or pd.isna(v) or v == 0:
+                    cell = ws.cell(row=row_idx, column=col, value=None)
+                elif is_pct:
+                    cell = ws.cell(row=row_idx, column=col, value=round(float(v) / 100, 4))
+                    cell.number_format = "0.0%"
+                else:
+                    cell = ws.cell(row=row_idx, column=col, value=round(float(v)))
                 if fc_cur_month_num and m == fc_cur_month_num:
                     cell.fill = FORECAST_FILL
             _tot_v = _cur_tbl.loc[row_name, "합계"]
-            ws.cell(row=row_idx, column=14, value=None if (_tot_v is None or pd.isna(_tot_v)) else round(float(_tot_v), 2 if is_pct else 0))
+            if _tot_v is None or pd.isna(_tot_v):
+                ws.cell(row=row_idx, column=14, value=None)
+            elif is_pct:
+                _tot_cell = ws.cell(row=row_idx, column=14, value=round(float(_tot_v) / 100, 4))
+                _tot_cell.number_format = "0.0%"
+            else:
+                ws.cell(row=row_idx, column=14, value=round(float(_tot_v)))
             if fc_cur_month_num and _prev_tbl is not None:
                 _cv = _cur_tbl.loc[row_name, f"{fc_cur_month_num}월"]
                 _pv = _prev_tbl.loc[row_name, f"{fc_cur_month_num}월"]
                 _yoy = pct_delta_safe(_cv, _pv) if (_cv is not None and _pv) else None
-                _cell = ws.cell(row=row_idx, column=15, value=None if _yoy is None else round(_yoy, 1))
+                _cell = ws.cell(row=row_idx, column=15, value=None if _yoy is None else round(_yoy / 100, 4))
                 if _yoy is not None:
                     _cell.font = UP_FONT if _yoy >= 0 else DOWN_FONT
-                    _cell.number_format = '+0.0"%";-0.0"%"'
+                    _cell.number_format = '+0.0%;-0.0%'
+                # 작년 실제값(전년비 계산에 쓴 기준 숫자) — 비교하기 편하게 바로 옆에 표시
+                if _pv is None or pd.isna(_pv):
+                    ws.cell(row=row_idx, column=16, value=None)
+                elif is_pct:
+                    _pv_cell = ws.cell(row=row_idx, column=16, value=round(float(_pv) / 100, 4))
+                    _pv_cell.number_format = "0.0%"
+                else:
+                    ws.cell(row=row_idx, column=16, value=round(float(_pv)))
             row_idx += 1
         row_idx += 1  # 섹션 사이 빈 줄
 
     ws.column_dimensions["A"].width = 12
-    for c in range(2, 16):
+    for c in range(2, 17):
         ws.column_dimensions[get_column_letter(c)].width = 12
     ws.freeze_panes = "B2"
 
@@ -4174,7 +4195,7 @@ if side["page"].startswith("11."):
                 _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
                 _wk4_all_rows.append({
                     "지표": _label, "구분": _row_name, "값": _wk_vals,
-                    "전주비": _wow, "전년비": _yoy, "is_pct": _label == "CR",
+                    "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v, "is_pct": _label == "CR",
                 })
 
         # --- HTML 표 ---
@@ -4183,7 +4204,7 @@ if side["page"].startswith("11."):
         for _r in _wk4_all_rows:
             if _r["지표"] != _cur_metric:
                 _cur_metric = _r["지표"]
-                _wk4_sections_html += f"<tr><td colspan='7' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
+                _wk4_sections_html += f"<tr><td colspan='8' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
 
             def _fmt_wk(v, is_pct):
                 if v is None or pd.isna(v):
@@ -4194,12 +4215,13 @@ if side["page"].startswith("11."):
             _wk4_sections_html += (
                 f"<tr><td class='m'>{_r['구분']}</td>{_cells}"
                 f"<td style='text-align:right;'>{format_delta_html(_r['전주비'])}</td>"
-                f"<td style='text-align:right;'>{format_delta_html(_r['전년비'])}</td></tr>"
+                f"<td style='text-align:right;'>{format_delta_html(_r['전년비'])}</td>"
+                f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk(_r['작년값'], _r['is_pct'])}</td></tr>"
             )
         _wk4_header = "".join(f"<th>{l}</th>" for l in _wk4_labels)
         st.markdown(
             "<div style='overflow-x:auto;'><table class='summary-table'>"
-            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th></tr></thead>"
+            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
             f"<tbody>{_wk4_sections_html}</tbody></table></div>",
             unsafe_allow_html=True,
         )
@@ -4215,7 +4237,7 @@ if side["page"].startswith("11."):
         _wk4_up_font = Font(color="16A34A")
         _wk4_down_font = Font(color="DC2626")
 
-        _wk4_col_headers = ["구분"] + _wk4_labels + ["전주비", "전년비"]
+        _wk4_col_headers = ["구분"] + _wk4_labels + ["전주비", "전년비", "작년(동요일)"]
         _wk4_ws.append(_wk4_col_headers)
         for _c in range(1, len(_wk4_col_headers) + 1):
             _cell = _wk4_ws.cell(row=1, column=_c)
@@ -4233,14 +4255,17 @@ if side["page"].startswith("11."):
                 _row_vals.append(None if v is None or pd.isna(v) else (round(v / 100, 4) if _r["is_pct"] else round(v)))
             _row_vals.append(None if _r["전주비"] is None else round(_r["전주비"] / 100, 4))
             _row_vals.append(None if _r["전년비"] is None else round(_r["전년비"] / 100, 4))
+            _yoy_v = _r.get("작년값")
+            _row_vals.append(None if _yoy_v is None or pd.isna(_yoy_v) else (round(_yoy_v / 100, 4) if _r["is_pct"] else round(_yoy_v)))
             _wk4_ws.append(_row_vals)
             _rr = _wk4_ws.max_row
             if _r["is_pct"]:
                 for _c in range(2, 2 + len(_wk4_labels)):
                     _wk4_ws.cell(row=_rr, column=_c).number_format = "0.0%"
+                _wk4_ws.cell(row=_rr, column=4 + len(_wk4_labels)).number_format = "0.0%"
             for _c, _val in [(2 + len(_wk4_labels), _r["전주비"]), (3 + len(_wk4_labels), _r["전년비"])]:
                 _cell = _wk4_ws.cell(row=_rr, column=_c)
-                _cell.number_format = '+0.0"%";-0.0"%"'
+                _cell.number_format = '+0.0%;-0.0%'
                 if _val is not None:
                     _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
 
