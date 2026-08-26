@@ -4183,12 +4183,18 @@ if side["page"].startswith("11."):
                     _wk_vals.append(_v)
                 _latest_v, _prev_v = _wk_vals[-1], _wk_vals[-2]
                 _wow = pct_delta_safe(_latest_v, _prev_v) if (_latest_v is not None and _prev_v) else None
-                # 전년비: 최신 주와 동일한 요일 위치(364일 전) 매칭
-                _yoy_start = _wk4_starts[-1] - pd.Timedelta(days=364)
-                _yoy_end = _yoy_start + pd.Timedelta(days=6)
-                _num_yoy = _s_num[(_s_num.index >= _yoy_start) & (_s_num.index <= _yoy_end)]
+                # 전년비: 최신 주에 '실제로 존재하는 날짜'만 골라서 그 날짜들의 동요일(364일 전)과
+                # 매칭한다 — 최신 주가 아직 다 안 지난(부분) 주면, 작년도 7일 전체가 아니라
+                # 딱 그만큼의 날짜만 비교해야 공정하다(1번 페이지 compute_kpi_deltas와 동일 원칙).
+                # 그냥 7일 전체로 비교하면 부분주(예: 3일치)를 작년 완성된 7일과 비교하게 돼서
+                # 부당하게 낮게(또는 높게) 나옴 — 실제로 이 버그를 사용자가 발견함.
+                _latest_ws = _wk4_starts[-1]
+                _latest_we = _latest_ws + pd.Timedelta(days=6)
+                _cur_actual_days = _s_num[(_s_num.index >= _latest_ws) & (_s_num.index <= _latest_we)].index
+                _matched_dates = [d - pd.Timedelta(days=364) for d in _cur_actual_days]
+                _num_yoy = _s_num.reindex(_matched_dates).dropna()
                 if _is_ratio:
-                    _den_yoy = _s_den[(_s_den.index >= _yoy_start) & (_s_den.index <= _yoy_end)]
+                    _den_yoy = _s_den.reindex(_matched_dates).dropna()
                     _yoy_v = (_num_yoy.sum() / _den_yoy.sum() * (100 if _label == "CR" else 1)) if _den_yoy.sum() else None
                 else:
                     _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
