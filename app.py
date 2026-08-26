@@ -918,7 +918,16 @@ def compute_monthly_forecast_series(df, num_col, den_col, year, bpu_list, segmen
     마감예상 처리 — 지금까지의 합계를 경과일수로 나눠 이번 달 전체 일수만큼 곱해서 추정.
     완성된(지나간) 달은 그대로 실제 합계, 아직 시작 안 한 달은 (0, 0).
     den_col이 None이면 절대값 지표(거래액/트래픽 등)라 분모 계산은 건너뛴다."""
-    sub = df[df["BPU"] == "Total"] if bpu_list is None else df[df["BPU"].isin(bpu_list)]
+    if bpu_list is None:
+        # "Total"을 뜻하는 bpu_list=None인 경우: 데이터에 BPU="Total" 행이 실제로 있으면
+        # 그걸 쓰고(df_traffic처럼), 없으면(쿠폰 데이터처럼 Total 집계행 자체가 없는 소스)
+        # e-영업1~4를 다 더해서 Total을 만든다.
+        if "Total" in df["BPU"].unique().tolist():
+            sub = df[df["BPU"] == "Total"]
+        else:
+            sub = df[df["BPU"].isin(["e-영업1", "e-영업2", "e-영업3", "e-영업4"])]
+    else:
+        sub = df[df["BPU"].isin(bpu_list)]
     if "회원구분" in sub.columns and segment in sub["회원구분"].unique().tolist():
         sub = sub[sub["회원구분"] == segment]
     _abs_last = df["날짜"].max()
