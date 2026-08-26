@@ -187,7 +187,7 @@ def test_bpu_weekly_report_aov_matches_gmv_over_count():
     df_traffic["객단가"] = (df_traffic["거래액"] / df_traffic["구매객수"]).where(df_traffic["구매객수"] > 0, 0)
     df_category = pd.DataFrame(columns=["날짜", "BPU", "카테고리", "브랜드", "회원구분", "거래액"])
 
-    _, left_df, _ = build_weekly_report_excel(
+    _, left_df, _, _ = build_weekly_report_excel(
         "월별", pd.Timestamp("2026-07-31"), df_traffic, df_category, "전체", False
     )
 
