@@ -1887,7 +1887,7 @@ with _sticky:
         )
 
         _is_cum_cat_page = _page_num == "5"
-        gc1, gc2, gc3, gc4, gc5, _gc_spacer = st.columns([1, 1, 1, 1, 1, 3])
+        gc1, gc2, gc3, gc4, gc5, gc6, _gc_spacer = st.columns([1, 1, 1, 1, 1, 1, 2])
 
         with gc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
@@ -1938,6 +1938,12 @@ with _sticky:
             cum_end = st.date_input(
                 "종료일", value=_cum_max_d, min_value=_cum_min_d, max_value=_cum_max_d,
                 label_visibility="collapsed", key="cum_end_date",
+            )
+        with gc6:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>정렬</div>", unsafe_allow_html=True)
+            cum_sort_order = st.selectbox(
+                "정렬", ["최신순", "오래된순"],
+                label_visibility="collapsed", key="cum_sort_order",
             )
 
         # 카테고리 페이지(4번)는 둘째 줄에 카테고리/브랜드 필터 추가
@@ -3356,11 +3362,11 @@ if side["page"].startswith("4."):
         ep_table_rows["원부매칭율(%)"] = (ep_base_sum["평균 원부매칭 상품수"] / ep_base_sum["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
         ep_table_rows["최저가율(%)"] = (ep_base_sum["평균 최저가 상품수"] / ep_base_sum["평균 EP 전시 상품수"] * 100).replace([float("inf")], None)
 
-    # --- 병합해서 표 만들기 (최신 기간이 위로 오도록 내림차순) ---
+    # --- 병합해서 표 만들기 (정렬 순서는 상단 필터로 선택) ---
     all_dates = sorted(set().union(
         *[s.index for s in tr_table_rows.values()],
         *[s.index for s in ep_table_rows.values()],
-    ), reverse=True)
+    ), reverse=(cum_sort_order == "최신순"))
 
     if not all_dates:
         st.info("선택한 조건에 데이터가 없습니다.")
@@ -3521,7 +3527,7 @@ if side["page"].startswith("5."):
             cat_table_rows["CR"] = (cat_base_sum["구매객수"] / cat_base_sum["트래픽"] * 100).replace([float("inf")], None)
             cat_table_rows["객단가"] = (cat_base_sum["거래액"] / cat_base_sum["구매객수"]).replace([float("inf")], None)
 
-            all_cat_dates = sorted(set().union(*[s.index for s in cat_table_rows.values()]), reverse=True)
+            all_cat_dates = sorted(set().union(*[s.index for s in cat_table_rows.values()]), reverse=(cum_sort_order == "최신순"))
             if not all_cat_dates:
                 st.info("선택한 조건에 데이터가 없습니다.")
             else:
