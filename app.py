@@ -1069,7 +1069,7 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
 
     def _fmt_delta(v):
-        return format_delta_text(v) if v is not None else "-"
+        return format_delta_html(v) if v is not None else "-"
 
     # 1) 기본 지표 해석
     _gmv = _find("거래액(순결제)")
@@ -1095,7 +1095,7 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
             _leader = "자사" if _jy > _iy else "입점"
             _body = (
                 f"자사 거래액 {_yoy_label} {_fmt_delta(_jy)}, 입점 거래액 {_yoy_label} {_fmt_delta(_iy)}. "
-                f"**{_leader}**{_josa_ga(_leader)} 더 빠르게 성장하고 있어요."
+                f"<b>{_leader}</b>{_josa_ga(_leader)} 더 빠르게 성장하고 있어요."
             )
             sections.append({"title": "② 자사·입점 중 어디가 더 크고 있나?", "body": _body})
 
@@ -1108,8 +1108,8 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         _best_b, _best_v = _bpu_yoys[0]
         _worst_b, _worst_v = _bpu_yoys[-1]
         _body = (
-            f"거래액 {_yoy_label} 기준 **{_best_b}**{_josa_ga(_best_b)} 가장 좋아요({_fmt_delta(_best_v)}). "
-            f"반대로 **{_worst_b}**{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요 — 우선 점검이 필요해요."
+            f"거래액 {_yoy_label} 기준 <b>{_best_b}</b>{_josa_ga(_best_b)} 가장 좋아요({_fmt_delta(_best_v)}). "
+            f"반대로 <b>{_worst_b}</b>{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요 — 우선 점검이 필요해요."
         )
         sections.append({"title": "③ 가장 큰 병목·기회는 어디?", "body": _body})
 
@@ -1118,9 +1118,9 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         _lines = []
         for _bpu_name, _tops, _bottoms in category_movers:
             if _tops:
-                _lines.append(f"{_bpu_name} 최대 상승: **{_tops[0]['카테고리']}** ({_fmt_delta(_tops[0]['전년비'])})")
+                _lines.append(f"{_bpu_name} 최대 상승: <b>{_tops[0]['카테고리']}</b> ({_fmt_delta(_tops[0]['전년비'])})")
             if _bottoms:
-                _lines.append(f"{_bpu_name} 최대 하락: **{_bottoms[0]['카테고리']}** ({_fmt_delta(_bottoms[0]['전년비'])})")
+                _lines.append(f"{_bpu_name} 최대 하락: <b>{_bottoms[0]['카테고리']}</b> ({_fmt_delta(_bottoms[0]['전년비'])})")
         if _lines:
             sections.append({"title": "④ 카테고리 중 뭐가 성장을 끌고/깎아먹나?", "body": " · ".join(_lines)})
 
@@ -1143,6 +1143,33 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         _body = f"{_fm} 마감예상 거래액이 작년 동월 대비 {_fmt_delta(_fy)} — {_tone}."
         sections.append({"title": "⑥ 이번 달 마감예상이 작년 대비 어떤가?", "body": _body})
 
+    return sections
+
+
+def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
+    """2번(카테고리 실적 요약) 페이지 전용 규칙 기반 인사이트. cat_payload는 KPI 카드용
+    {"name","value","prev_delta","yoy_delta"} 리스트, cat_movers는 카테고리별
+    {"카테고리","거래액","yoy"} 리스트(이미 표에 쓰는 것 그대로 재사용)."""
+    sections = []
+    _prev_label, _yoy_label = cfg.get("prev_label", "전기간비"), cfg.get("yoy_label", "전년비")
+
+    def _fmt_delta(v):
+        return format_delta_html(v) if v is not None else "-"
+
+    if cat_payload:
+        _bits = [f"{p['name']} {p['value']} ({_yoy_label} {_fmt_delta(p.get('yoy_delta'))})" for p in cat_payload[:3]]
+        sections.append({"title": "① 이 카테고리·브랜드 조합의 기본 지표는?", "body": " · ".join(_bits)})
+
+    if cat_movers:
+        _valid = [r for r in cat_movers if r.get("yoy") is not None]
+        if len(_valid) >= 2:
+            _ranked = sorted(_valid, key=lambda r: r["yoy"], reverse=True)
+            _top, _bottom = _ranked[0], _ranked[-1]
+            _body = (
+                f"최대 상승: <b>{_top['카테고리']}</b> {_top['거래액']:,.0f} ({_fmt_delta(_top['yoy'])}) · "
+                f"최대 하락: <b>{_bottom['카테고리']}</b> {_bottom['거래액']:,.0f} ({_fmt_delta(_bottom['yoy'])})"
+            )
+            sections.append({"title": "② 어느 카테고리가 성장을 끌고/깎아먹나?", "body": _body})
     return sections
 
 
@@ -2393,18 +2420,16 @@ if side["page"].startswith("1."):
         except Exception:
             pass  # 요약은 보조 기능이라, 계산 중 문제가 있어도 KPI 요약은 그대로 보여준다
 
+        # 규칙 기반 자동 인사이트 — 이미 계산된 _bpu_rows_all/cfg를 그대로 재사용해서
+        # 화면 숫자와 100% 일치하는 구조화된 요약을 만든다(LLM 호출 없음). render_insight_card의
+        # expander 안에 같이 넣어서 한 번에 접고 펼 수 있게 한다.
+        _rb_sections_ep = generate_rule_based_insights(_bpu_rows_all, cfg) if _bpu_rows_all else []
+
         _memo_key_ep = f"ep_summary::{bpu}::{segment}::{unit}::{period_label}"
         _ai_result_ep = render_insight_card(
             _ai_payload_ep, _ai_context_ep, "ep_summary", _memo_key_ep, period_label,
-            extra_sections=_extra_sections_ep,
+            extra_sections=_extra_sections_ep, rule_based_sections=_rb_sections_ep,
         )
-
-        # 규칙 기반 자동 인사이트 — 위 AI 인사이트(자유 텍스트)와 별개로, 이미 계산된
-        # _bpu_rows_all/cfg를 그대로 재사용해서 화면 숫자와 100% 일치하는 구조화된
-        # 요약을 만든다(LLM 호출 없음).
-        if _bpu_rows_all:
-            _rb_sections = generate_rule_based_insights(_bpu_rows_all, cfg)
-            render_insight_panel(_rb_sections)
 
 
         # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -3106,9 +3131,11 @@ if side["page"].startswith("2."):
             except Exception:
                 pass  # 요약은 보조 기능이라, 계산 중 문제가 있어도 KPI 요약은 그대로 보여준다
 
+            _rb_sections_cat = generate_category_page_insights(_ai_payload_cat, _cfg_cat, _cat_summary_rows)
+
             _ai_result_cat = render_insight_card(
                 _ai_payload_cat, _ai_context_cat, "cat_summary", _memo_key_cat, period_label,
-                extra_sections=_extra_sections_cat,
+                extra_sections=_extra_sections_cat, rule_based_sections=_rb_sections_cat,
             )
 
             # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -3615,6 +3642,19 @@ if side["page"].startswith("4."):
         )
         st.markdown(table_html, unsafe_allow_html=True)
 
+        # 규칙 기반 자동 인사이트 — 이 페이지는 전기간비/전년비 개념이 없는 단순 누적표라
+        # (표 자체에 이미 '합계' 행이 있음) 짧게 한 줄만: 선택 기간의 핵심 합계값 요약.
+        if _tot_vals.get("거래액") is not None:
+            _cum_body = (
+                f"{cum_start} ~ {cum_end} 누적 — 트래픽 {_tot_vals.get('트래픽', 0):,.0f} · "
+                f"거래액 {_tot_vals['거래액']:,.0f} · 구매객수 {_tot_vals.get('구매객수', 0):,.0f}"
+            )
+            if _tot_vals.get("CR") is not None:
+                _cum_body += f" · CR {_tot_vals['CR']:.1f}%"
+            if _tot_vals.get("객단가") is not None:
+                _cum_body += f" · 객단가 {_tot_vals['객단가']:,.0f}"
+            render_insight_panel([{"title": "① 이 기간 누적 실적은?", "body": _cum_body}])
+
 
 # ============================================================
 # 페이지 4: 누적 데이터 (카테고리)
@@ -3717,6 +3757,18 @@ if side["page"].startswith("5."):
                     f"<tbody>{''.join(body_rows2)}</tbody></table></div>"
                 )
                 st.markdown(table_html2, unsafe_allow_html=True)
+
+                # 규칙 기반 자동 인사이트 — 4번 페이지와 동일하게 짧은 누적 합계 요약.
+                try:
+                    _cat_cum_gmv = cat_base_sum.get("거래액")
+                    _cat_cum_uv = cat_base_sum.get("트래픽")
+                    if _cat_cum_gmv is not None and not _cat_cum_gmv.empty:
+                        _cat_body = f"{selected_cat}/{brand_label(selected_brand)} 누적 — 거래액 {_cat_cum_gmv.sum():,.0f}"
+                        if _cat_cum_uv is not None and not _cat_cum_uv.empty:
+                            _cat_body += f" · 트래픽 {_cat_cum_uv.sum():,.0f}"
+                        render_insight_panel([{"title": "① 이 조합의 누적 실적은?", "body": _cat_body}])
+                except Exception:
+                    pass
 
 
 # ============================================================
@@ -4173,6 +4225,16 @@ if side["page"].startswith("9."):
         })
         st.dataframe(_cost_styled, use_container_width=True)
 
+        # 규칙 기반 자동 인사이트 — Total 행 비용률을 재사용(bpu_rows 없이 coupon_stats만
+        # 넘겨서 ⑤번 섹션만 나오게 함).
+        try:
+            _total_row = next((r for r in _cost_rows if r["구분"] == "Total"), None)
+            if _total_row and _total_row.get("비용률") is not None:
+                _coupon_rb = generate_rule_based_insights([], {}, coupon_stats={"비용률": _total_row["비용률"]})
+                render_insight_panel(_coupon_rb)
+        except Exception:
+            pass
+
 
 # ============================================================
 # 페이지 6: 주간보고용 (전년동요일 요약 엑셀 다운로드)
@@ -4462,6 +4524,24 @@ if side["page"].startswith("11."):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
+        # 규칙 기반 자동 인사이트 — 이미 계산된 _wk4_all_rows(거래액/Total 행)를 재사용해서
+        # "최근 주차 실적" 한 줄 요약을 만든다.
+        try:
+            _wk4_gmv_total = next(
+                (r for r in _wk4_all_rows if r["지표"] == "거래액" and r["구분"] == "Total"), None
+            )
+            if _wk4_gmv_total:
+                _latest_wk_v = _wk4_gmv_total["값"][-1]
+                _wow_v, _yoy_v = _wk4_gmv_total.get("전주비"), _wk4_gmv_total.get("전년비")
+                _wk4_body = f"최신 주차({_wk4_labels[-1]}) 거래액 일평균 {_latest_wk_v:,.0f}"
+                if _wow_v is not None:
+                    _wk4_body += f" · 전주비 {format_delta_html(_wow_v)}"
+                if _yoy_v is not None:
+                    _wk4_body += f" · 전년비(동요일) {format_delta_html(_yoy_v)}"
+                render_insight_panel([{"title": "① 최근 주차 실적은?", "body": _wk4_body}])
+        except Exception:
+            pass
+
 
 # ============================================================
 # 페이지 7/8/9: 전체/회원/신규 실적 (주차별) — 25년 vs 26년 vs 25년(FF제외)
@@ -4703,6 +4783,17 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
     st.markdown("---")
     _render_section(f"{traffic_segment} 거래액", "거래액", traffic_segment, show_ff=True)
+
+    # 규칙 기반 자동 인사이트 — 최신 주차 기준, "주별" 단위로 compute_bpu_comparison_rows를
+    # 새로 호출해서(위 차트들과는 별개 계산이지만 같은 함수라 기준이 항상 일치) 만든다.
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown("---")
+    try:
+        _wk_bpu_rows, _wk_bpu_cfg, _ = compute_bpu_comparison_rows(df_traffic, "주별", df_traffic["날짜"].max())
+        _wk_rb_sections = generate_rule_based_insights(_wk_bpu_rows, _wk_bpu_cfg)
+        render_insight_panel(_wk_rb_sections)
+    except Exception:
+        pass  # 인사이트는 보조 기능이라, 계산 중 문제가 있어도 위 차트는 그대로 보여준다
 
 
 if side["page"].startswith("6."):
@@ -5082,6 +5173,20 @@ if side["page"].startswith("10."):
                 subset=["전년비"],
             )
             st.dataframe(_fc_yoy_styled, use_container_width=True, height=400)
+
+            # 규칙 기반 자동 인사이트 — 거래액/Total 행을 재사용해서 forecast_stats로 전달.
+            try:
+                _fc_total_gmv = next(
+                    (r for r in _fc_yoy_rows if r["지표"] == "거래액" and r["구분"] == "Total"), None
+                )
+                if _fc_total_gmv and _fc_total_gmv.get("전년비") is not None:
+                    _fc_rb = generate_rule_based_insights(
+                        [], {},
+                        forecast_stats={"yoy": _fc_total_gmv["전년비"], "month": f"{_fc_cur_month_num}월"},
+                    )
+                    render_insight_panel(_fc_rb)
+            except Exception:
+                pass
 
         # --- 비용/비용률 (쿠폰 데이터, df_coupon_daily) ---
         if not df_coupon_daily.empty:
