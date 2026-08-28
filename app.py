@@ -1099,7 +1099,8 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
             )
             sections.append({"title": "② 자사·입점 중 어디가 더 크고 있나?", "body": _body})
 
-    # 3) BPU별 병목/기회 (거래액 전년비 최고/최저)
+    # 3) BPU별 병목/기회 — 거래액뿐 아니라 트래픽·CR도 같이 봐서, 부진이 '유입 감소'
+    # 때문인지 '전환율 저하' 때문인지 원인까지 구분해서 보여준다.
     _bpu_names = ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]
     _bpu_yoys = [(b, _find("거래액(순결제)", b)) for b in _bpu_names]
     _bpu_yoys = [(b, s.get("yoy_delta")) for b, s in _bpu_yoys if s and s.get("yoy_delta") is not None]
@@ -1107,22 +1108,50 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         _bpu_yoys.sort(key=lambda x: x[1], reverse=True)
         _best_b, _best_v = _bpu_yoys[0]
         _worst_b, _worst_v = _bpu_yoys[-1]
+        _worst_uv = _find("EP UV", _worst_b)
+        _worst_cr = _find("구매전환율(%)", _worst_b)
+        _cause_bits = []
+        if _worst_uv and _worst_uv.get("yoy_delta") is not None:
+            _cause_bits.append(f"트래픽 {_yoy_label} {_fmt_delta(_worst_uv['yoy_delta'])}")
+        if _worst_cr and _worst_cr.get("yoy_delta") is not None:
+            _cause_bits.append(f"CR {_yoy_label} {_fmt_delta(_worst_cr['yoy_delta'])}")
+        _cause_txt = f" (원인 분해 — {' · '.join(_cause_bits)})" if _cause_bits else ""
         _body = (
             f"거래액 {_yoy_label} 기준 <b>{_best_b}</b>{_josa_ga(_best_b)} 가장 좋아요({_fmt_delta(_best_v)}). "
-            f"반대로 <b>{_worst_b}</b>{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요 — 우선 점검이 필요해요."
+            f"반대로 <b>{_worst_b}</b>{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요{_cause_txt} — 우선 점검이 필요해요."
         )
         sections.append({"title": "③ 가장 큰 병목·기회는 어디?", "body": _body})
 
-    # 4) 카테고리 하이라이트 (외부에서 이미 계산된 상승/하락 목록을 받는 경우만)
+    # 4) 카테고리 하이라이트 — 비율(전년비 %) 기준 상승/하락에 더해, 절대액(거래액 실제
+    # 감소분) 기준으로 영향도가 가장 큰 카테고리도 같이 본다. 비율만 보면 원래 작았던
+    # 카테고리가 확 꺾여도(예: -90%) 튀어 보이는데, 실제 사업에 미치는 영향은 절대액이
+    # 큰 카테고리(예: -15%지만 규모가 훨씬 큰 경우)가 더 클 수 있어서 둘 다 봐야 한다.
     if category_movers:
         _lines = []
-        for _bpu_name, _tops, _bottoms in category_movers:
+        _all_cats_flat = []
+        for _item in category_movers:
+            _bpu_name, _tops, _bottoms = _item[0], _item[1], _item[2]
+            _all_movers = _item[3] if len(_item) > 3 else []
             if _tops:
-                _lines.append(f"{_bpu_name} 최대 상승: <b>{_tops[0]['카테고리']}</b> ({_fmt_delta(_tops[0]['전년비'])})")
+                _lines.append(f"{_bpu_name} 최대 상승(비율): <b>{_tops[0]['카테고리']}</b> ({_fmt_delta(_tops[0]['전년비'])})")
             if _bottoms:
-                _lines.append(f"{_bpu_name} 최대 하락: <b>{_bottoms[0]['카테고리']}</b> ({_fmt_delta(_bottoms[0]['전년비'])})")
+                _lines.append(f"{_bpu_name} 최대 하락(비율): <b>{_bottoms[0]['카테고리']}</b> ({_fmt_delta(_bottoms[0]['전년비'])})")
+            for _c in _all_movers:
+                if _c.get("작년거래액") is not None:
+                    _all_cats_flat.append({**_c, "BPU": _bpu_name, "절대변화": _c["거래액"] - _c["작년거래액"]})
         if _lines:
-            sections.append({"title": "④ 카테고리 중 뭐가 성장을 끌고/깎아먹나?", "body": " · ".join(_lines)})
+            sections.append({"title": "④ 카테고리 중 뭐가 성장을 끌고/깎아먹나? (비율 기준)", "body": " · ".join(_lines)})
+
+        if _all_cats_flat:
+            _worst_abs = min(_all_cats_flat, key=lambda r: r["절대변화"])
+            _best_abs = max(_all_cats_flat, key=lambda r: r["절대변화"])
+            _abs_body = (
+                f"절대액 기준 가장 큰 감소: <b>{_worst_abs['BPU']} · {_worst_abs['카테고리']}</b> "
+                f"{_worst_abs['절대변화']:,.0f} ({_fmt_delta(_worst_abs['전년비'])}) — 비율은 작아 보여도 "
+                f"실제 매출 임팩트는 이쪽이 더 클 수 있어요. "
+                f"가장 큰 증가: <b>{_best_abs['BPU']} · {_best_abs['카테고리']}</b> +{_best_abs['절대변화']:,.0f}"
+            )
+            sections.append({"title": "④-2 절대 매출액 기준으로는 어디 영향이 가장 큰가?", "body": _abs_body})
 
     # 5) 쿠폰 비용 효율 (옵션)
     if coupon_stats and coupon_stats.get("비용률") is not None:
@@ -4909,7 +4938,10 @@ if side["page"].startswith("3."):
                         _stats = compute_kpi_deltas(_series, unit, raw_daily=_raw)
                         if _stats is None or not _stats["current"] or _stats.get("yoy_delta") is None:
                             continue
-                        _movers_b.append({"카테고리": _cat_name, "거래액": _stats["current"], "전년비": _stats["yoy_delta"]})
+                        _movers_b.append({
+                            "카테고리": _cat_name, "거래액": _stats["current"], "전년비": _stats["yoy_delta"],
+                            "작년거래액": _stats.get("yoy_value"),
+                        })
                     if len(_movers_b) < 2:
                         st.caption("전년비 계산 가능한 카테고리 부족")
                         continue
@@ -4940,7 +4972,7 @@ if side["page"].startswith("3."):
                             f"</div>"
                         )
                     st.markdown(_cards_html, unsafe_allow_html=True)
-                    _sum_category_movers.append((_hbpu, _tops, _bottoms))
+                    _sum_category_movers.append((_hbpu, _tops, _bottoms, _movers_b))
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
