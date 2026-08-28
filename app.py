@@ -1021,6 +1021,151 @@ def build_forecast_table(df_traffic, metric_label, num_col, den_col, year, segme
     return df_out
 
 
+_DIGIT_HAS_BATCHIM = {"0": True, "1": False, "2": False, "3": True, "4": False, "5": False, "6": True, "7": True, "8": True, "9": True}
+
+
+def _has_batchim(word):
+    """단어 마지막 글자의 받침 유무를 판단한다 (한글이면 유니코드 계산, 숫자로 끝나면
+    그 숫자의 한국어 발음 기준 — 'e-영업1'처럼 BPU 이름이 숫자로 끝나는 경우 대응)."""
+    if not word:
+        return False
+    last = word[-1]
+    if last.isdigit():
+        return _DIGIT_HAS_BATCHIM.get(last, False)
+    if "가" <= last <= "힣":
+        return (ord(last) - ord("가")) % 28 != 0
+    return False
+
+
+def _josa_ga(word):
+    """단어 뒤에 '이' 또는 '가'를 자동으로 붙인다."""
+    return "이" if _has_batchim(word) else "가"
+
+
+def _josa_eun(word):
+    """단어 뒤에 '은' 또는 '는'을 자동으로 붙인다."""
+    return "은" if _has_batchim(word) else "는"
+
+
+def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon_stats=None, forecast_stats=None):
+    """규칙 기반 자동 인사이트. 이미 계산된 stats(compute_bpu_comparison_rows 결과 등)만
+    받아서 문장으로 조립한다 — LLM을 호출하지 않으므로 화면에 보이는 숫자와 항상 100%
+    일치하고, 할루시네이션(엉뚱한 숫자를 말하는) 위험이 없다.
+    각 섹션은 {"title": str, "body": str} 형태로 반환하고, 필요한 입력이 없으면(예:
+    category_movers=None) 해당 섹션은 건너뛴다."""
+    sections = []
+    _prev_label = bpu_cfg.get("prev_label", "전기간비")
+    _yoy_label = bpu_cfg.get("yoy_label", "전년비")
+
+    def _find(metric_label, bpu="Total"):
+        for r in bpu_rows:
+            if r["metric_label"] == metric_label and r["bpu"] == bpu and r["stats"]:
+                return r["stats"]
+        return None
+
+    def _fmt(v, is_pct=False):
+        if v is None or pd.isna(v):
+            return "-"
+        return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
+
+    def _fmt_delta(v):
+        return format_delta_text(v) if v is not None else "-"
+
+    # 1) 기본 지표 해석
+    _gmv = _find("거래액(순결제)")
+    _uv = _find("EP UV")
+    _cr = _find("구매전환율(%)")
+    _aov = _find("객단가")
+    if _gmv:
+        _body = (
+            f"거래액 {_fmt(_gmv['current'])} ({_prev_label} {_fmt_delta(_gmv.get('prev_delta'))}, "
+            f"{_yoy_label} {_fmt_delta(_gmv.get('yoy_delta'))}) · "
+            f"트래픽 {_fmt(_uv['current']) if _uv else '-'} · "
+            f"CR {_fmt(_cr['current'], True) if _cr else '-'} · "
+            f"객단가 {_fmt(_aov['current']) if _aov else '-'}"
+        )
+        sections.append({"title": "① 이번 기간 기본 지표는?", "body": _body})
+
+    # 2) 자사 vs 입점 성장 비교
+    _gmv_jasa = _find("거래액(순결제)", "자사")
+    _gmv_ipjeom = _find("거래액(순결제)", "입점")
+    if _gmv_jasa and _gmv_ipjeom:
+        _jy, _iy = _gmv_jasa.get("yoy_delta"), _gmv_ipjeom.get("yoy_delta")
+        if _jy is not None and _iy is not None:
+            _leader = "자사" if _jy > _iy else "입점"
+            _body = (
+                f"자사 거래액 {_yoy_label} {_fmt_delta(_jy)}, 입점 거래액 {_yoy_label} {_fmt_delta(_iy)}. "
+                f"**{_leader}**{_josa_ga(_leader)} 더 빠르게 성장하고 있어요."
+            )
+            sections.append({"title": "② 자사·입점 중 어디가 더 크고 있나?", "body": _body})
+
+    # 3) BPU별 병목/기회 (거래액 전년비 최고/최저)
+    _bpu_names = ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]
+    _bpu_yoys = [(b, _find("거래액(순결제)", b)) for b in _bpu_names]
+    _bpu_yoys = [(b, s.get("yoy_delta")) for b, s in _bpu_yoys if s and s.get("yoy_delta") is not None]
+    if len(_bpu_yoys) >= 2:
+        _bpu_yoys.sort(key=lambda x: x[1], reverse=True)
+        _best_b, _best_v = _bpu_yoys[0]
+        _worst_b, _worst_v = _bpu_yoys[-1]
+        _body = (
+            f"거래액 {_yoy_label} 기준 **{_best_b}**{_josa_ga(_best_b)} 가장 좋아요({_fmt_delta(_best_v)}). "
+            f"반대로 **{_worst_b}**{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요 — 우선 점검이 필요해요."
+        )
+        sections.append({"title": "③ 가장 큰 병목·기회는 어디?", "body": _body})
+
+    # 4) 카테고리 하이라이트 (외부에서 이미 계산된 상승/하락 목록을 받는 경우만)
+    if category_movers:
+        _lines = []
+        for _bpu_name, _tops, _bottoms in category_movers:
+            if _tops:
+                _lines.append(f"{_bpu_name} 최대 상승: **{_tops[0]['카테고리']}** ({_fmt_delta(_tops[0]['전년비'])})")
+            if _bottoms:
+                _lines.append(f"{_bpu_name} 최대 하락: **{_bottoms[0]['카테고리']}** ({_fmt_delta(_bottoms[0]['전년비'])})")
+        if _lines:
+            sections.append({"title": "④ 카테고리 중 뭐가 성장을 끌고/깎아먹나?", "body": " · ".join(_lines)})
+
+    # 5) 쿠폰 비용 효율 (옵션)
+    if coupon_stats and coupon_stats.get("비용률") is not None:
+        _rate = coupon_stats["비용률"]
+        _rate_prev = coupon_stats.get("비용률_전기간")
+        if _rate_prev is not None:
+            _dir = "상승" if _rate > _rate_prev else "하락"
+            _body = f"비용률 {_rate:.2f}% (지난 기간 {_rate_prev:.2f}% 대비 {_dir}). 거래액 대비 쿠폰 지출 비중을 계속 지켜봐야 해요."
+        else:
+            _body = f"비용률 {_rate:.2f}%."
+        sections.append({"title": "⑤ 쿠폰 비용 효율은 괜찮나?", "body": _body})
+
+    # 6) 마감예상 vs 작년 (옵션)
+    if forecast_stats and forecast_stats.get("yoy") is not None:
+        _fy = forecast_stats["yoy"]
+        _fm = forecast_stats.get("month", "이번 달")
+        _tone = "양호해요" if _fy >= 0 else "작년보다 부진할 것으로 보여요"
+        _body = f"{_fm} 마감예상 거래액이 작년 동월 대비 {_fmt_delta(_fy)} — {_tone}."
+        sections.append({"title": "⑥ 이번 달 마감예상이 작년 대비 어떤가?", "body": _body})
+
+    return sections
+
+
+def render_insight_panel(sections, key_prefix=""):
+    """generate_rule_based_insights() 결과를 카드 형태로 렌더링."""
+    if not sections:
+        return
+    st.markdown(
+        "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
+        "<div style='font-weight:700;font-size:0.95rem;margin-bottom:4px;'>🔍 자동 인사이트</div>"
+        "<div style='font-size:0.76rem;color:#9ca3af;margin-bottom:12px;'>현재 조회조건 기준으로 자동 정리돼요 (계산된 값 그대로 조립 — AI 호출 없음).</div>"
+        + "".join(
+            f"<div style='margin-bottom:10px;'>"
+            f"<div style='font-weight:600;font-size:0.85rem;color:#374151;margin-bottom:2px;'>{s['title']}</div>"
+            f"<div style='font-size:0.82rem;color:#4b5563;line-height:1.5;'>{s['body']}</div>"
+            f"</div>"
+            for s in sections
+        )
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
                        deltas=None, delta_label="", center_sub=""):
     """클릭 가능한 SVG 도넛 차트.
@@ -2222,6 +2367,7 @@ if side["page"].startswith("1."):
         # 거래액 기준으로 e-영업1~4 중 가장 많이 오르고/내린 사업부를 뽑는다.
         # (render_bpu_comparison_table과 완전히 같은 함수를 재사용해서 숫자가 어긋나지 않음)
         _extra_sections_ep = []
+        _bpu_rows_all = []
         try:
             _bpu_rows_all, _, _ = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
             _bpu_gmv_rows = [
@@ -2252,6 +2398,13 @@ if side["page"].startswith("1."):
             _ai_payload_ep, _ai_context_ep, "ep_summary", _memo_key_ep, period_label,
             extra_sections=_extra_sections_ep,
         )
+
+        # 규칙 기반 자동 인사이트 — 위 AI 인사이트(자유 텍스트)와 별개로, 이미 계산된
+        # _bpu_rows_all/cfg를 그대로 재사용해서 화면 숫자와 100% 일치하는 구조화된
+        # 요약을 만든다(LLM 호출 없음).
+        if _bpu_rows_all:
+            _rb_sections = generate_rule_based_insights(_bpu_rows_all, cfg)
+            render_insight_panel(_rb_sections)
 
 
         # 3단계: KPI 카드 렌더링 (+ 지표별 AI 한줄 인사이트)
@@ -4638,6 +4791,7 @@ if side["page"].startswith("3."):
 
         # ── 섹션 3: 카테고리 하이라이트 (거래액 전년비 최대상승/하락, BPU별로 구분) ──
         st.markdown(f"#### 📈 카테고리 하이라이트 (거래액 전년비, BPU별 · {_sum_segment})")
+        _sum_category_movers = []
         if df_category.empty:
             st.info("카테고리 데이터가 없습니다.")
         else:
@@ -4695,6 +4849,15 @@ if side["page"].startswith("3."):
                             f"</div>"
                         )
                     st.markdown(_cards_html, unsafe_allow_html=True)
+                    _sum_category_movers.append((_hbpu, _tops, _bottoms))
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # 규칙 기반 자동 인사이트 — 이미 계산된 _sum_bpu_rows/_sum_cfg/카테고리 하이라이트를
+        # 그대로 재사용해서 화면 숫자와 100% 일치하는 요약을 만든다(LLM 호출 없음).
+        _sum_rb_sections = generate_rule_based_insights(_sum_bpu_rows, _sum_cfg, category_movers=_sum_category_movers)
+        render_insight_panel(_sum_rb_sections)
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
