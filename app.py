@@ -1198,7 +1198,21 @@ def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
                 f"최대 상승: <b>{_top['카테고리']}</b> {_top['거래액']:,.0f} ({_fmt_delta(_top['yoy'])}) · "
                 f"최대 하락: <b>{_bottom['카테고리']}</b> {_bottom['거래액']:,.0f} ({_fmt_delta(_bottom['yoy'])})"
             )
-            sections.append({"title": "② 어느 카테고리가 성장을 끌고/깎아먹나?", "body": _body})
+            sections.append({"title": "② 어느 카테고리가 성장을 끌고/깎아먹나? (비율 기준)", "body": _body})
+
+        # 절대액 기준 — 비율만 보면 원래 작았던 카테고리가 크게 흔들려도(예: -90%) 튀어
+        # 보이는데, 실제 매출 임팩트는 절대액이 큰 카테고리가 더 클 수 있어서 같이 본다.
+        _valid_abs = [r for r in cat_movers if r.get("yoy_v") is not None]
+        if len(_valid_abs) >= 2:
+            _with_abs = [{**r, "절대변화": r["거래액"] - r["yoy_v"]} for r in _valid_abs]
+            _worst_abs = min(_with_abs, key=lambda r: r["절대변화"])
+            _best_abs = max(_with_abs, key=lambda r: r["절대변화"])
+            _abs_body = (
+                f"가장 큰 감소: <b>{_worst_abs['카테고리']}</b> {_worst_abs['절대변화']:,.0f} "
+                f"({_fmt_delta(_worst_abs['yoy'])}) · 가장 큰 증가: <b>{_best_abs['카테고리']}</b> "
+                f"+{_best_abs['절대변화']:,.0f} ({_fmt_delta(_best_abs['yoy'])})"
+            )
+            sections.append({"title": "②-2 절대 매출액 기준으로는 어디 영향이 가장 큰가?", "body": _abs_body})
     return sections
 
 
@@ -4818,7 +4832,16 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
     st.markdown("---")
     try:
-        _wk_bpu_rows, _wk_bpu_cfg, _ = compute_bpu_comparison_rows(df_traffic, "주별", df_traffic["날짜"].max())
+        # 회원/신규 페이지는 df_traffic을 그 세그먼트로 필터링하고 '전체'로 재라벨링해서
+        # 넘긴다 — compute_bpu_comparison_rows의 핵심 지표(거래액/트래픽/CR/객단가)들이
+        # member='전체'로 고정돼 있어서, 그냥 넘기면 세그먼트와 무관하게 항상 '전체' 값만
+        # 계산되는 버그가 있었음(회원/신규 페이지 인사이트가 서로 똑같이 나오던 원인).
+        if traffic_segment == "전체":
+            _wk_seg_df = df_traffic
+        else:
+            _wk_seg_df = df_traffic[df_traffic["회원구분"] == traffic_segment].copy()
+            _wk_seg_df["회원구분"] = "전체"
+        _wk_bpu_rows, _wk_bpu_cfg, _ = compute_bpu_comparison_rows(_wk_seg_df, "주별", df_traffic["날짜"].max())
         _wk_rb_sections = generate_rule_based_insights(_wk_bpu_rows, _wk_bpu_cfg)
         render_insight_panel(_wk_rb_sections)
     except Exception:
