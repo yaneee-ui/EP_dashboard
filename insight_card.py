@@ -169,10 +169,13 @@ def _extract_ai_text(ai_result):
     return str(ai_result)
 
 
-def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period_label="", extra_sections=None):
+def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period_label="", extra_sections=None, rule_based_sections=None):
     """좌: 자동 요약(API 미사용) / 우: AI 생성·메모(GitHub 저장). 참고 이미지 스타일 구현.
     extra_sections: [{"header": str, "items": [...]}] — KPI 카드 외에 BPU별 비교, 카테고리별
     톱무버 같은 다른 표의 핵심 내용도 요약에 같이 담고 싶을 때 넘긴다 (선택사항).
+    rule_based_sections: app.py의 generate_rule_based_insights() 결과 — [{"title","body"}, ...].
+    주면 좌우 2컬럼 위에 "🔍 자동 인사이트" 섹션으로 같이 표시되고, 전체가 이 카드의
+    expander 안에 들어가서 한 번에 접고 펼 수 있다 (질문 원했던 대로).
     반환값: 이번 실행에서 유효한 ai_result (버튼을 안 눌렀어도 같은 조회조건이면 캐시에서
     복원됨) — 호출부가 render_metric_insight(카드별 한줄 인사이트)에 이어서 쓸 수 있게 함."""
     # 원인 불명의 전역 CSS(styles.py)가 버튼 글자에 색/밑줄을 입히는 문제가 있어서,
@@ -220,6 +223,22 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     # 컴포넌트라 테두리도 항상 안정적으로 그려진다 (예전엔 <div> 직접 열고 닫는
     # 방식이었는데, 접기/펼치기 요청이 와서 이 참에 더 안정적인 방식으로 교체함).
     with st.expander("📊 인사이트  ·  좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)", expanded=True):
+        if rule_based_sections:
+            st.markdown(
+                "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;"
+                "padding:14px 18px;margin-bottom:14px;'>"
+                "<div style='font-weight:700;font-size:0.88rem;margin-bottom:8px;'>🔍 자동 인사이트</div>"
+                + "".join(
+                    f"<div style='margin-bottom:8px;'>"
+                    f"<div style='font-weight:600;font-size:0.8rem;color:#374151;margin-bottom:2px;'>{s['title']}</div>"
+                    f"<div style='font-size:0.8rem;color:#4b5563;line-height:1.6;'>{s['body']}</div>"
+                    f"</div>"
+                    for s in rule_based_sections
+                )
+                + "</div>",
+                unsafe_allow_html=True,
+            )
+
         _col_l, _col_r = st.columns(2)
 
         with _col_l:
