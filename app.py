@@ -1245,7 +1245,7 @@ def render_insight_panel(sections, key_prefix=""):
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
-                       deltas=None, delta_label="", center_sub=""):
+                       deltas=None, delta_label="", prev_delta_label="", center_sub=""):
     """클릭 가능한 SVG 도넛 차트.
     - 조각이나 범례를 클릭하면 해당 항목이 강조되고 나머지는 흐려진다(다시 클릭하면 해제).
     - deltas가 주어지면 범례에 항목별 전년 거래액/전년비 증감을 함께 표시한다.
@@ -1329,6 +1329,10 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     _has_delta = deltas is not None
     header_html = ""
     if _has_delta:
+        _prev_col_html = (
+            f"<span style='width:70px;text-align:right;'>{_html.escape(prev_delta_label or '전기간비')}</span>"
+            if prev_delta_label else ""
+        )
         header_html = (
             "<div class='lg-head'>"
             "<span style='width:17px;flex-shrink:0;'></span>"
@@ -1337,6 +1341,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             "<span style='width:44px;text-align:right;'>비중</span>"
             "<span style='width:96px;text-align:right;'>작년</span>"
             f"<span style='width:70px;text-align:right;'>{_html.escape(delta_label or '전년비')}</span>"
+            f"{_prev_col_html}"
             "</div>"
         )
 
@@ -1363,12 +1368,18 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             _d = deltas[i] if i < len(deltas) else None
             _prev_val = _d.get("prev") if isinstance(_d, dict) else None
             _yoy_val = _d.get("yoy") if isinstance(_d, dict) else None
+            _prev_delta_val = _d.get("prev_delta") if isinstance(_d, dict) else None
             _prev_str = f"{_prev_val:,.0f}" if _prev_val is not None else "-"
+            _prev_delta_col = (
+                f"<span style='width:70px;text-align:right;'>{_delta_span(_prev_delta_val)}</span>"
+                if prev_delta_label else ""
+            )
             row += (
                 f"<span style='color:#374151;width:96px;text-align:right;'>{val:,.0f}</span>"
                 f"<span style='color:#9ca3af;width:44px;text-align:right;'>{pct:.1f}%</span>"
                 f"<span style='color:#9ca3af;width:96px;text-align:right;'>{_prev_str}</span>"
                 f"<span style='width:70px;text-align:right;'>{_delta_span(_yoy_val)}</span>"
+                f"{_prev_delta_col}"
             )
         else:
             row += (
@@ -1380,7 +1391,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
 
     n_rows = len(legend_items)
     frame_h = int(max(size + 46, 70 + n_rows * 25 + (24 if _has_delta else 0)))
-    legend_min = 440 if _has_delta else 260
+    legend_min = (510 if prev_delta_label else 440) if _has_delta else 260
 
     doc = f"""
 <!DOCTYPE html><html><head><meta charset='utf-8'><style>
@@ -1614,7 +1625,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _values.append(float(r["값"]))
             _pv = float(r["전년값"]) if pd.notna(r["전년값"]) else None
             _yv = pct_delta_safe(r["값"], r["전년값"]) if (_pv is not None and r["전년값"] != 0) else None
-            _deltas.append({"prev": _pv, "yoy": _yv})
+            _deltas.append({"prev": _pv, "yoy": _yv, "prev_delta": r.get("전기간비")})
 
         _rest_df = _dn_pos.iloc[_top_n:] if len(_dn_pos) > _top_n else None
         if _rest_df is not None and len(_rest_df) > 0:
@@ -1624,7 +1635,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 _rest_yoy = pct_delta_safe(_rest_cur, _rest_prev) if (_rest_prev and _rest_prev != 0) else None
                 _labels.append(f"기타 ({len(_rest_df)}개)")
                 _values.append(_rest_cur)
-                _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy})
+                _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy, "prev_delta": None})
 
         # 값이 마이너스인 항목(반품 등으로 순값이 음수)도 도넛에 그대로 포함시킨다.
         # top_n/기타 묶음과는 무관하게 항상 개별 조각으로 넣어서 묻히지 않게 함
@@ -1635,7 +1646,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _values.append(float(r["값"]))
             _pv = float(r["전년값"]) if pd.notna(r["전년값"]) else None
             _yv = pct_delta_safe(r["값"], r["전년값"]) if (_pv is not None and r["전년값"] != 0) else None
-            _deltas.append({"prev": _pv, "yoy": _yv})
+            _deltas.append({"prev": _pv, "yoy": _yv, "prev_delta": r.get("전기간비")})
 
         # 전체 합계 기준 전년비 — official_total(카테고리=전체 등 진짜 전체값)이 있으면 그걸 우선 사용.
         # (개별 항목을 단순 합산하면, 여러 카테고리에 걸친 거래가 중복 집계되어
@@ -1660,6 +1671,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             center_sub=_center_sub,
             deltas=_deltas,
             delta_label=_yoy_label_share,
+            prev_delta_label=_prev_label_share,
         )
         if official_total is not None:
             st.caption(
