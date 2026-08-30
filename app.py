@@ -1037,6 +1037,11 @@ def _has_batchim(word):
     return False
 
 
+def _emphasize(text):
+    """인사이트 결론/액션 문구를 노란 배경으로 강조 표시."""
+    return f"<span style='background:#fef3c7;padding:1px 5px;border-radius:4px;font-weight:600;'>{text}</span>"
+
+
 def _josa_ga(word):
     """단어 뒤에 '이' 또는 '가'를 자동으로 붙인다."""
     return "이" if _has_batchim(word) else "가"
@@ -1094,8 +1099,8 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         if _jy is not None and _iy is not None:
             _leader = "자사" if _jy > _iy else "입점"
             _body = (
-                f"자사 거래액 {_yoy_label} {_fmt_delta(_jy)}, 입점 거래액 {_yoy_label} {_fmt_delta(_iy)}. "
-                f"<b>{_leader}</b>{_josa_ga(_leader)} 더 빠르게 성장하고 있어요."
+                f"자사 거래액 {_yoy_label} {_fmt_delta(_jy)}, 입점 거래액 {_yoy_label} {_fmt_delta(_iy)}.<br>"
+                f"{_emphasize(f'{_leader}{_josa_ga(_leader)} 더 빠르게 성장하고 있어요.')}"
             )
             sections.append({"title": "② 자사·입점 중 어디가 더 크고 있나?", "body": _body})
 
@@ -1117,8 +1122,9 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
             _cause_bits.append(f"CR {_yoy_label} {_fmt_delta(_worst_cr['yoy_delta'])}")
         _cause_txt = f" (원인 분해 — {' · '.join(_cause_bits)})" if _cause_bits else ""
         _body = (
-            f"거래액 {_yoy_label} 기준 <b>{_best_b}</b>{_josa_ga(_best_b)} 가장 좋아요({_fmt_delta(_best_v)}). "
-            f"반대로 <b>{_worst_b}</b>{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요{_cause_txt} — 우선 점검이 필요해요."
+            f"거래액 {_yoy_label} 기준 <b>{_best_b}</b>{_josa_ga(_best_b)} 가장 좋아요({_fmt_delta(_best_v)}).<br>"
+            f"반대로 <b>{_worst_b}</b>{_josa_eun(_worst_b)} {_fmt_delta(_worst_v)}로 가장 부진해요{_cause_txt}"
+            f" — {_emphasize('우선 점검이 필요해요.')}"
         )
         sections.append({"title": "③ 가장 큰 병목·기회는 어디?", "body": _body})
 
@@ -1140,15 +1146,15 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
                 if _c.get("작년거래액") is not None:
                     _all_cats_flat.append({**_c, "BPU": _bpu_name, "절대변화": _c["거래액"] - _c["작년거래액"]})
         if _lines:
-            sections.append({"title": "④ 카테고리 중 뭐가 성장을 끌고/깎아먹나? (비율 기준)", "body": " · ".join(_lines)})
+            sections.append({"title": "④ 카테고리 중 뭐가 성장을 끌고/깎아먹나? (비율 기준)", "body": "<br>".join(_lines)})
 
         if _all_cats_flat:
             _worst_abs = min(_all_cats_flat, key=lambda r: r["절대변화"])
             _best_abs = max(_all_cats_flat, key=lambda r: r["절대변화"])
             _abs_body = (
                 f"절대액 기준 가장 큰 감소: <b>{_worst_abs['BPU']} · {_worst_abs['카테고리']}</b> "
-                f"{_worst_abs['절대변화']:,.0f} ({_fmt_delta(_worst_abs['전년비'])}) — 비율은 작아 보여도 "
-                f"실제 매출 임팩트는 이쪽이 더 클 수 있어요. "
+                f"{_worst_abs['절대변화']:,.0f} ({_fmt_delta(_worst_abs['전년비'])})<br>"
+                f"{_emphasize('비율은 작아 보여도 실제 매출 임팩트는 이쪽이 더 클 수 있어요.')}<br>"
                 f"가장 큰 증가: <b>{_best_abs['BPU']} · {_best_abs['카테고리']}</b> +{_best_abs['절대변화']:,.0f}"
             )
             sections.append({"title": "④-2 절대 매출액 기준으로는 어디 영향이 가장 큰가?", "body": _abs_body})
@@ -1195,7 +1201,7 @@ def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
             _ranked = sorted(_valid, key=lambda r: r["yoy"], reverse=True)
             _top, _bottom = _ranked[0], _ranked[-1]
             _body = (
-                f"최대 상승: <b>{_top['카테고리']}</b> {_top['거래액']:,.0f} ({_fmt_delta(_top['yoy'])}) · "
+                f"최대 상승: <b>{_top['카테고리']}</b> {_top['거래액']:,.0f} ({_fmt_delta(_top['yoy'])})<br>"
                 f"최대 하락: <b>{_bottom['카테고리']}</b> {_bottom['거래액']:,.0f} ({_fmt_delta(_bottom['yoy'])})"
             )
             sections.append({"title": "② 어느 카테고리가 성장을 끌고/깎아먹나? (비율 기준)", "body": _body})
@@ -1209,7 +1215,9 @@ def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
             _best_abs = max(_with_abs, key=lambda r: r["절대변화"])
             _abs_body = (
                 f"가장 큰 감소: <b>{_worst_abs['카테고리']}</b> {_worst_abs['절대변화']:,.0f} "
-                f"({_fmt_delta(_worst_abs['yoy'])}) · 가장 큰 증가: <b>{_best_abs['카테고리']}</b> "
+                f"({_fmt_delta(_worst_abs['yoy'])})<br>"
+                f"{_emphasize('비율은 작아 보여도 실제 매출 임팩트는 이쪽이 더 클 수 있어요.')}<br>"
+                f"가장 큰 증가: <b>{_best_abs['카테고리']}</b> "
                 f"+{_best_abs['절대변화']:,.0f} ({_fmt_delta(_best_abs['yoy'])})"
             )
             sections.append({"title": "②-2 절대 매출액 기준으로는 어디 영향이 가장 큰가?", "body": _abs_body})
@@ -1494,7 +1502,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             if _cur_zero and _prev_zero:
                 continue
 
-        rows.append({group_col: name, "값": cur_val, "전년값": prev_val})
+        rows.append({group_col: name, "값": cur_val, "전년값": prev_val, "전기간비": _stats.get("prev_delta")})
 
     if ai_key:
         _rk_c1, _rk_c2 = st.columns([4, 1])
@@ -1519,6 +1527,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         1,
     )
     _yoy_label_share = UNIT_CONFIG[unit]["yoy_label"]
+    _prev_label_share = UNIT_CONFIG[unit]["prev_label"]
 
     # --- AI 인사이트 (요청 시) ---
     if ai_key:
@@ -1570,6 +1579,9 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         _display_label = label_map.get(_raw_label, _raw_label) if label_map else _raw_label
         _label_width = 190 if label_map else 80
 
+        _prev_delta_val = r.get("전기간비")
+        _prev_delta_str = f" · {_prev_label_share} {format_delta_html(_prev_delta_val)}" if pd.notna(_prev_delta_val) else ""
+
         bar_rows_html.append(
             "<div style='margin-bottom:12px;'>"
             "<div style='display:flex;align-items:center;margin-bottom:3px;'>"
@@ -1578,7 +1590,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             f"<div style='width:{_pct_width:.1f}%;background:{bar_color_cur};height:100%;border-radius:4px;'></div>"
             "</div>"
             f"<div style='width:190px;flex-shrink:0;text-align:right;font-size:0.82rem;color:#374151;'>"
-            f"{r['값']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span></div>"
+            f"{r['값']:,.0f} <span style='color:#9ca3af'>({r['비중']:.1f}%)</span>{_prev_delta_str}</div>"
             "</div>"
             "<div style='display:flex;align-items:center;'>"
             f"<div style='width:{_label_width}px;flex-shrink:0;'></div>"
