@@ -1330,6 +1330,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
     header_html = ""
     if _has_delta:
         _prev_col_html = (
+            f"<span style='width:96px;text-align:right;'>{_html.escape((prev_delta_label or '전기간').replace('비',''))}</span>"
             f"<span style='width:70px;text-align:right;'>{_html.escape(prev_delta_label or '전기간비')}</span>"
             if prev_delta_label else ""
         )
@@ -1369,8 +1370,11 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
             _prev_val = _d.get("prev") if isinstance(_d, dict) else None
             _yoy_val = _d.get("yoy") if isinstance(_d, dict) else None
             _prev_delta_val = _d.get("prev_delta") if isinstance(_d, dict) else None
+            _prev_delta_value_val = _d.get("prev_delta_value") if isinstance(_d, dict) else None
             _prev_str = f"{_prev_val:,.0f}" if _prev_val is not None else "-"
+            _prev_delta_value_str = f"{_prev_delta_value_val:,.0f}" if _prev_delta_value_val is not None else "-"
             _prev_delta_col = (
+                f"<span style='color:#9ca3af;width:96px;text-align:right;'>{_prev_delta_value_str}</span>"
                 f"<span style='width:70px;text-align:right;'>{_delta_span(_prev_delta_val)}</span>"
                 if prev_delta_label else ""
             )
@@ -1391,7 +1395,7 @@ def render_donut_chart(labels, values, colors=None, center_title="", center_valu
 
     n_rows = len(legend_items)
     frame_h = int(max(size + 46, 70 + n_rows * 25 + (24 if _has_delta else 0)))
-    legend_min = (510 if prev_delta_label else 440) if _has_delta else 260
+    legend_min = (606 if prev_delta_label else 440) if _has_delta else 260
 
     doc = f"""
 <!DOCTYPE html><html><head><meta charset='utf-8'><style>
@@ -1513,7 +1517,10 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             if _cur_zero and _prev_zero:
                 continue
 
-        rows.append({group_col: name, "값": cur_val, "전년값": prev_val, "전기간비": _stats.get("prev_delta")})
+        rows.append({
+            group_col: name, "값": cur_val, "전년값": prev_val,
+            "전기간값": _stats.get("prev_value"), "전기간비": _stats.get("prev_delta"),
+        })
 
     if ai_key:
         _rk_c1, _rk_c2 = st.columns([4, 1])
@@ -1625,7 +1632,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _values.append(float(r["값"]))
             _pv = float(r["전년값"]) if pd.notna(r["전년값"]) else None
             _yv = pct_delta_safe(r["값"], r["전년값"]) if (_pv is not None and r["전년값"] != 0) else None
-            _deltas.append({"prev": _pv, "yoy": _yv, "prev_delta": r.get("전기간비")})
+            _deltas.append({"prev": _pv, "yoy": _yv, "prev_delta": r.get("전기간비"), "prev_delta_value": r.get("전기간값")})
 
         _rest_df = _dn_pos.iloc[_top_n:] if len(_dn_pos) > _top_n else None
         if _rest_df is not None and len(_rest_df) > 0:
@@ -1635,7 +1642,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 _rest_yoy = pct_delta_safe(_rest_cur, _rest_prev) if (_rest_prev and _rest_prev != 0) else None
                 _labels.append(f"기타 ({len(_rest_df)}개)")
                 _values.append(_rest_cur)
-                _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy, "prev_delta": None})
+                _deltas.append({"prev": _rest_prev, "yoy": _rest_yoy, "prev_delta": None, "prev_delta_value": None})
 
         # 값이 마이너스인 항목(반품 등으로 순값이 음수)도 도넛에 그대로 포함시킨다.
         # top_n/기타 묶음과는 무관하게 항상 개별 조각으로 넣어서 묻히지 않게 함
@@ -1646,7 +1653,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
             _values.append(float(r["값"]))
             _pv = float(r["전년값"]) if pd.notna(r["전년값"]) else None
             _yv = pct_delta_safe(r["값"], r["전년값"]) if (_pv is not None and r["전년값"] != 0) else None
-            _deltas.append({"prev": _pv, "yoy": _yv, "prev_delta": r.get("전기간비")})
+            _deltas.append({"prev": _pv, "yoy": _yv, "prev_delta": r.get("전기간비"), "prev_delta_value": r.get("전기간값")})
 
         # 전체 합계 기준 전년비 — official_total(카테고리=전체 등 진짜 전체값)이 있으면 그걸 우선 사용.
         # (개별 항목을 단순 합산하면, 여러 카테고리에 걸친 거래가 중복 집계되어
@@ -4242,28 +4249,21 @@ if side["page"].startswith("9."):
                 else:
                     st.caption("ℹ️ 전년비 비교표는 월별 조회에서만 제공돼요 (일별/주별 전년비교는 아직 지원 예정 기능이에요).")
 
-        # --- 구분별(자사/정상/이월/입점) 현재까지 비용·비용률 — 올해 1월 1일부터 최신 날짜까지
-        # 실제(예상 아님) 누적. 상단 매체 필터(coupon_bpu)와 무관하게 전체 구분을 한번에 보여준다. ---
+        # --- 구분별(자사/정상/이월/입점) 조회단위+기준시점으로 선택한 '그 기간'의 비용·비용률
+        # — 상단 매체 필터(coupon_bpu)와 무관하게 전체 구분을 한번에 보여준다. ---
         st.markdown("---")
         _cost_abs_last = df_traffic["날짜"].max() if not df_traffic.empty else df_coupon_daily["날짜"].max()
-        # 상단 필터(조회단위 coupon_unit, 선택 기간 _combined)에 맞춰 실제 선택된 범위를
-        # 그대로 반영한다 — 이전엔 무조건 올해 1/1~오늘로 고정이었는데, 사용자가 위에서
-        # 일별/주별/월별로 기간을 바꾸면 이 표도 같이 바뀌어야 한다는 피드백을 반영.
-        if not _chart_series.empty:
-            _cost_ytd_start = _chart_series.index.min()
-            if coupon_unit == "주별":
-                _cost_abs_last = min(_chart_series.index.max() + pd.Timedelta(days=6), _cost_abs_last)
-            elif coupon_unit == "월별":
-                _cost_abs_last = min(
-                    (_chart_series.index.max() + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1), _cost_abs_last
-                )
-            else:
-                _cost_abs_last = min(_chart_series.index.max(), _cost_abs_last)
-        else:
-            _cost_ytd_start = pd.Timestamp(_cost_abs_last.year, 1, 1)
+        # coupon_ref_ts(선택된 기준시점)+coupon_unit으로 '그 기간'의 시작~끝을 직접 계산한다.
+        # coupon_ref_ts는 이미 그 기간의 시작(일별=그날, 주별=그 주 월요일, 월별=그 달 1일)
+        # 라벨이라, raw_cutoff_date로 끝만 구하면 된다. 이전엔 _chart_series(일별 전용 좁힘
+        # 변수)를 재사용했는데, 주별/월별에선 안 좁혀져서 늘 '전체 누적'으로 보이는
+        # 문제가 있었음 — 이제 선택한 기준시점 그 기간만 정확히 반영된다.
+        _cost_ytd_start = coupon_ref_ts
+        _cost_abs_last = min(raw_cutoff_date(coupon_ref_ts, coupon_unit), _cost_abs_last)
         st.markdown(
             f"**구분별 비용 현황**  ·  <span style='color:#6b7280;font-size:0.85rem'>"
-            f"{_cost_ytd_start.strftime('%Y-%m-%d')} ~ {_cost_abs_last.strftime('%Y-%m-%d')} 누적(실적, 예상 아님)</span>",
+            f"{_cost_ytd_start.strftime('%Y-%m-%d')} ~ {_cost_abs_last.strftime('%Y-%m-%d')} "
+            f"({coupon_unit} 기준시점, 실적/예상 아님)</span>",
             unsafe_allow_html=True,
         )
         _cost_rows = []
