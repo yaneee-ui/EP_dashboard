@@ -4527,7 +4527,11 @@ if side["page"].startswith("11."):
                 f"<td style='text-align:right;'>{format_delta_html(_r['전년비'])}</td>"
                 f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk(_r['작년값'], _r['is_pct'])}</td></tr>"
             )
-        _wk4_header = "".join(f"<th>{l}</th>" for l in _wk4_labels)
+        _wk4_header = "".join(
+            f"<th>{l}<br><span style='font-weight:400;font-size:0.72rem;color:#9ca3af;'>"
+            f"{_ws.month}/{_ws.day}~{(_ws + pd.Timedelta(days=6)).month}/{(_ws + pd.Timedelta(days=6)).day}</span></th>"
+            for l, _ws in zip(_wk4_labels, _wk4_starts)
+        )
         st.markdown(
             "<div style='overflow-x:auto;'><table class='summary-table'>"
             f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
@@ -4610,15 +4614,21 @@ if side["page"].startswith("11."):
                 return "-"
             return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
 
-        def _compute_cat_rows(base_df, num_col, den_col, is_ratio, is_pct):
-            """이미 BPU로 필터링된 base_df에서 카테고리별 4주 흐름을 계산. 비율지표(CR/객단가)는
-            분자·분모를 각각 합산한 뒤 나눠서 재계산한다(단순평균 금지 원칙, 다른 표들과 동일)."""
+        def _compute_cat_rows(base_df, num_col, den_col, is_ratio, is_pct, category_list):
+            """base_df에서 category_list에 있는 카테고리 전부(값이 없으면 None)에 대해
+            4주 흐름을 계산한다. category_list를 고정해서 넘기기 때문에, 어떤 지표를
+            계산하든 항상 같은 카테고리 집합·순서가 나온다(지표마다 카테고리가 들쭉날쭉하게
+            빠지는 문제 방지 — 예: 거래액엔 있는데 트래픽엔 0이라 안 보이던 카테고리)."""
             if base_df.empty or num_col not in base_df.columns or (den_col and den_col not in base_df.columns):
-                return []
+                return [{"카테고리": c, "값": [None] * 4, "전주비": None, "전년비": None, "작년값": None} for c in category_list]
             _cols = [num_col] + ([den_col] if den_col else [])
             daily = base_df.groupby(["날짜", "카테고리"], as_index=False)[_cols].sum()
             rows = []
-            for _cat_name, _g in daily.groupby("카테고리"):
+            for _cat_name in category_list:
+                _g = daily[daily["카테고리"] == _cat_name]
+                if _g.empty:
+                    rows.append({"카테고리": _cat_name, "값": [None] * 4, "전주비": None, "전년비": None, "작년값": None})
+                    continue
                 _s_num = _g.set_index("날짜")[num_col].sort_index()
                 _s_den = _g.set_index("날짜")[den_col].sort_index() if den_col else None
                 _wk_vals_cat = []
@@ -4642,25 +4652,56 @@ if side["page"].startswith("11."):
                 else:
                     _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
                 _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
-                if _latest_v or _prev_v:  # 완전히 0/None인 카테고리는 표에서 생략
-                    rows.append({"카테고리": _cat_name, "값": _wk_vals_cat, "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v})
-            rows.sort(key=lambda r: r["값"][-1] or 0, reverse=True)
+                rows.append({"카테고리": _cat_name, "값": _wk_vals_cat, "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v})
             return rows
+
+        # 카테고리 순서를 '거래액' 기준으로 BPU별로 미리 한 번만 계산해서 고정한다 —
+        # 그래야 트래픽/CR/객단가 표에서도 거래액 표와 항상 같은 카테고리 순서로 나온다
+        # (지표마다 따로 정렬하면 표마다 카테고리 순서가 들쭉날쭉해지는 문제가 있었음).
+        _cat_order_by_bpu = {}
+        for _ob_label, _ob_list in FORECAST_BPU_ROWS.items():
+            _ob_base = _wk4_cat_base_all if _ob_list is None else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_ob_list)]
+            _ob_all_cats = sorted(_ob_base["카테고리"].dropna().unique().tolist()) if not _ob_base.empty else []
+            _ob_rows = _compute_cat_rows(_ob_base, "거래액", None, False, False, _ob_all_cats)
+            _ob_rows.sort(key=lambda r: r["값"][-1] or 0, reverse=True)
+            _cat_order_by_bpu[_ob_label] = [r["카테고리"] for r in _ob_rows]
 
         _wk4_cat_excel_ws = None
         if not _wk4_cat_base_all.empty:
-            with st.expander("펼쳐서 보기 (BPU 5개 x 지표 3개 = 15개 표)", expanded=False):
-                for _bpu_label, _bpu_list in FORECAST_BPU_ROWS.items():
-                    _base_bpu = (
-                        _wk4_cat_base_all if _bpu_list is None
-                        else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_bpu_list)]
-                    )
-                    st.markdown(f"##### {_bpu_label}")
-                    for _m_label, _num_col, _den_col, _is_ratio, _is_pct in _wk4_cat_metric_defs:
-                        _rows = _compute_cat_rows(_base_bpu, _num_col, _den_col, _is_ratio, _is_pct)
-                        if not _rows:
+            with st.expander("펼쳐서 보기 (지표 5개 x 구분 5개 = 25개 표)", expanded=False):
+                for _m_label, _num_col, _den_col, _is_ratio, _is_pct in _wk4_cat_metric_defs:
+                    st.markdown(f"##### {_m_label}")
+                    for _bpu_label, _bpu_list in FORECAST_BPU_ROWS.items():
+                        _base_bpu = (
+                            _wk4_cat_base_all if _bpu_list is None
+                            else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_bpu_list)]
+                        )
+                        _order = _cat_order_by_bpu.get(_bpu_label, [])
+                        if not _order:
                             continue
-                        st.markdown(f"**{_m_label}**")
+                        # 거래액 기준으로 확정한 카테고리 목록(_order)을 그대로 넘긴다 —
+                        # 이 지표에서 값이 0/None이어도 행 자체는 그대로 유지되고 '-'로
+                        # 표시되므로, 모든 지표 표가 항상 같은 카테고리 집합·순서를 갖는다.
+                        _rows = _compute_cat_rows(_base_bpu, _num_col, _den_col, _is_ratio, _is_pct, _order)
+                        st.markdown(f"**{_bpu_label} {_m_label}**")
+
+                        # TOTAL 행 — 카테고리 전체 합산. 이미 위 BPU별 표에서 정확히 이 조합
+                        # (지표=_m_label, 구분=_bpu_label)을 계산해둔 _wk4_all_rows를 그대로
+                        # 재사용한다 — 새로 계산하면 반올림 등으로 미세하게 어긋날 수 있는데,
+                        # 재사용하면 위 표와 100% 같은 숫자가 보장된다.
+                        _total_match = next(
+                            (r for r in _wk4_all_rows if r["지표"] == _m_label and r["구분"] == _bpu_label), None
+                        )
+                        _total_row_html = ""
+                        if _total_match:
+                            _total_row_html = (
+                                "<tr style='background:#f3f4f6;font-weight:700;'><td class='m'>TOTAL</td>"
+                                + "".join(f"<td style='text-align:right;'>{_fmt_wk4(v, _is_pct)}</td>" for v in _total_match["값"])
+                                + f"<td style='text-align:right;'>{format_delta_html(_total_match['전주비'])}</td>"
+                                f"<td style='text-align:right;'>{format_delta_html(_total_match['전년비'])}</td>"
+                                f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk4(_total_match.get('작년값'), _is_pct)}</td></tr>"
+                            )
+
                         _body = "".join(
                             f"<tr><td class='m'>{r['카테고리']}</td>"
                             + "".join(f"<td style='text-align:right;'>{_fmt_wk4(v, _is_pct)}</td>" for v in r["값"])
@@ -4672,11 +4713,11 @@ if side["page"].startswith("11."):
                         st.markdown(
                             "<div style='overflow-x:auto;margin-bottom:14px;'><table class='summary-table'>"
                             f"<thead><tr><th>카테고리</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
-                            f"<tbody>{_body}</tbody></table></div>",
+                            f"<tbody>{_total_row_html}{_body}</tbody></table></div>",
                             unsafe_allow_html=True,
                         )
 
-                        # 엑셀 시트(BPU x 지표 조합 하나당 섹션으로 누적)
+                        # 엑셀 시트(지표 x BPU 조합 하나당 섹션으로 누적)
                         if _wk4_cat_excel_ws is None:
                             _wk4_cat_excel_ws = _wk4_wb.create_sheet("카테고리별")
                         _wk4_cat_excel_ws.append([f"{_bpu_label} · {_m_label}"])
@@ -4687,6 +4728,28 @@ if side["page"].startswith("11."):
                             _cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
                             _cell.fill = _wk4_header_fill
                             _cell.font = Font(bold=True)
+                        if _total_match:
+                            _tot_vals = ["TOTAL"] + [
+                                None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
+                                for v in _total_match["값"]
+                            ]
+                            _tot_vals.append(None if _total_match["전주비"] is None else round(_total_match["전주비"] / 100, 4))
+                            _tot_vals.append(None if _total_match["전년비"] is None else round(_total_match["전년비"] / 100, 4))
+                            _tw = _total_match.get("작년값")
+                            _tot_vals.append(None if _tw is None or pd.isna(_tw) else (round(_tw / 100, 4) if _is_pct else round(_tw)))
+                            _wk4_cat_excel_ws.append(_tot_vals)
+                            _rr = _wk4_cat_excel_ws.max_row
+                            for _c in range(1, len(_hdr_row) + 1):
+                                _wk4_cat_excel_ws.cell(row=_rr, column=_c).font = Font(bold=True)
+                            if _is_pct:
+                                for _c in range(2, 2 + len(_wk4_labels)):
+                                    _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
+                                _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
+                            for _c, _val in [(len(_hdr_row) - 2, _total_match["전주비"]), (len(_hdr_row) - 1, _total_match["전년비"])]:
+                                _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
+                                _cell.number_format = '+0.0%;-0.0%'
+                                if _val is not None:
+                                    _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
                         for r in _rows:
                             _row_vals = [r["카테고리"]] + [
                                 None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
