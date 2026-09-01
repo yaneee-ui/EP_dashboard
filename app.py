@@ -4582,81 +4582,108 @@ if side["page"].startswith("11."):
             _wk4_ws.column_dimensions[openpyxl.utils.get_column_letter(_c)].width = 13
         _wk4_ws.freeze_panes = "B2"
 
-        # --- 카테고리별 최근 4주 일평균 거래액 — 위 BPU별과 동일한 원칙(부분주 보정 포함)
-        # 으로 카테고리마다 주차별 흐름을 본다. 전 사업부 합산 기준(세그먼트/핏플랍 제외는
-        # 위 카테고리 요약표와 동일한 필터 재사용). ---
+        # --- 카테고리별 최근 4주 일평균 — BPU(Total/자사/정상/이월/입점) x 지표(거래액/
+        # 트래픽/구매객수)로 세분화. 5x3=15개 조합이라 페이지가 너무 길어지지 않게
+        # expander로 감싼다(기본 접힘). 부분주 보정 등 계산 원칙은 위 BPU별 표와 동일. ---
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown("**카테고리별 최근 4주 일평균 (거래액)**")
-        _wk4_cat_rows = []
-        if not df_category.empty:
-            _wk4_cat_base = df_category[(df_category["카테고리"] != "전체") & (df_category["브랜드"] == "전체")]
-            if "회원구분" in _wk4_cat_base.columns:
-                _wk4_cat_base = _wk4_cat_base[_wk4_cat_base["회원구분"] == _wk_cat_segment]
-            if _wk_ff_exclude:
-                _wk4_cat_base = exclude_ff_brand(_wk4_cat_base)
-            _wk4_cat_daily = _wk4_cat_base.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+        st.markdown("**카테고리별 최근 4주 일평균 (BPU·지표별 세분화)**")
 
-            for _cat_name, _g in _wk4_cat_daily.groupby("카테고리"):
-                _s_cat = _g.set_index("날짜")["거래액"].sort_index()
+        _wk4_cat_metric_defs = [("거래액", "거래액"), ("트래픽", "트래픽"), ("구매객수", "구매객수")]
+
+        _wk4_cat_base_all = pd.DataFrame()
+        if not df_category.empty:
+            _wk4_cat_base_all = df_category[(df_category["카테고리"] != "전체") & (df_category["브랜드"] == "전체")]
+            if "회원구분" in _wk4_cat_base_all.columns:
+                _wk4_cat_base_all = _wk4_cat_base_all[_wk4_cat_base_all["회원구분"] == _wk_cat_segment]
+            if _wk_ff_exclude:
+                _wk4_cat_base_all = exclude_ff_brand(_wk4_cat_base_all)
+
+        def _fmt_wk4(v):
+            return "-" if v is None or pd.isna(v) else f"{v:,.0f}"
+
+        def _compute_cat_rows(base_df, metric_col):
+            """이미 BPU로 필터링된 base_df에서 카테고리별 4주 흐름을 계산."""
+            if base_df.empty or metric_col not in base_df.columns:
+                return []
+            daily = base_df.groupby(["날짜", "카테고리"], as_index=False)[metric_col].sum()
+            rows = []
+            for _cat_name, _g in daily.groupby("카테고리"):
+                _s_cat = _g.set_index("날짜")[metric_col].sort_index()
                 _wk_vals_cat = []
                 for _ws in _wk4_starts:
                     _we = _ws + pd.Timedelta(days=6)
                     _wk_slice = _s_cat[(_s_cat.index >= _ws) & (_s_cat.index <= _we)]
                     _wk_vals_cat.append(_wk_slice.mean() if not _wk_slice.empty else None)
-                _latest_v_cat, _prev_v_cat = _wk_vals_cat[-1], _wk_vals_cat[-2]
-                _wow_cat = pct_delta_safe(_latest_v_cat, _prev_v_cat) if (_latest_v_cat is not None and _prev_v_cat) else None
-                _cur_actual_days_cat = _s_cat[(_s_cat.index >= _wk4_starts[-1]) & (_s_cat.index <= _wk4_starts[-1] + pd.Timedelta(days=6))].index
-                _matched_dates_cat = [d - pd.Timedelta(days=364) for d in _cur_actual_days_cat]
-                _num_yoy_cat = _s_cat.reindex(_matched_dates_cat).dropna()
-                _yoy_v_cat = _num_yoy_cat.mean() if not _num_yoy_cat.empty else None
-                _yoy_cat = pct_delta_safe(_latest_v_cat, _yoy_v_cat) if (_latest_v_cat is not None and _yoy_v_cat) else None
-                _wk4_cat_rows.append({
-                    "카테고리": _cat_name, "값": _wk_vals_cat, "전주비": _wow_cat, "전년비": _yoy_cat,
-                    "작년값": _yoy_v_cat,
-                })
-            _wk4_cat_rows.sort(key=lambda r: r["값"][-1] or 0, reverse=True)
+                _latest_v, _prev_v = _wk_vals_cat[-1], _wk_vals_cat[-2]
+                _wow = pct_delta_safe(_latest_v, _prev_v) if (_latest_v is not None and _prev_v) else None
+                _cur_days = _s_cat[(_s_cat.index >= _wk4_starts[-1]) & (_s_cat.index <= _wk4_starts[-1] + pd.Timedelta(days=6))].index
+                _matched = [d - pd.Timedelta(days=364) for d in _cur_days]
+                _num_yoy = _s_cat.reindex(_matched).dropna()
+                _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
+                _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
+                if _latest_v or _prev_v:  # 완전히 0/None인 카테고리는 표에서 생략
+                    rows.append({"카테고리": _cat_name, "값": _wk_vals_cat, "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v})
+            rows.sort(key=lambda r: r["값"][-1] or 0, reverse=True)
+            return rows
 
-        if _wk4_cat_rows:
-            def _fmt_wk4(v):
-                return "-" if v is None or pd.isna(v) else f"{v:,.0f}"
+        _wk4_cat_excel_ws = None
+        if not _wk4_cat_base_all.empty:
+            with st.expander("펼쳐서 보기 (BPU 5개 x 지표 3개 = 15개 표)", expanded=False):
+                for _bpu_label, _bpu_list in FORECAST_BPU_ROWS.items():
+                    _base_bpu = (
+                        _wk4_cat_base_all if _bpu_list is None
+                        else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_bpu_list)]
+                    )
+                    st.markdown(f"##### {_bpu_label}")
+                    for _m_label, _m_col in _wk4_cat_metric_defs:
+                        _rows = _compute_cat_rows(_base_bpu, _m_col)
+                        if not _rows:
+                            continue
+                        st.markdown(f"**{_m_label}**")
+                        _body = "".join(
+                            f"<tr><td class='m'>{r['카테고리']}</td>"
+                            + "".join(f"<td style='text-align:right;'>{_fmt_wk4(v)}</td>" for v in r["값"])
+                            + f"<td style='text-align:right;'>{format_delta_html(r['전주비'])}</td>"
+                            f"<td style='text-align:right;'>{format_delta_html(r['전년비'])}</td>"
+                            f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk4(r['작년값'])}</td></tr>"
+                            for r in _rows
+                        )
+                        st.markdown(
+                            "<div style='overflow-x:auto;margin-bottom:14px;'><table class='summary-table'>"
+                            f"<thead><tr><th>카테고리</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
+                            f"<tbody>{_body}</tbody></table></div>",
+                            unsafe_allow_html=True,
+                        )
 
-            _wk4_cat_body = "".join(
-                f"<tr><td class='m'>{r['카테고리']}</td>"
-                + "".join(f"<td style='text-align:right;'>{_fmt_wk4(v)}</td>" for v in r["값"])
-                + f"<td style='text-align:right;'>{format_delta_html(r['전주비'])}</td>"
-                f"<td style='text-align:right;'>{format_delta_html(r['전년비'])}</td>"
-                f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk4(r['작년값'])}</td></tr>"
-                for r in _wk4_cat_rows
-            )
-            st.markdown(
-                "<div style='overflow-x:auto;'><table class='summary-table'>"
-                f"<thead><tr><th>카테고리</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
-                f"<tbody>{_wk4_cat_body}</tbody></table></div>",
-                unsafe_allow_html=True,
-            )
-            # 엑셀에도 시트 추가 (기존 _wk4_wb 재사용, 저장 전에 끼워넣기)
-            _wk4_cat_ws = _wk4_wb.create_sheet("카테고리별")
-            _wk4_cat_ws.append(["카테고리"] + _wk4_labels + ["전주비", "전년비", "작년(동요일)"])
-            for _c in range(1, 8):
-                _cell = _wk4_cat_ws.cell(row=1, column=_c)
-                _cell.fill = _wk4_header_fill
-                _cell.font = Font(bold=True)
-            for r in _wk4_cat_rows:
-                _row_vals = [r["카테고리"]] + [None if v is None or pd.isna(v) else round(v) for v in r["값"]]
-                _row_vals.append(None if r["전주비"] is None else round(r["전주비"] / 100, 4))
-                _row_vals.append(None if r["전년비"] is None else round(r["전년비"] / 100, 4))
-                _row_vals.append(None if r["작년값"] is None or pd.isna(r["작년값"]) else round(r["작년값"]))
-                _wk4_cat_ws.append(_row_vals)
-                _rr = _wk4_cat_ws.max_row
-                for _c, _val in [(6, r["전주비"]), (7, r["전년비"])]:
-                    _cell = _wk4_cat_ws.cell(row=_rr, column=_c)
-                    _cell.number_format = '+0.0%;-0.0%'
-                    if _val is not None:
-                        _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
-            for _c in range(1, 8):
-                _wk4_cat_ws.column_dimensions[openpyxl.utils.get_column_letter(_c)].width = 13
-            _wk4_cat_ws.freeze_panes = "B2"
+                        # 엑셀 시트(BPU x 지표 조합 하나당 섹션으로 누적)
+                        if _wk4_cat_excel_ws is None:
+                            _wk4_cat_excel_ws = _wk4_wb.create_sheet("카테고리별")
+                        _wk4_cat_excel_ws.append([f"{_bpu_label} · {_m_label}"])
+                        _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=1).font = Font(bold=True)
+                        _hdr_row = ["카테고리"] + _wk4_labels + ["전주비", "전년비", "작년(동요일)"]
+                        _wk4_cat_excel_ws.append(_hdr_row)
+                        for _c in range(1, len(_hdr_row) + 1):
+                            _cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
+                            _cell.fill = _wk4_header_fill
+                            _cell.font = Font(bold=True)
+                        for r in _rows:
+                            _row_vals = [r["카테고리"]] + [None if v is None or pd.isna(v) else round(v) for v in r["값"]]
+                            _row_vals.append(None if r["전주비"] is None else round(r["전주비"] / 100, 4))
+                            _row_vals.append(None if r["전년비"] is None else round(r["전년비"] / 100, 4))
+                            _row_vals.append(None if r["작년값"] is None or pd.isna(r["작년값"]) else round(r["작년값"]))
+                            _wk4_cat_excel_ws.append(_row_vals)
+                            _rr = _wk4_cat_excel_ws.max_row
+                            for _c, _val in [(len(_hdr_row) - 1, r["전주비"]), (len(_hdr_row), r["전년비"])]:
+                                _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
+                                _cell.number_format = '+0.0%;-0.0%'
+                                if _val is not None:
+                                    _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
+                        _wk4_cat_excel_ws.append([])  # 섹션 사이 빈 줄
+            if _wk4_cat_excel_ws is not None:
+                for _c in range(1, 8):
+                    _wk4_cat_excel_ws.column_dimensions[openpyxl.utils.get_column_letter(_c)].width = 13
+                _wk4_cat_excel_ws.freeze_panes = "A2"
         else:
             st.info("카테고리 데이터가 없어서 카테고리별 흐름은 건너뛰었어요.")
 
