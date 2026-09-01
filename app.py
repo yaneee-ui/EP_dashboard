@@ -4589,7 +4589,13 @@ if side["page"].startswith("11."):
         st.markdown("---")
         st.markdown("**카테고리별 최근 4주 일평균 (BPU·지표별 세분화)**")
 
-        _wk4_cat_metric_defs = [("거래액", "거래액"), ("트래픽", "트래픽"), ("구매객수", "구매객수")]
+        _wk4_cat_metric_defs = [
+            ("거래액", "거래액", None, False, False),
+            ("트래픽", "트래픽", None, False, False),
+            ("구매객수", "구매객수", None, False, False),
+            ("CR", "구매객수", "트래픽", True, True),
+            ("객단가", "거래액", "구매객수", True, False),
+        ]
 
         _wk4_cat_base_all = pd.DataFrame()
         if not df_category.empty:
@@ -4599,28 +4605,42 @@ if side["page"].startswith("11."):
             if _wk_ff_exclude:
                 _wk4_cat_base_all = exclude_ff_brand(_wk4_cat_base_all)
 
-        def _fmt_wk4(v):
-            return "-" if v is None or pd.isna(v) else f"{v:,.0f}"
+        def _fmt_wk4(v, is_pct=False):
+            if v is None or pd.isna(v):
+                return "-"
+            return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
 
-        def _compute_cat_rows(base_df, metric_col):
-            """이미 BPU로 필터링된 base_df에서 카테고리별 4주 흐름을 계산."""
-            if base_df.empty or metric_col not in base_df.columns:
+        def _compute_cat_rows(base_df, num_col, den_col, is_ratio, is_pct):
+            """이미 BPU로 필터링된 base_df에서 카테고리별 4주 흐름을 계산. 비율지표(CR/객단가)는
+            분자·분모를 각각 합산한 뒤 나눠서 재계산한다(단순평균 금지 원칙, 다른 표들과 동일)."""
+            if base_df.empty or num_col not in base_df.columns or (den_col and den_col not in base_df.columns):
                 return []
-            daily = base_df.groupby(["날짜", "카테고리"], as_index=False)[metric_col].sum()
+            _cols = [num_col] + ([den_col] if den_col else [])
+            daily = base_df.groupby(["날짜", "카테고리"], as_index=False)[_cols].sum()
             rows = []
             for _cat_name, _g in daily.groupby("카테고리"):
-                _s_cat = _g.set_index("날짜")[metric_col].sort_index()
+                _s_num = _g.set_index("날짜")[num_col].sort_index()
+                _s_den = _g.set_index("날짜")[den_col].sort_index() if den_col else None
                 _wk_vals_cat = []
                 for _ws in _wk4_starts:
                     _we = _ws + pd.Timedelta(days=6)
-                    _wk_slice = _s_cat[(_s_cat.index >= _ws) & (_s_cat.index <= _we)]
-                    _wk_vals_cat.append(_wk_slice.mean() if not _wk_slice.empty else None)
+                    _num_wk = _s_num[(_s_num.index >= _ws) & (_s_num.index <= _we)]
+                    if is_ratio:
+                        _den_wk = _s_den[(_s_den.index >= _ws) & (_s_den.index <= _we)]
+                        _v = (_num_wk.sum() / _den_wk.sum() * (100 if is_pct else 1)) if _den_wk.sum() else None
+                    else:
+                        _v = _num_wk.mean() if not _num_wk.empty else None
+                    _wk_vals_cat.append(_v)
                 _latest_v, _prev_v = _wk_vals_cat[-1], _wk_vals_cat[-2]
                 _wow = pct_delta_safe(_latest_v, _prev_v) if (_latest_v is not None and _prev_v) else None
-                _cur_days = _s_cat[(_s_cat.index >= _wk4_starts[-1]) & (_s_cat.index <= _wk4_starts[-1] + pd.Timedelta(days=6))].index
+                _cur_days = _s_num[(_s_num.index >= _wk4_starts[-1]) & (_s_num.index <= _wk4_starts[-1] + pd.Timedelta(days=6))].index
                 _matched = [d - pd.Timedelta(days=364) for d in _cur_days]
-                _num_yoy = _s_cat.reindex(_matched).dropna()
-                _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
+                _num_yoy = _s_num.reindex(_matched).dropna()
+                if is_ratio:
+                    _den_yoy = _s_den.reindex(_matched).dropna()
+                    _yoy_v = (_num_yoy.sum() / _den_yoy.sum() * (100 if is_pct else 1)) if _den_yoy.sum() else None
+                else:
+                    _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
                 _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
                 if _latest_v or _prev_v:  # 완전히 0/None인 카테고리는 표에서 생략
                     rows.append({"카테고리": _cat_name, "값": _wk_vals_cat, "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v})
@@ -4636,17 +4656,17 @@ if side["page"].startswith("11."):
                         else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_bpu_list)]
                     )
                     st.markdown(f"##### {_bpu_label}")
-                    for _m_label, _m_col in _wk4_cat_metric_defs:
-                        _rows = _compute_cat_rows(_base_bpu, _m_col)
+                    for _m_label, _num_col, _den_col, _is_ratio, _is_pct in _wk4_cat_metric_defs:
+                        _rows = _compute_cat_rows(_base_bpu, _num_col, _den_col, _is_ratio, _is_pct)
                         if not _rows:
                             continue
                         st.markdown(f"**{_m_label}**")
                         _body = "".join(
                             f"<tr><td class='m'>{r['카테고리']}</td>"
-                            + "".join(f"<td style='text-align:right;'>{_fmt_wk4(v)}</td>" for v in r["값"])
+                            + "".join(f"<td style='text-align:right;'>{_fmt_wk4(v, _is_pct)}</td>" for v in r["값"])
                             + f"<td style='text-align:right;'>{format_delta_html(r['전주비'])}</td>"
                             f"<td style='text-align:right;'>{format_delta_html(r['전년비'])}</td>"
-                            f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk4(r['작년값'])}</td></tr>"
+                            f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk4(r['작년값'], _is_pct)}</td></tr>"
                             for r in _rows
                         )
                         st.markdown(
@@ -4668,12 +4688,22 @@ if side["page"].startswith("11."):
                             _cell.fill = _wk4_header_fill
                             _cell.font = Font(bold=True)
                         for r in _rows:
-                            _row_vals = [r["카테고리"]] + [None if v is None or pd.isna(v) else round(v) for v in r["값"]]
+                            _row_vals = [r["카테고리"]] + [
+                                None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
+                                for v in r["값"]
+                            ]
                             _row_vals.append(None if r["전주비"] is None else round(r["전주비"] / 100, 4))
                             _row_vals.append(None if r["전년비"] is None else round(r["전년비"] / 100, 4))
-                            _row_vals.append(None if r["작년값"] is None or pd.isna(r["작년값"]) else round(r["작년값"]))
+                            _wv = r["작년값"]
+                            _row_vals.append(
+                                None if _wv is None or pd.isna(_wv) else (round(_wv / 100, 4) if _is_pct else round(_wv))
+                            )
                             _wk4_cat_excel_ws.append(_row_vals)
                             _rr = _wk4_cat_excel_ws.max_row
+                            if _is_pct:
+                                for _c in range(2, 2 + len(_wk4_labels)):
+                                    _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
+                                _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
                             for _c, _val in [(len(_hdr_row) - 1, r["전주비"]), (len(_hdr_row), r["전년비"])]:
                                 _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
                                 _cell.number_format = '+0.0%;-0.0%'
