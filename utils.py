@@ -256,8 +256,26 @@ def raw_cutoff_date(selected_period_date, unit):
     return d  # 일별은 그대로
 
 
+def effective_month_of_week(date):
+    """그 주(월요일 date)가 실제로 속하는 '달'의 1일을 반환한다. 기본은 '월요일이 속한
+    달'을 그대로 쓰되, 그 월요일이 그 달의 '마지막 날'인 경우(=화~일 6일이 전부 다음
+    달)만 예외로 다음 달로 넘긴다 — week_of_month와 반드시 같은 기준을 써야 '9월
+    1주차'인데 '8월'이 붙는 식으로 월과 주차가 어긋나지 않는다."""
+    date = pd.Timestamp(date)
+    base_month_start = date.replace(day=1)
+    base_month_end = (base_month_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+    if date == base_month_end:
+        return base_month_start + pd.offsets.MonthBegin(1)
+    return base_month_start
+
+
 def week_of_month(date) -> int:
     """해당 날짜(그 주의 월요일)가 같은 달 안에서 몇 번째 주인지.
+
+    기본은 '월요일이 속한 달' 기준 그대로 두되(예전 방식과 동일, 회귀 없음), 딱 하나
+    예외가 있다 — 월요일이 그 달의 '마지막 날'이라 화~일 6일이 전부 다음 달에 속하는
+    주는, 그 다음 달의 1주차로 본다 (예: 2026-08-31(월)~09-06(일)인 주는 '8월 5주차'가
+    아니라 '9월 1주차'). 이 판단은 effective_month_of_week와 반드시 같은 기준을 쓴다.
 
     예전엔 '(그 달 1일의 요일 오프셋 + 날짜) // 7' 방식으로 계산했는데,
     1일이 월요일이 아닌 달에서는 '그 달의 첫 월요일'이 이미 2주차로 계산되고
@@ -267,10 +285,12 @@ def week_of_month(date) -> int:
     같은 달에 속하는 월요일들을 직접 나열해서, 이 날짜가 몇 번째 월요일인지로
     계산하도록 바꿈 — 그 달의 첫 월요일은 항상 1주차가 된다."""
     date = pd.Timestamp(date)
-    first_of_month = date.replace(day=1)
-    next_month = first_of_month + pd.offsets.MonthBegin(1)
-    last_of_month = next_month - pd.Timedelta(days=1)
-    mondays_in_month = pd.date_range(first_of_month, last_of_month, freq="W-MON")
+    eff_month_start = effective_month_of_week(date)
+    eff_month_end = (eff_month_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+    # eff_month_start가 date 자체보다 나중일 수 있다(예: date=8/31인데 eff_month_start=9/1) —
+    # 이 경우 date 자신을 목록에 포함시키려면 시작점을 date와 eff_month_start 중 이른
+    # 쪽으로 잡아야 한다. 그렇지 않으면 date보다 항상 큰 월요일들만 나열되어 0이 나옴.
+    mondays_in_month = pd.date_range(min(eff_month_start, date), eff_month_end, freq="W-MON")
     return int((mondays_in_month <= date).sum())
 
 
@@ -281,8 +301,9 @@ def make_period_label(last_date, unit: str) -> str:
     if unit == "일별":
         return f"{yy}년 {d.month}월 {d.day}일"
     elif unit == "주별":
+        eff = effective_month_of_week(d)
         wom = week_of_month(d)
-        return f"{yy}년 {d.month}월 {wom}주차"
+        return f"{eff.strftime('%y')}년 {eff.month}월 {wom}주차"
     elif unit == "월마감":
         return f"{yy}년 {d.month}월 (마감)"
     else:  # 월별
