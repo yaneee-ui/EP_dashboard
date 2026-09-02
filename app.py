@@ -5263,6 +5263,24 @@ if side["page"].startswith("3."):
                         vals.append(md[num_col].sum())
                 return vals
 
+            def _cur_month_yoy_value_matched(base_df, num_col, den_col, is_ratio, scale=1.0):
+                """당월(진행 중인 달)의 작년 비교값은 '동요일 매칭'으로 계산한다 — 26년
+                당월에 실제 존재하는 날짜들을 364일씩 당겨서 25년의 그 날짜들만 골라
+                비교한다. 그냥 '작년 그 달 전체'와 비교하면, 26년은 12일치인데 25년은
+                31일 전체와 비교하게 돼서 불공정하다(부분월 vs 완성월)."""
+                cur_start = pd.Timestamp(2026, _mc_cur_month, 1)
+                cur_dates = base_df[(base_df["날짜"] >= cur_start) & (base_df["날짜"] <= _mc_abs_last)]["날짜"].unique()
+                if len(cur_dates) == 0:
+                    return None
+                matched = [pd.Timestamp(d) - pd.Timedelta(days=364) for d in cur_dates]
+                md = base_df[base_df["날짜"].isin(matched)]
+                if md.empty:
+                    return None
+                if is_ratio:
+                    _den_sum = md[den_col].sum()
+                    return (md[num_col].sum() / _den_sum * scale) if _den_sum else None
+                return md[num_col].sum()
+
             _mc_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == _sum_segment)]
             if _mc_base.empty:  # 세그먼트별 행이 없는 소스면 전체로 폴백
                 _mc_base = df_traffic[df_traffic["BPU"] == "Total"]
@@ -5307,6 +5325,9 @@ if side["page"].startswith("3."):
                 _mc_is_billion = _mc_label == "거래액"
                 _v26 = _monthly_actual_series(_mc_base, 2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
                 _v25 = _monthly_actual_series(_mc_base, 2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
+                # 당월(진행 중인 달)만 동요일 매칭으로 재계산 — 26년 부분 데이터를
+                # 25년 그 달 '전체'와 비교하면 불공정하다(위 함수 docstring 참고).
+                _v25[_mc_cur_month - 1] = _cur_month_yoy_value_matched(_mc_base, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
                 _cells_26 = "".join(_mc_td(_v26[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
                 _cells_25 = "".join(_mc_td(_v25[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
                 _cells_yoy = ""
