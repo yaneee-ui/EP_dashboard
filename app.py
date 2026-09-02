@@ -5275,46 +5275,52 @@ if side["page"].startswith("3."):
                 ("객단가", "거래액", "구매객수", True, 1.0),
             ]
 
-            def _mc_fmt(v, is_pct, is_million=False):
+            def _mc_fmt(v, is_pct, is_billion=False):
                 if v is None or pd.isna(v):
                     return "-"
                 if is_pct:
                     return f"{v:.1f}%"
-                if is_million:
-                    return f"{v / 1_000_000:,.1f}백만"
+                if is_billion:
+                    return f"{v / 100_000_000:,.2f}억"
                 return f"{v:,.0f}"
 
             _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
-            _mc_month_headers_26 = "".join(
-                f"<th>{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}</th>" for m in range(1, _mc_cur_month + 1)
-            )
-            _mc_month_headers_yoy = "".join(
-                f"<th>{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}</th>" for m in range(1, _mc_cur_month + 1)
-            )
-            _mc_month_headers_25 = "".join(
-                f"<th>{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}</th>" for m in range(1, _mc_cur_month + 1)
-            )
+            _MC_CUR_HL = "background:#fef3c7;"
+
+            def _mc_th(m):
+                _hl = _MC_CUR_HL if m == _mc_cur_month else ""
+                _lbl = f"{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}"
+                return f"<th style='white-space:nowrap;{_hl}'>{_lbl}</th>"
+
+            _mc_month_headers_26 = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
+            _mc_month_headers_yoy = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
+            _mc_month_headers_25 = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
+
+            def _mc_td(v, m, is_pct, is_billion=False, is_delta=False):
+                _hl = _MC_CUR_HL if m == _mc_cur_month else ""
+                _content = format_delta_html(v) if is_delta else _mc_fmt(v, is_pct, is_billion)
+                return f"<td style='text-align:right;white-space:nowrap;{_hl}'>{_content}</td>"
 
             _mc_rows_html = ""
             for _mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale in _mc_metric_defs:
                 _mc_is_pct = _mc_label == "CR"
-                _mc_is_million = _mc_label == "거래액"
+                _mc_is_billion = _mc_label == "거래액"
                 _v26 = _monthly_actual_series(_mc_base, 2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
                 _v25 = _monthly_actual_series(_mc_base, 2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
-                _cells_26 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v26[m - 1], _mc_is_pct, _mc_is_million)}</td>" for m in range(1, _mc_cur_month + 1))
-                _cells_25 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v25[m - 1], _mc_is_pct, _mc_is_million)}</td>" for m in range(1, _mc_cur_month + 1))
+                _cells_26 = "".join(_mc_td(_v26[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
+                _cells_25 = "".join(_mc_td(_v25[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
                 _cells_yoy = ""
                 for m in range(1, _mc_cur_month + 1):
                     _yoy = pct_delta_safe(_v26[m - 1], _v25[m - 1]) if (_v26[m - 1] is not None and _v25[m - 1]) else None
-                    _cells_yoy += f"<td style='text-align:right;'>{format_delta_html(_yoy)}</td>"
-                _mc_rows_html += f"<tr><td class='m'>{_mc_label}</td>{_cells_26}{_cells_yoy}{_cells_25}</tr>"
+                    _cells_yoy += _mc_td(_yoy, m, _mc_is_pct, is_delta=True)
+                _mc_rows_html += f"<tr><td class='m' style='white-space:nowrap;'>{_mc_label}</td>{_cells_26}{_cells_yoy}{_cells_25}</tr>"
 
             st.markdown(
                 "<div style='overflow-x:auto;'><table class='summary-table'>"
                 "<thead>"
-                f"<tr><th rowspan='2'>구분</th><th colspan='{_mc_cur_month}' style='text-align:center;background:#eef2ff;'>26년</th>"
-                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#fef3c7;'>전년비</th>"
-                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#f3f4f6;'>25년</th></tr>"
+                f"<tr><th rowspan='2' style='white-space:nowrap;'>구분</th><th colspan='{_mc_cur_month}' style='text-align:center;background:#eef2ff;white-space:nowrap;'>26년</th>"
+                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#fef3c7;white-space:nowrap;'>전년비</th>"
+                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#f3f4f6;white-space:nowrap;'>25년</th></tr>"
                 f"<tr>{_mc_month_headers_26}{_mc_month_headers_yoy}{_mc_month_headers_25}</tr>"
                 "</thead>"
                 f"<tbody>{_mc_rows_html}</tbody></table></div>",
