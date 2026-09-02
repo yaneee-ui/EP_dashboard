@@ -1226,6 +1226,126 @@ def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
     return sections
 
 
+def render_monthly_comparison_table(base_df, title, caption_extra=""):
+    """26년|전년비|25년 월별 실적 비교표. base_df는 이미 원하는 BPU/카테고리/세그먼트로
+    필터링된 df_traffic 형식(날짜/거래액/트래픽/구매객수 컬럼)이어야 한다. 일할계산 없이
+    있는 만큼의 실제값만 쓰고, 당월(진행 중인 달)의 전년비만 '동요일 매칭'(26년에 실제
+    존재하는 날짜들을 364일씩 당겨서 25년의 그 날짜들만 비교)으로 공정하게 계산한다."""
+    st.markdown(f"**{title}**")
+    if base_df is None or base_df.empty:
+        st.info("데이터가 없습니다.")
+        return
+
+    _mc_abs_last = base_df["날짜"].max()
+    _mc_cur_month = _mc_abs_last.month
+
+    def _monthly_actual_series(year, num_col, den_col, is_ratio, scale=1.0):
+        vals = []
+        for m in range(1, 13):
+            m_start = pd.Timestamp(year, m, 1)
+            m_end = (m_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+            if m_start > _mc_abs_last:
+                vals.append(None)
+                continue
+            md = base_df[(base_df["날짜"] >= m_start) & (base_df["날짜"] <= min(m_end, _mc_abs_last))]
+            if md.empty:
+                vals.append(None)
+                continue
+            if is_ratio:
+                _den_sum = md[den_col].sum()
+                vals.append((md[num_col].sum() / _den_sum * scale) if _den_sum else None)
+            else:
+                vals.append(md[num_col].sum())
+        return vals
+
+    def _cur_month_yoy_value_matched(num_col, den_col, is_ratio, scale=1.0):
+        cur_start = pd.Timestamp(_mc_abs_last.year, _mc_cur_month, 1)
+        cur_dates = base_df[(base_df["날짜"] >= cur_start) & (base_df["날짜"] <= _mc_abs_last)]["날짜"].unique()
+        if len(cur_dates) == 0:
+            return None, []
+        matched = [pd.Timestamp(d) - pd.Timedelta(days=364) for d in cur_dates]
+        md = base_df[base_df["날짜"].isin(matched)]
+        if md.empty:
+            return None, matched
+        if is_ratio:
+            _den_sum = md[den_col].sum()
+            return ((md[num_col].sum() / _den_sum * scale) if _den_sum else None), matched
+        return md[num_col].sum(), matched
+
+    _mc_metric_defs = [
+        ("거래액", "거래액", None, False, 1.0),
+        ("트래픽", "트래픽", None, False, 1.0),
+        ("구매객수", "구매객수", None, False, 1.0),
+        ("CR", "구매객수", "트래픽", True, 100.0),
+        ("객단가", "거래액", "구매객수", True, 1.0),
+    ]
+
+    def _mc_fmt(v, is_pct, is_billion=False):
+        if v is None or pd.isna(v):
+            return "-"
+        if is_pct:
+            return f"{v:.1f}%"
+        if is_billion:
+            return f"{v / 100_000_000:,.2f}억"
+        return f"{v:,.0f}"
+
+    _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
+    _MC_CUR_HL = "background:#fef3c7;"
+
+    _, _mc_matched_dates = _cur_month_yoy_value_matched("거래액", None, False)
+    if _mc_matched_dates:
+        _mc_25_start, _mc_25_end = min(_mc_matched_dates), max(_mc_matched_dates)
+        _mc_25_day_label = f"{_mc_25_start.month}/{_mc_25_start.day}~{_mc_25_end.month}/{_mc_25_end.day}"
+    else:
+        _mc_25_day_label = _mc_last_day_label
+
+    def _mc_th(m, day_label=None):
+        _day_label = day_label if day_label is not None else _mc_last_day_label
+        _hl = _MC_CUR_HL if m == _mc_cur_month else ""
+        _lbl = f"{m}월{f'({_day_label})' if m == _mc_cur_month else ''}"
+        return f"<th style='white-space:nowrap;{_hl}'>{_lbl}</th>"
+
+    _mc_month_headers_26 = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
+    _mc_month_headers_yoy = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
+    _mc_month_headers_25 = "".join(_mc_th(m, _mc_25_day_label) for m in range(1, _mc_cur_month + 1))
+
+    def _mc_td(v, m, is_pct, is_billion=False, is_delta=False):
+        _hl = _MC_CUR_HL if m == _mc_cur_month else ""
+        _content = format_delta_html(v) if is_delta else _mc_fmt(v, is_pct, is_billion)
+        return f"<td style='text-align:right;white-space:nowrap;{_hl}'>{_content}</td>"
+
+    _mc_rows_html = ""
+    for _mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale in _mc_metric_defs:
+        _mc_is_pct = _mc_label == "CR"
+        _mc_is_billion = _mc_label == "거래액"
+        _v26 = _monthly_actual_series(2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
+        _v25 = _monthly_actual_series(2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
+        _v25[_mc_cur_month - 1], _ = _cur_month_yoy_value_matched(_mc_num, _mc_den, _mc_is_ratio, _mc_scale)
+        _cells_26 = "".join(_mc_td(_v26[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
+        _cells_25 = "".join(_mc_td(_v25[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
+        _cells_yoy = ""
+        for m in range(1, _mc_cur_month + 1):
+            _yoy = pct_delta_safe(_v26[m - 1], _v25[m - 1]) if (_v26[m - 1] is not None and _v25[m - 1]) else None
+            _cells_yoy += _mc_td(_yoy, m, _mc_is_pct, is_delta=True)
+        _mc_rows_html += f"<tr><td class='m' style='white-space:nowrap;'>{_mc_label}</td>{_cells_26}{_cells_yoy}{_cells_25}</tr>"
+
+    st.markdown(
+        "<div style='overflow-x:auto;'><table class='summary-table'>"
+        "<thead>"
+        f"<tr><th rowspan='2' style='white-space:nowrap;'>구분</th><th colspan='{_mc_cur_month}' style='text-align:center;background:#eef2ff;white-space:nowrap;'>26년</th>"
+        f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#fef3c7;white-space:nowrap;'>전년비</th>"
+        f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#f3f4f6;white-space:nowrap;'>25년</th></tr>"
+        f"<tr>{_mc_month_headers_26}{_mc_month_headers_yoy}{_mc_month_headers_25}</tr>"
+        "</thead>"
+        f"<tbody>{_mc_rows_html}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+    _cap = "일할계산(마감예상) 없이, 진행 중인 달은 있는 날짜까지의 실제값만 보여줘요."
+    if caption_extra:
+        _cap += f" {caption_extra}"
+    st.caption(_cap)
+
+
 def render_insight_panel(sections, key_prefix=""):
     """generate_rule_based_insights() 결과를 카드 형태로 렌더링."""
     if not sections:
@@ -3533,6 +3653,22 @@ if side["page"].startswith("2."):
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
+        # ── 월별 실적 비교 (26년 | 전년비 | 25년) — 지금 선택된 매체/카테고리/브랜드/
+        # 세그먼트 필터 그대로 반영. 3번(종합요약) 페이지와 같은 함수 재사용. ──
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+        st.markdown(
+            f"#### 📆 월별 실적 비교 (26년 vs 25년 · {bpu} · {selected_cat}/{brand_label(selected_brand)} · {cat_segment})"
+        )
+        if cat_combo.empty:
+            st.info("선택한 조합에 데이터가 없습니다.")
+        else:
+            _p2_base = cat_combo.groupby("날짜", as_index=False)[["거래액", "트래픽", "구매객수"]].sum()
+            render_monthly_comparison_table(
+                _p2_base, f"{bpu} · {selected_cat}/{brand_label(selected_brand)}",
+                caption_extra="매체·카테고리·브랜드 필터를 바꾸면 이 표도 같이 바뀌어요.",
+            )
+
 
 
 # ============================================================
@@ -5232,122 +5368,21 @@ if side["page"].startswith("3."):
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
 
-        # ── 섹션 4: 월별 실적 비교 (26년 | 전년비 | 25년) — 일할계산 없이 있는 만큼만의
-        # 실제값. 진행 중인 마지막 달은 헤더에 (~날짜)로 표시한다. 지금은 Total만 넣고,
-        # 정상/이월/입점은 추후 확장 예정. ──
+        # ── 섹션 4: 월별 실적 비교 (26년 | 전년비 | 25년) — Total/정상/이월/입점 구분별로
+        # 각각 표를 만든다(render_monthly_comparison_table 재사용, 2번 페이지와 공통). ──
         st.markdown(f"#### 📆 월별 실적 비교 (26년 vs 25년 · {_sum_segment})")
         if df_traffic.empty:
             st.info("데이터가 없습니다.")
         else:
-            _mc_abs_last = df_traffic["날짜"].max()
-            _mc_cur_month = _mc_abs_last.month
-
-            def _monthly_actual_series(base_df, year, num_col, den_col, is_ratio, scale=1.0):
-                """1~12월 각각의 실제값(일할계산 없음)을 계산한다. den_col이 있으면
-                분자·분모를 각 달 안에서 합산한 뒤 나눠서 재계산한다(단순 월평균 금지)."""
-                vals = []
-                for m in range(1, 13):
-                    m_start = pd.Timestamp(year, m, 1)
-                    m_end = (m_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
-                    if m_start > _mc_abs_last:
-                        vals.append(None)
-                        continue
-                    md = base_df[(base_df["날짜"] >= m_start) & (base_df["날짜"] <= min(m_end, _mc_abs_last))]
-                    if md.empty:
-                        vals.append(None)
-                        continue
-                    if is_ratio:
-                        _den_sum = md[den_col].sum()
-                        vals.append((md[num_col].sum() / _den_sum * scale) if _den_sum else None)
-                    else:
-                        vals.append(md[num_col].sum())
-                return vals
-
-            def _cur_month_yoy_value_matched(base_df, num_col, den_col, is_ratio, scale=1.0):
-                """당월(진행 중인 달)의 작년 비교값은 '동요일 매칭'으로 계산한다 — 26년
-                당월에 실제 존재하는 날짜들을 364일씩 당겨서 25년의 그 날짜들만 골라
-                비교한다. 그냥 '작년 그 달 전체'와 비교하면, 26년은 12일치인데 25년은
-                31일 전체와 비교하게 돼서 불공정하다(부분월 vs 완성월)."""
-                cur_start = pd.Timestamp(2026, _mc_cur_month, 1)
-                cur_dates = base_df[(base_df["날짜"] >= cur_start) & (base_df["날짜"] <= _mc_abs_last)]["날짜"].unique()
-                if len(cur_dates) == 0:
-                    return None
-                matched = [pd.Timestamp(d) - pd.Timedelta(days=364) for d in cur_dates]
-                md = base_df[base_df["날짜"].isin(matched)]
-                if md.empty:
-                    return None
-                if is_ratio:
-                    _den_sum = md[den_col].sum()
-                    return (md[num_col].sum() / _den_sum * scale) if _den_sum else None
-                return md[num_col].sum()
-
-            _mc_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == _sum_segment)]
-            if _mc_base.empty:  # 세그먼트별 행이 없는 소스면 전체로 폴백
-                _mc_base = df_traffic[df_traffic["BPU"] == "Total"]
-
-            _mc_metric_defs = [
-                ("거래액", "거래액", None, False, 1.0),
-                ("트래픽", "트래픽", None, False, 1.0),
-                ("구매객수", "구매객수", None, False, 1.0),
-                ("CR", "구매객수", "트래픽", True, 100.0),
-                ("객단가", "거래액", "구매객수", True, 1.0),
-            ]
-
-            def _mc_fmt(v, is_pct, is_billion=False):
-                if v is None or pd.isna(v):
-                    return "-"
-                if is_pct:
-                    return f"{v:.1f}%"
-                if is_billion:
-                    return f"{v / 100_000_000:,.2f}억"
-                return f"{v:,.0f}"
-
-            _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
-            _MC_CUR_HL = "background:#fef3c7;"
-
-            def _mc_th(m):
-                _hl = _MC_CUR_HL if m == _mc_cur_month else ""
-                _lbl = f"{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}"
-                return f"<th style='white-space:nowrap;{_hl}'>{_lbl}</th>"
-
-            _mc_month_headers_26 = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
-            _mc_month_headers_yoy = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
-            _mc_month_headers_25 = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
-
-            def _mc_td(v, m, is_pct, is_billion=False, is_delta=False):
-                _hl = _MC_CUR_HL if m == _mc_cur_month else ""
-                _content = format_delta_html(v) if is_delta else _mc_fmt(v, is_pct, is_billion)
-                return f"<td style='text-align:right;white-space:nowrap;{_hl}'>{_content}</td>"
-
-            _mc_rows_html = ""
-            for _mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale in _mc_metric_defs:
-                _mc_is_pct = _mc_label == "CR"
-                _mc_is_billion = _mc_label == "거래액"
-                _v26 = _monthly_actual_series(_mc_base, 2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
-                _v25 = _monthly_actual_series(_mc_base, 2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
-                # 당월(진행 중인 달)만 동요일 매칭으로 재계산 — 26년 부분 데이터를
-                # 25년 그 달 '전체'와 비교하면 불공정하다(위 함수 docstring 참고).
-                _v25[_mc_cur_month - 1] = _cur_month_yoy_value_matched(_mc_base, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
-                _cells_26 = "".join(_mc_td(_v26[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
-                _cells_25 = "".join(_mc_td(_v25[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
-                _cells_yoy = ""
-                for m in range(1, _mc_cur_month + 1):
-                    _yoy = pct_delta_safe(_v26[m - 1], _v25[m - 1]) if (_v26[m - 1] is not None and _v25[m - 1]) else None
-                    _cells_yoy += _mc_td(_yoy, m, _mc_is_pct, is_delta=True)
-                _mc_rows_html += f"<tr><td class='m' style='white-space:nowrap;'>{_mc_label}</td>{_cells_26}{_cells_yoy}{_cells_25}</tr>"
-
-            st.markdown(
-                "<div style='overflow-x:auto;'><table class='summary-table'>"
-                "<thead>"
-                f"<tr><th rowspan='2' style='white-space:nowrap;'>구분</th><th colspan='{_mc_cur_month}' style='text-align:center;background:#eef2ff;white-space:nowrap;'>26년</th>"
-                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#fef3c7;white-space:nowrap;'>전년비</th>"
-                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#f3f4f6;white-space:nowrap;'>25년</th></tr>"
-                f"<tr>{_mc_month_headers_26}{_mc_month_headers_yoy}{_mc_month_headers_25}</tr>"
-                "</thead>"
-                f"<tbody>{_mc_rows_html}</tbody></table></div>",
-                unsafe_allow_html=True,
-            )
-            st.caption("일할계산(마감예상) 없이, 진행 중인 달은 있는 날짜까지의 실제값만 보여줘요. 정상/이월/입점 구분은 이어서 추가할 예정이에요.")
+            _mc_bpu_defs = [("Total", ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]), ("정상", ["e-영업1"]), ("이월", ["e-영업2"]), ("입점", ["e-영업3", "e-영업4"])]
+            for _mc_bpu_label, _mc_bpu_list in _mc_bpu_defs:
+                _mc_base = df_traffic[(df_traffic["BPU"].isin(_mc_bpu_list)) & (df_traffic["회원구분"] == _sum_segment)]
+                if _mc_base.empty:  # 세그먼트별 행이 없는 소스면 전체로 폴백
+                    _mc_base = df_traffic[df_traffic["BPU"].isin(_mc_bpu_list)]
+                if len(_mc_bpu_list) > 1:  # Total처럼 여러 BPU를 합쳐야 하면 날짜별로 먼저 합산
+                    _mc_base = _mc_base.groupby("날짜", as_index=False)[["거래액", "트래픽", "구매객수"]].sum()
+                render_monthly_comparison_table(_mc_base, _mc_bpu_label)
+                st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
