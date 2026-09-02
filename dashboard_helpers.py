@@ -1251,7 +1251,7 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
 
     _mc_n_rows = len(_mc_metric_defs)
     _mc_n_cols = 1 + _mc_cur_month * 3
-    _mc_frame_h = 46 + _mc_n_rows * 24
+    _mc_frame_h = 70 + _mc_n_rows * 30  # JS가 실제 높이로 재조정하기 전 안전마진(넉넉하게)
 
     # 클릭 강조가 되려면 JS가 필요해서 components.html(iframe)로 렌더링한다 — iframe은
     # 부모 문서의 전역 CSS를 상속받지 않으므로, summary-table/delta 클래스 스타일을
@@ -1289,11 +1289,25 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
   rows.forEach(function(r) {{
     r.addEventListener('click', function() {{ r.classList.toggle('sel'); }});
   }});
+
+  // 픽셀 어림값(_mc_frame_h)이 실제 렌더링 높이와 안 맞으면 iframe 안에서 세로 스크롤이
+  // 생긴다 — 그래서 실제 렌더된 콘텐츠 높이를 측정해서 iframe 자체를 그만큼으로 맞춘다
+  // (components.html이 만드는 iframe은 같은 origin이라 frameElement 접근 가능).
+  function _resizeToContent() {{
+    var h = document.body.scrollHeight;
+    if (window.frameElement) {{
+      window.frameElement.style.height = h + 'px';
+      window.frameElement.setAttribute('height', h);
+    }}
+  }}
+  _resizeToContent();
+  window.addEventListener('load', _resizeToContent);
+  setTimeout(_resizeToContent, 100);
 }})();
 </script>
 </body></html>
 """
-    components.html(_mc_doc, height=_mc_frame_h, scrolling=True)
+    components.html(_mc_doc, height=_mc_frame_h, scrolling=False)
     _cap = "일할계산(마감예상) 없이, 진행 중인 달은 있는 날짜까지의 실제값만 보여줘요."
     if caption_extra:
         _cap += f" {caption_extra}"
