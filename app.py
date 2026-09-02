@@ -1290,7 +1290,11 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
         return f"{v:,.0f}"
 
     _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
-    _MC_CUR_HL = "background:#fef3c7;"
+    # 당월 강조는 배경색 대신 테두리로 — 좌우 굵은 색 테두리를 컬럼 전체(헤더 2줄 +
+    # 데이터 행 전부)에 둘러서 '이 달이 진행 중'임을 표시한다.
+    _MC_CUR_HL = "border-left:2px solid #f59e0b;border-right:2px solid #f59e0b;"
+    _MC_CUR_HL_TOP = _MC_CUR_HL + "border-top:2px solid #f59e0b;"
+    _MC_CUR_HL_BOTTOM = _MC_CUR_HL + "border-bottom:2px solid #f59e0b;"
 
     _, _mc_matched_dates = _cur_month_yoy_value_matched("거래액", None, False)
     if _mc_matched_dates:
@@ -1301,7 +1305,7 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
 
     def _mc_th(m, day_label=None):
         _day_label = day_label if day_label is not None else _mc_last_day_label
-        _hl = _MC_CUR_HL if m == _mc_cur_month else ""
+        _hl = _MC_CUR_HL_TOP if m == _mc_cur_month else ""
         _lbl = f"{m}월{f'({_day_label})' if m == _mc_cur_month else ''}"
         return f"<th style='white-space:nowrap;{_hl}'>{_lbl}</th>"
 
@@ -1309,37 +1313,78 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
     _mc_month_headers_yoy = "".join(_mc_th(m) for m in range(1, _mc_cur_month + 1))
     _mc_month_headers_25 = "".join(_mc_th(m, _mc_25_day_label) for m in range(1, _mc_cur_month + 1))
 
-    def _mc_td(v, m, is_pct, is_billion=False, is_delta=False):
-        _hl = _MC_CUR_HL if m == _mc_cur_month else ""
+    def _mc_td(v, m, is_pct, is_billion=False, is_delta=False, is_last_row=False):
+        if m == _mc_cur_month:
+            _hl = _MC_CUR_HL_BOTTOM if is_last_row else _MC_CUR_HL
+        else:
+            _hl = ""
         _content = format_delta_html(v) if is_delta else _mc_fmt(v, is_pct, is_billion)
         return f"<td style='text-align:right;white-space:nowrap;{_hl}'>{_content}</td>"
 
     _mc_rows_html = ""
-    for _mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale in _mc_metric_defs:
+    for _mc_row_idx, (_mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale) in enumerate(_mc_metric_defs):
         _mc_is_pct = _mc_label == "CR"
         _mc_is_billion = _mc_label == "거래액"
+        _mc_is_last_row = _mc_row_idx == len(_mc_metric_defs) - 1
         _v26 = _monthly_actual_series(2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
         _v25 = _monthly_actual_series(2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
         _v25[_mc_cur_month - 1], _ = _cur_month_yoy_value_matched(_mc_num, _mc_den, _mc_is_ratio, _mc_scale)
-        _cells_26 = "".join(_mc_td(_v26[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
-        _cells_25 = "".join(_mc_td(_v25[m - 1], m, _mc_is_pct, _mc_is_billion) for m in range(1, _mc_cur_month + 1))
+        _cells_26 = "".join(_mc_td(_v26[m - 1], m, _mc_is_pct, _mc_is_billion, is_last_row=_mc_is_last_row) for m in range(1, _mc_cur_month + 1))
+        _cells_25 = "".join(_mc_td(_v25[m - 1], m, _mc_is_pct, _mc_is_billion, is_last_row=_mc_is_last_row) for m in range(1, _mc_cur_month + 1))
         _cells_yoy = ""
         for m in range(1, _mc_cur_month + 1):
             _yoy = pct_delta_safe(_v26[m - 1], _v25[m - 1]) if (_v26[m - 1] is not None and _v25[m - 1]) else None
-            _cells_yoy += _mc_td(_yoy, m, _mc_is_pct, is_delta=True)
-        _mc_rows_html += f"<tr><td class='m' style='white-space:nowrap;'>{_mc_label}</td>{_cells_26}{_cells_yoy}{_cells_25}</tr>"
+            _cells_yoy += _mc_td(_yoy, m, _mc_is_pct, is_delta=True, is_last_row=_mc_is_last_row)
+        _mc_rows_html += (
+            f"<tr class='mc-row' data-i='{_mc_row_idx}'><td class='m' style='white-space:nowrap;'>{_mc_label}</td>"
+            f"{_cells_26}{_cells_yoy}{_cells_25}</tr>"
+        )
 
-    st.markdown(
-        "<div style='overflow-x:auto;'><table class='summary-table'>"
-        "<thead>"
-        f"<tr><th rowspan='2' style='white-space:nowrap;'>구분</th><th colspan='{_mc_cur_month}' style='text-align:center;background:#eef2ff;white-space:nowrap;'>26년</th>"
-        f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#fef3c7;white-space:nowrap;'>전년비</th>"
-        f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#f3f4f6;white-space:nowrap;'>25년</th></tr>"
-        f"<tr>{_mc_month_headers_26}{_mc_month_headers_yoy}{_mc_month_headers_25}</tr>"
-        "</thead>"
-        f"<tbody>{_mc_rows_html}</tbody></table></div>",
-        unsafe_allow_html=True,
-    )
+    _mc_n_rows = len(_mc_metric_defs)
+    _mc_n_cols = 1 + _mc_cur_month * 3
+    _mc_frame_h = 60 + _mc_n_rows * 42
+
+    # 클릭 강조가 되려면 JS가 필요해서 components.html(iframe)로 렌더링한다 — iframe은
+    # 부모 문서의 전역 CSS를 상속받지 않으므로, summary-table/delta 클래스 스타일을
+    # 이 문서 안에 직접 넣어준다(styles.py의 정의와 동일하게 맞춤).
+    _mc_doc = f"""
+<html><head><style>
+  body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
+  .summary-table {{ width:100%; border-collapse:collapse; font-size:0.9rem; background:#fff;
+    border:1px solid #eaecef; border-radius:8px; overflow:hidden; }}
+  .summary-table thead th {{ background:#f7f8fa; color:#6b7280; font-weight:600; text-align:left;
+    padding:10px 14px; border-bottom:1px solid #eaecef; font-size:0.82rem; }}
+  .summary-table tbody td {{ padding:10px 14px; border-bottom:1px solid #f1f2f4; color:#111827; }}
+  .summary-table tbody tr:last-child td {{ border-bottom:none; }}
+  .summary-table td.m {{ font-weight:500; }}
+  .delta.up {{ color:#16a34a; font-weight:600; }}
+  .delta.down {{ color:#dc2626; font-weight:600; }}
+  .delta.neutral {{ color:#9ca3af; font-weight:600; }}
+  .mc-row {{ cursor:pointer; transition:background .15s; }}
+  .mc-row:hover {{ background:#f8fafc; }}
+  .mc-row.sel {{ background:#eff6ff; }}
+  .mc-row.sel td.m {{ color:#2563eb; font-weight:700; }}
+</style></head><body>
+  <div style="overflow-x:auto;"><table class="summary-table">
+    <thead>
+      <tr><th rowspan="2" style="white-space:nowrap;">구분</th><th colspan="{_mc_cur_month}" style="text-align:center;background:#eef2ff;white-space:nowrap;">26년</th>
+      <th colspan="{_mc_cur_month}" style="text-align:center;background:#fef3c7;white-space:nowrap;">전년비</th>
+      <th colspan="{_mc_cur_month}" style="text-align:center;background:#f3f4f6;white-space:nowrap;">25년</th></tr>
+      <tr>{_mc_month_headers_26}{_mc_month_headers_yoy}{_mc_month_headers_25}</tr>
+    </thead>
+    <tbody>{_mc_rows_html}</tbody>
+  </table></div>
+<script>
+(function() {{
+  var rows = Array.prototype.slice.call(document.querySelectorAll('.mc-row'));
+  rows.forEach(function(r) {{
+    r.addEventListener('click', function() {{ r.classList.toggle('sel'); }});
+  }});
+}})();
+</script>
+</body></html>
+"""
+    components.html(_mc_doc, height=_mc_frame_h, scrolling=True)
     _cap = "일할계산(마감예상) 없이, 진행 중인 달은 있는 날짜까지의 실제값만 보여줘요."
     if caption_extra:
         _cap += f" {caption_extra}"
