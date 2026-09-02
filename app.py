@@ -24,6 +24,7 @@ from comparison_table import render_summary_table_html
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS, UNIT_CONFIG,
     resample_series, make_period_label, compute_kpi_deltas, week_of_month, raw_cutoff_date,
+    effective_month_of_week,
     format_value, format_delta_html, format_delta_text, pct_delta_safe,
 )
 from utils import _match_mean, _partial_last_period
@@ -147,7 +148,7 @@ def render_week_range_filter(series, key_prefix, col_slider, col_reset, default_
     series: 이미 '주별'로 리샘플된(Monday 라벨) 시리즈. 반환값: 선택 범위로 잘라진 시리즈."""
     if series.empty:
         return series
-    labels = [f"{d.month}월 {week_of_month(d)}주차" for d in series.index]
+    labels = [f"{effective_month_of_week(d).month}월 {week_of_month(d)}주차" for d in series.index]
     n = len(labels)
     default_start_idx = max(0, n - default_weeks)
     _range_key = f"{key_prefix}_wkrange"
@@ -301,10 +302,11 @@ def _week_labels_for_year(daily_df, metric, year):
     labels = []
     for bucket_end in weekly_raw.index:
         mon = bucket_end - pd.Timedelta(days=6)
-        if mon.year != year:
-            labels.append(f"{mon.year % 100}년 {mon.month}월 {week_of_month(mon)}주차")
+        eff = effective_month_of_week(mon)
+        if eff.year != year:
+            labels.append(f"{eff.year % 100}년 {eff.month}월 {week_of_month(mon)}주차")
         else:
-            labels.append(f"{mon.month}월 {week_of_month(mon)}주차")
+            labels.append(f"{eff.month}월 {week_of_month(mon)}주차")
     return labels
 
 
@@ -4447,7 +4449,7 @@ if side["page"].startswith("11."):
         _wk4_abs_last = df_traffic["날짜"].max()
         _wk4_ref_monday = _wk4_abs_last - pd.Timedelta(days=_wk4_abs_last.weekday())
         _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(3, -1, -1)]  # 오래된 주 -> 최신 주 순
-        _wk4_labels = [f"{d.month}월 {week_of_month(d)}주차" for d in _wk4_starts]
+        _wk4_labels = [f"{effective_month_of_week(d).month}월 {week_of_month(d)}주차" for d in _wk4_starts]
 
         _wk4_metric_defs = [
             ("거래액", "거래액", None, False),
@@ -5230,66 +5232,90 @@ if side["page"].startswith("3."):
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
 
-        # ── 섹션 4: 카테고리 × 브랜드 피벗 테이블 (최근 30일 거래액, e-영업1/2 각각 — 입점 제외) ──
-        st.markdown(f"#### 🗂️ 카테고리 × 브랜드 피벗 (최근 30일 거래액, 자사 e-영업1/2 — 입점 제외 · {_sum_segment})")
-        if df_category.empty:
-            st.info("카테고리 데이터가 없습니다.")
+        # ── 섹션 4: 월별 실적 비교 (26년 | 전년비 | 25년) — 일할계산 없이 있는 만큼만의
+        # 실제값. 진행 중인 마지막 달은 헤더에 (~날짜)로 표시한다. 지금은 Total만 넣고,
+        # 정상/이월/입점은 추후 확장 예정. ──
+        st.markdown(f"#### 📆 월별 실적 비교 (26년 vs 25년 · {_sum_segment})")
+        if df_traffic.empty:
+            st.info("데이터가 없습니다.")
         else:
-            _piv_start = _sum_ref - pd.Timedelta(days=29)
+            _mc_abs_last = df_traffic["날짜"].max()
+            _mc_cur_month = _mc_abs_last.month
 
-            def _manual_heatmap(df, subset_cols):
-                """matplotlib 없이 직접 흰색~파란색 보간해서 히트맵을 만든다
-                (Styler.background_gradient()는 matplotlib이 꼭 있어야 하는데,
-                배포 환경에 없어서 ImportError가 났음 — 이걸 피하려고 직접 구현).
-                표 전체 기준(axis=None)으로 정규화해서, 컬럼(브랜드)마다 규모가
-                달라도 실제 크기 그대로 비교되게 한다."""
-                _vals = df[subset_cols].values.astype(float)
-                _vmin, _vmax = float(_vals.min()), float(_vals.max())
+            def _monthly_actual_series(base_df, year, num_col, den_col, is_ratio, scale=1.0):
+                """1~12월 각각의 실제값(일할계산 없음)을 계산한다. den_col이 있으면
+                분자·분모를 각 달 안에서 합산한 뒤 나눠서 재계산한다(단순 월평균 금지)."""
+                vals = []
+                for m in range(1, 13):
+                    m_start = pd.Timestamp(year, m, 1)
+                    m_end = (m_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+                    if m_start > _mc_abs_last:
+                        vals.append(None)
+                        continue
+                    md = base_df[(base_df["날짜"] >= m_start) & (base_df["날짜"] <= min(m_end, _mc_abs_last))]
+                    if md.empty:
+                        vals.append(None)
+                        continue
+                    if is_ratio:
+                        _den_sum = md[den_col].sum()
+                        vals.append((md[num_col].sum() / _den_sum * scale) if _den_sum else None)
+                    else:
+                        vals.append(md[num_col].sum())
+                return vals
 
-                def _style_func(data):
-                    out = pd.DataFrame("", index=data.index, columns=data.columns)
-                    for _col in subset_cols:
-                        for _idx in data.index:
-                            _v = data.loc[_idx, _col]
-                            _ratio = (_v - _vmin) / (_vmax - _vmin) if _vmax > _vmin else 0.0
-                            _r = int(255 + (37 - 255) * _ratio)
-                            _g = int(255 + (99 - 255) * _ratio)
-                            _b = int(255 + (235 - 255) * _ratio)
-                            out.loc[_idx, _col] = f"background-color: rgb({_r},{_g},{_b})"
-                    return out
+            _mc_base = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == _sum_segment)]
+            if _mc_base.empty:  # 세그먼트별 행이 없는 소스면 전체로 폴백
+                _mc_base = df_traffic[df_traffic["BPU"] == "Total"]
 
-                return df.style.format("{:,.0f}").apply(_style_func, axis=None)
+            _mc_metric_defs = [
+                ("거래액", "거래액", None, False, 1.0),
+                ("트래픽", "트래픽", None, False, 1.0),
+                ("구매객수", "구매객수", None, False, 1.0),
+                ("CR", "구매객수", "트래픽", True, 100.0),
+                ("객단가", "거래액", "구매객수", True, 1.0),
+            ]
 
-            def _render_cat_brand_pivot(bpu_value, top_n_brands=12):
-                _piv_base = df_category[
-                    (df_category["BPU"] == bpu_value)
-                    & (df_category["카테고리"] != "전체") & (df_category["브랜드"] != "전체")
-                    & (df_category["날짜"] >= _piv_start) & (df_category["날짜"] <= _sum_ref)
-                    & (df_category.get("회원구분", _sum_segment) == _sum_segment if "회원구분" in df_category.columns else True)
-                ]
-                if _piv_base.empty:
-                    st.info(f"{bpu_value}: 최근 30일 카테고리×브랜드 데이터가 없습니다.")
-                    return
-                _piv_sum = _piv_base.groupby(["카테고리", "브랜드"], as_index=False)["거래액"].sum()
-                _brand_totals = _piv_sum.groupby("브랜드")["거래액"].sum().sort_values(ascending=False)
-                _top_brands = _brand_totals.head(top_n_brands).index.tolist()
-                _piv_sum_top = _piv_sum[_piv_sum["브랜드"].isin(_top_brands)]
-                _pivot_tbl = _piv_sum_top.pivot_table(
-                    index="카테고리", columns="브랜드", values="거래액", aggfunc="sum", fill_value=0,
-                )
-                _pivot_tbl = _pivot_tbl[[b for b in _top_brands if b in _pivot_tbl.columns]]
-                _pivot_tbl["합계"] = _pivot_tbl.sum(axis=1)
-                _pivot_tbl = _pivot_tbl.sort_values("합계", ascending=False)
-                _pivot_tbl = _pivot_tbl.rename(columns={b: brand_label(b) for b in _pivot_tbl.columns if b != "합계"})
+            def _mc_fmt(v, is_pct):
+                if v is None or pd.isna(v):
+                    return "-"
+                return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
 
-                st.markdown(f"**{bpu_value}**")
-                _styled = _manual_heatmap(_pivot_tbl, [c for c in _pivot_tbl.columns if c != "합계"])
-                st.dataframe(_styled, use_container_width=True, height=380)
-                st.caption(f"거래액 상위 {top_n_brands}개 브랜드만 표시했어요 (전체 {len(_brand_totals)}개 브랜드 중).")
+            _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
+            _mc_month_headers_26 = "".join(
+                f"<th>{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}</th>" for m in range(1, _mc_cur_month + 1)
+            )
+            _mc_month_headers_yoy = "".join(
+                f"<th>{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}</th>" for m in range(1, _mc_cur_month + 1)
+            )
+            _mc_month_headers_25 = "".join(
+                f"<th>{m}월{f'({_mc_last_day_label})' if m == _mc_cur_month else ''}</th>" for m in range(1, _mc_cur_month + 1)
+            )
 
-            _render_cat_brand_pivot("e-영업1")
-            st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
-            _render_cat_brand_pivot("e-영업2")
+            _mc_rows_html = ""
+            for _mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale in _mc_metric_defs:
+                _mc_is_pct = _mc_label == "CR"
+                _v26 = _monthly_actual_series(_mc_base, 2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
+                _v25 = _monthly_actual_series(_mc_base, 2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
+                _cells_26 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v26[m - 1], _mc_is_pct)}</td>" for m in range(1, _mc_cur_month + 1))
+                _cells_25 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v25[m - 1], _mc_is_pct)}</td>" for m in range(1, _mc_cur_month + 1))
+                _cells_yoy = ""
+                for m in range(1, _mc_cur_month + 1):
+                    _yoy = pct_delta_safe(_v26[m - 1], _v25[m - 1]) if (_v26[m - 1] is not None and _v25[m - 1]) else None
+                    _cells_yoy += f"<td style='text-align:right;'>{format_delta_html(_yoy)}</td>"
+                _mc_rows_html += f"<tr><td class='m'>{_mc_label}</td>{_cells_26}{_cells_yoy}{_cells_25}</tr>"
+
+            st.markdown(
+                "<div style='overflow-x:auto;'><table class='summary-table'>"
+                "<thead>"
+                f"<tr><th rowspan='2'>구분</th><th colspan='{_mc_cur_month}' style='text-align:center;background:#eef2ff;'>26년</th>"
+                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#fef3c7;'>전년비</th>"
+                f"<th colspan='{_mc_cur_month}' style='text-align:center;background:#f3f4f6;'>25년</th></tr>"
+                f"<tr>{_mc_month_headers_26}{_mc_month_headers_yoy}{_mc_month_headers_25}</tr>"
+                "</thead>"
+                f"<tbody>{_mc_rows_html}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption("일할계산(마감예상) 없이, 진행 중인 달은 있는 날짜까지의 실제값만 보여줘요. 정상/이월/입점 구분은 이어서 추가할 예정이에요.")
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
