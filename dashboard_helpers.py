@@ -1199,11 +1199,11 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
         return f"{v:,.0f}"
 
     _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
-    # 당월 강조는 배경색 대신 테두리로 — 좌우 굵은 색 테두리를 컬럼 전체(헤더 2줄 +
-    # 데이터 행 전부)에 둘러서 '이 달이 진행 중'임을 표시한다.
+    # 당월 강조는 배경색 대신 테두리로 — 좌우는 얇게(2px), 위/아래는 굵게(4px)해서
+    # 컬럼 전체(헤더 2줄 + 데이터 행 전부)를 감싼다.
     _MC_CUR_HL = "border-left:2px solid #f59e0b;border-right:2px solid #f59e0b;"
-    _MC_CUR_HL_TOP = _MC_CUR_HL + "border-top:2px solid #f59e0b;"
-    _MC_CUR_HL_BOTTOM = _MC_CUR_HL + "border-bottom:2px solid #f59e0b;"
+    _MC_CUR_HL_TOP = _MC_CUR_HL + "border-top:4px solid #f59e0b;"
+    _MC_CUR_HL_BOTTOM = _MC_CUR_HL + "border-bottom:4px solid #f59e0b;"
 
     _, _mc_matched_dates = _cur_month_yoy_value_matched("거래액", None, False)
     if _mc_matched_dates:
@@ -1251,7 +1251,7 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
 
     _mc_n_rows = len(_mc_metric_defs)
     _mc_n_cols = 1 + _mc_cur_month * 3
-    _mc_frame_h = 60 + _mc_n_rows * 42
+    _mc_frame_h = 46 + _mc_n_rows * 24
 
     # 클릭 강조가 되려면 JS가 필요해서 components.html(iframe)로 렌더링한다 — iframe은
     # 부모 문서의 전역 CSS를 상속받지 않으므로, summary-table/delta 클래스 스타일을
@@ -1259,11 +1259,11 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
     _mc_doc = f"""
 <html><head><style>
   body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
-  .summary-table {{ width:100%; border-collapse:collapse; font-size:0.9rem; background:#fff;
-    border:1px solid #eaecef; border-radius:8px; overflow:hidden; }}
+  .summary-table {{ width:100%; border-collapse:collapse; font-size:0.72rem; background:#fff;
+    border:1px solid #eaecef; border-radius:8px; overflow:hidden; table-layout:auto; }}
   .summary-table thead th {{ background:#f7f8fa; color:#6b7280; font-weight:600; text-align:left;
-    padding:10px 14px; border-bottom:1px solid #eaecef; font-size:0.82rem; }}
-  .summary-table tbody td {{ padding:10px 14px; border-bottom:1px solid #f1f2f4; color:#111827; }}
+    padding:4px 5px; border-bottom:1px solid #eaecef; font-size:0.66rem; }}
+  .summary-table tbody td {{ padding:4px 5px; border-bottom:1px solid #f1f2f4; color:#111827; }}
   .summary-table tbody tr:last-child td {{ border-bottom:none; }}
   .summary-table td.m {{ font-weight:500; }}
   .delta.up {{ color:#16a34a; font-weight:600; }}
@@ -1788,4 +1788,3 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         "</div>",
         unsafe_allow_html=True,
     )
-
