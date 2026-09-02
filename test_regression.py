@@ -36,10 +36,17 @@ def check(name, condition, detail=""):
 
 def _load_app_functions(*names):
     """app.py는 최상단에 st.set_page_config() 등 Streamlit 전용 코드가 있어서 그냥
-    import하면 에러가 난다 — 필요한 함수 소스만 추출해서 격리된 네임스페이스에서 실행."""
+    import하면 에러가 난다 — 필요한 함수 소스만 추출해서 격리된 네임스페이스에서 실행.
+    함수들이 app.py와 dashboard_helpers.py(리팩토링으로 분리됨) 양쪽에 나뉘어 있을 수
+    있어서, 이름을 먼저 app.py에서 찾고 없으면 dashboard_helpers.py에서 찾는다."""
     app_path = os.path.join(_HERE, "app.py")
+    helpers_path = os.path.join(_HERE, "dashboard_helpers.py")
     with open(app_path, encoding="utf-8") as f:
-        src = f.read()
+        app_src = f.read()
+    helpers_src = ""
+    if os.path.exists(helpers_path):
+        with open(helpers_path, encoding="utf-8") as f:
+            helpers_src = f.read()
     from utils import (
         UNIT_CONFIG, compute_kpi_deltas, raw_cutoff_date, _partial_last_period, _match_mean,
         pct_delta_safe,
@@ -52,9 +59,15 @@ def _load_app_functions(*names):
         "BPU_GROUPS": {"자사": ["e-영업1", "e-영업2"], "입점": ["e-영업3", "e-영업4"]},
     }
     for name in names:
-        start = src.index(f"def {name}")
-        nxt = src.index("\ndef ", start + 10)
-        exec(src[start:nxt], ns)
+        for src in (app_src, helpers_src):
+            if f"def {name}" in src:
+                start = src.index(f"def {name}")
+                nxt_candidates = [i for i in (src.find("\ndef ", start + 10),) if i != -1]
+                nxt = min(nxt_candidates) if nxt_candidates else len(src)
+                exec(src[start:nxt], ns)
+                break
+        else:
+            raise ValueError(f"함수 '{name}'을 app.py/dashboard_helpers.py 어디서도 못 찾음")
     return ns
 
 
@@ -286,9 +299,16 @@ def test_pct_delta_safe_handles_negative_base():
 # ============================================================
 def test_render_line_chart_handles_missing_yoy_data():
     print("\n[8] render_line_chart — 전년 데이터가 전부 없어도 안 죽는지")
+    # render_line_chart는 리팩토링으로 dashboard_helpers.py에 있음 (app.py에 없으면
+    # 거기서 찾는다 — 두 파일 다 지원해서 리팩토링 전후 어느 쪽이든 통과하게 함).
     app_path = os.path.join(_HERE, "app.py")
+    helpers_path = os.path.join(_HERE, "dashboard_helpers.py")
     with open(app_path, encoding="utf-8") as f:
-        src = f.read()
+        app_src = f.read()
+    src = app_src
+    if "DASHBOARD_EVENTS = [" not in src and os.path.exists(helpers_path):
+        with open(helpers_path, encoding="utf-8") as f:
+            src = f.read()
     start = src.index("DASHBOARD_EVENTS = [")
     end = src.index("\ndef render_donut_chart")
     func_src = src[start:end]
@@ -298,10 +318,9 @@ def test_render_line_chart_handles_missing_yoy_data():
         def altair_chart(self, chart, **k): pass
         def caption(self, txt): pass
 
-    # render_donut_chart 앞에 새로 추가된 마감예상 관련 함수들(compute_monthly_forecast_series
-    # 등)이 이 추출 범위에 같이 딸려 들어오는데, 그 함수들은 모듈 최상단에서 정의된
-    # BPU_GROUPS를 참조해서 미리 네임스페이스에 넣어줘야 함(실제 앱에서는 이미 정의돼
-    # 있어서 문제없음 — 이건 순전히 이 테스트의 추출 범위 문제).
+    # render_donut_chart 앞에 있는 다른 헬퍼 함수들이 이 추출 범위에 같이 딸려 들어오는데,
+    # 그 함수들이 참조하는 BPU_GROUPS를 미리 네임스페이스에 넣어줘야 함(실제 앱에서는
+    # 이미 정의돼 있어서 문제없음 — 이건 순전히 이 테스트의 추출 범위 문제).
     ns = {"pd": pd, "st": _FakeSt(), "BPU_GROUPS": {"자사": ["e-영업1", "e-영업2"], "입점": ["e-영업3", "e-영업4"]}}
     try:
         exec(func_src, ns)
