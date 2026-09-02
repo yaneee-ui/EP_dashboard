@@ -5275,10 +5275,14 @@ if side["page"].startswith("3."):
                 ("객단가", "거래액", "구매객수", True, 1.0),
             ]
 
-            def _mc_fmt(v, is_pct):
+            def _mc_fmt(v, is_pct, is_million=False):
                 if v is None or pd.isna(v):
                     return "-"
-                return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
+                if is_pct:
+                    return f"{v:.1f}%"
+                if is_million:
+                    return f"{v / 1_000_000:,.1f}백만"
+                return f"{v:,.0f}"
 
             _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
             _mc_month_headers_26 = "".join(
@@ -5294,10 +5298,11 @@ if side["page"].startswith("3."):
             _mc_rows_html = ""
             for _mc_label, _mc_num, _mc_den, _mc_is_ratio, _mc_scale in _mc_metric_defs:
                 _mc_is_pct = _mc_label == "CR"
+                _mc_is_million = _mc_label == "거래액"
                 _v26 = _monthly_actual_series(_mc_base, 2026, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
                 _v25 = _monthly_actual_series(_mc_base, 2025, _mc_num, _mc_den, _mc_is_ratio, _mc_scale)
-                _cells_26 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v26[m - 1], _mc_is_pct)}</td>" for m in range(1, _mc_cur_month + 1))
-                _cells_25 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v25[m - 1], _mc_is_pct)}</td>" for m in range(1, _mc_cur_month + 1))
+                _cells_26 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v26[m - 1], _mc_is_pct, _mc_is_million)}</td>" for m in range(1, _mc_cur_month + 1))
+                _cells_25 = "".join(f"<td style='text-align:right;'>{_mc_fmt(_v25[m - 1], _mc_is_pct, _mc_is_million)}</td>" for m in range(1, _mc_cur_month + 1))
                 _cells_yoy = ""
                 for m in range(1, _mc_cur_month + 1):
                     _yoy = pct_delta_safe(_v26[m - 1], _v25[m - 1]) if (_v26[m - 1] is not None and _v25[m - 1]) else None
