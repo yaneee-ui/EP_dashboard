@@ -86,6 +86,12 @@ def render_sidebar():
         "카테고리별 (ep_category.csv)", type=["csv"],
         key="ep_category_upload",
     )
+    ep_product_file = st.sidebar.file_uploader(
+        "상품별 (ep_product.csv)", type=["csv"],
+        key="ep_product_upload",
+        help="날짜/BPU/카테고리/브랜드/상품코드/상품명/거래액 컬럼의 상품 단위 데이터예요. "
+             "'카테고리별 실적' 탭에서 카테고리별 상위 상품 랭킹에 쓰여요.",
+    )
     ep_coupon_daily_file = st.sidebar.file_uploader(
         "쿠폰 데이터 (ep_coupon_daily.csv)", type=["csv"],
         key="ep_coupon_daily_upload",
@@ -110,6 +116,7 @@ def render_sidebar():
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
         "ep_category_file": ep_category_file,
+        "ep_product_file": ep_product_file,
         "ep_coupon_daily_file": ep_coupon_daily_file,
         "refresh": refresh,
     }

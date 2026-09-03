@@ -1802,3 +1802,47 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         "</div>",
         unsafe_allow_html=True,
     )
+
+
+def render_top_products(sub_df, unit, selected_period_date, title, subtitle, brand_label=None, top_n=15):
+    """상품(SKU) 단위 거래액 상위 랭킹 테이블.
+
+    sub_df: 날짜/상품코드/상품명/브랜드/카테고리/거래액 컬럼을 가진, 이미 BPU·카테고리로
+    필터링된 상품 데이터. selected_period_date가 속한 '한 기간'(일/주/월, unit 기준)의
+    거래액만 합산해서 랭킹을 매긴다 — 다른 카테고리 섹션의 KPI 카드와 같은 기준 시점.
+    """
+    st.markdown(f"**{title}**  ·  <span style='color:#6b7280;font-size:0.85rem'>{subtitle}</span>", unsafe_allow_html=True)
+
+    if sub_df.empty:
+        st.info("해당 조건에 상품 데이터가 없습니다.")
+        return
+
+    _period_start = pd.Timestamp(selected_period_date)
+    if unit in ("월별", "월마감"):
+        _period_start = _period_start.replace(day=1)
+    _period_end = raw_cutoff_date(selected_period_date, unit)
+
+    _win = sub_df[(sub_df["날짜"] >= _period_start) & (sub_df["날짜"] <= _period_end)]
+    if _win.empty:
+        st.info("선택한 기간에 상품 데이터가 없습니다.")
+        return
+
+    _agg = _win.groupby(["상품코드", "상품명", "브랜드", "카테고리"], as_index=False, observed=True)["거래액"].sum()
+    _agg = _agg[_agg["거래액"] > 0].sort_values("거래액", ascending=False).reset_index(drop=True)
+    if _agg.empty:
+        st.info("선택한 기간에 상품 데이터가 없습니다.")
+        return
+
+    _total = _agg["거래액"].sum()
+    _agg["비중"] = (_agg["거래액"] / _total * 100) if _total > 0 else 0
+    _agg = _agg.head(top_n).copy()
+    _agg.insert(0, "순위", range(1, len(_agg) + 1))
+    if brand_label:
+        _agg["브랜드"] = _agg["브랜드"].map(brand_label)
+
+    _show_cat_col = _win["카테고리"].nunique() > 1
+    _cols = ["순위", "상품코드", "상품명", "브랜드"] + (["카테고리"] if _show_cat_col else []) + ["거래액", "비중"]
+    _disp = _agg[_cols].copy()
+    _disp["거래액"] = _disp["거래액"].map(lambda v: f"{v:,.0f}")
+    _disp["비중"] = _disp["비중"].map(lambda v: f"{v:.1f}%")
+    st.dataframe(_disp, hide_index=True, use_container_width=True)

@@ -10,7 +10,7 @@ import datetime as _dt
 import io
 
 from data_loader import (
-    load_data, load_traffic_data, load_category_data, load_brand_names,
+    load_data, load_traffic_data, load_category_data, load_product_data, load_brand_names,
     load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail,
 )
 from ai_insights import (
@@ -40,7 +40,7 @@ from dashboard_helpers import (
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart, compute_official_total,
-    render_revenue_ranking,
+    render_revenue_ranking, render_top_products,
 )
 
 
@@ -64,6 +64,7 @@ if side["refresh"]:
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
 df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
+df_product = load_product_data()  # 상품(SKU)별 거래액 데이터 (카테고리별 상위 상품 랭킹용)
 df_coupon_daily = load_coupon_daily()  # 쿠폰명별 일자별 상세 할인 데이터 (BPU: e-영업1~4)
 df_coupon = build_coupon_monthly(df_coupon_daily)  # 월별 BPU 집계(Total/자사/입점/e-영업1~4) - daily에서 파생
 df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)  # 월별 쿠폰명별 상세 - daily에서 파생
@@ -101,6 +102,13 @@ if side["ep_category_file"] is not None:
     df_category["날짜"] = pd.to_datetime(df_category["날짜"])
     st.sidebar.success(f"카테고리 데이터 업로드 완료 ({df_category['카테고리'].nunique()}개 카테고리)")
 
+# 상품 데이터 업로드
+if side["ep_product_file"] is not None:
+    _pf = side["ep_product_file"]
+    df_product = pd.read_csv(_pf)
+    df_product["날짜"] = pd.to_datetime(df_product["날짜"])
+    st.sidebar.success(f"상품 데이터 업로드 완료 ({df_product['상품코드'].nunique()}개 상품)")
+
 # 쿠폰 데이터 업로드 (일자별 원본 하나로 통합 - 월별 집계/상세는 여기서 자동 파생)
 if side["ep_coupon_daily_file"] is not None:
     _cpddf = side["ep_coupon_daily_file"]
@@ -116,6 +124,7 @@ _status_items = [
     ("EP채널", *_status_entry(df_ep, COL_DATE)),
     ("EP실적", *_status_entry(df_traffic, "날짜")),
     ("카테고리", *_status_entry(df_category, "날짜")),
+    ("상품", *_status_entry(df_product, "날짜")),
     ("쿠폰(일자별)", *_status_entry(df_coupon_daily, "날짜")),
 ]
 render_sidebar_data_status(_status_items)
@@ -1926,6 +1935,31 @@ if side["page"].startswith("2."):
                                label_map=BRAND_LABELS, hide_zero=True,
                                donut=True, official_total=_official_brand_total,
                                ai_key="brand_rank", ai_context=f"브랜드별 거래액 랭킹 · {_brand_subtitle} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+        # --- 카테고리별 상위 상품 (거래액) ---
+        # 상품(SKU) 단위 데이터가 업로드된 경우에만 표시. BPU는 다른 섹션과 동일하게
+        # BPU_GROUPS(자사/입점)로 합산하고, 카테고리는 상단에서 선택한 selected_cat을 그대로 씀
+        # ('전체'면 전 카테고리 통합 랭킹, 특정 카테고리면 그 안에서의 상품 랭킹).
+        if df_product.empty:
+            st.caption("ℹ️ 상품 단위 데이터가 없어서 '카테고리별 상위 상품'은 건너뛰었어요 — 사이드바에서 ep_product.csv를 업로드하면 볼 수 있어요.")
+        else:
+            _prod_df = df_product
+            if bpu in BPU_GROUPS:
+                _prod_df = _prod_df[_prod_df["BPU"].isin(BPU_GROUPS[bpu])]
+            elif bpu != "Total":
+                _prod_df = _prod_df[_prod_df["BPU"] == bpu]
+            if _ff_exclude:
+                _prod_df = _prod_df[_prod_df["브랜드"] != "FF"]
+            if selected_cat != "전체":
+                _prod_df = _prod_df[_prod_df["카테고리"] == selected_cat]
+
+            _prod_title = "카테고리별 상위 상품 (거래액)" if selected_cat == "전체" else f"{selected_cat} 상위 상품 (거래액)"
+            render_top_products(
+                _prod_df, unit, selected_period_date, _prod_title, _brand_subtitle,
+                brand_label=brand_label,
+            )
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 

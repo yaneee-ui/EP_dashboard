@@ -192,6 +192,36 @@ def load_category_data() -> pd.DataFrame:
     return df.sort_values("날짜").reset_index(drop=True)
 
 
+PRODUCT_DATA_PATH = "ep_product.csv"
+PRODUCT_DATA_PATH_GZ = "ep_product.csv.gz"
+
+_PRODUCT_EMPTY_COLS = ["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액"]
+
+
+@st.cache_data(ttl=3600, show_spinner="상품 데이터를 불러오는 중...")
+def load_product_data() -> pd.DataFrame:
+    """상품(SKU) 단위 거래액 데이터 로드 — 카테고리별 상위 상품 랭킹에 사용.
+    gzip 압축본(.csv.gz)이 있으면 그걸 우선 쓴다 (상품 단위는 행이 훨씬 많아서
+    카테고리 데이터처럼 비압축 CSV가 커지기 쉬움). 파일이 없으면 빈 DataFrame 반환."""
+    import os
+
+    path = PRODUCT_DATA_PATH_GZ if os.path.exists(PRODUCT_DATA_PATH_GZ) else PRODUCT_DATA_PATH
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=_PRODUCT_EMPTY_COLS)
+
+    df = _read_category_csv_file(path)  # gz/일반 CSV 안전 읽기 (카테고리 로더와 로직 공유)
+    if df is None:
+        st.error(f"'{path}' 파일을 읽을 수 없어요. 컨버터에서 다시 받아서 그대로(수정 없이) 업로드해보세요.")
+        return pd.DataFrame(columns=_PRODUCT_EMPTY_COLS)
+
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    for col in ["BPU", "카테고리", "브랜드", "상품코드", "상품명"]:
+        if col in df.columns:
+            df[col] = df[col].astype("category")
+    df["거래액"] = pd.to_numeric(df["거래액"], errors="coerce").astype("float32")
+    return df.sort_values("날짜").reset_index(drop=True)
+
+
 BRAND_NAMES_PATH = "brand_names.csv"
 
 
