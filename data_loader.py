@@ -194,6 +194,8 @@ def load_category_data() -> pd.DataFrame:
 
 PRODUCT_DATA_PATH = "ep_product.csv"
 PRODUCT_DATA_PATH_GZ = "ep_product.csv.gz"
+PRODUCT_DATA_PATH_FIXED = "ep_product_archive.csv"
+PRODUCT_DATA_PATH_FIXED_GZ = "ep_product_archive.csv.gz"
 
 _PRODUCT_EMPTY_COLS = ["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액"]
 
@@ -202,19 +204,52 @@ _PRODUCT_EMPTY_COLS = ["날짜", "BPU", "카테고리", "브랜드", "상품코�
 def load_product_data() -> pd.DataFrame:
     """상품(SKU) 단위 거래액 데이터 로드 — 카테고리별 상위 상품 랭킹에 사용.
     gzip 압축본(.csv.gz)이 있으면 그걸 우선 쓴다 (상품 단위는 행이 훨씬 많아서
-    카테고리 데이터처럼 비압축 CSV가 커지기 쉬움). 파일이 없으면 빈 DataFrame 반환."""
+    카테고리 데이터처럼 비압축 CSV가 커지기 쉬움).
+
+    카테고리 데이터와 동일하게 마감분/현재분 두 파일로 나눠서 관리한다:
+      - ep_product_archive.csv(.gz) (마감된 과거 데이터, 한 번만 올려두면 됨 — 있으면만 사용)
+      - ep_product.csv(.gz) (계속 갱신되는 현재 데이터)
+    두 파일을 합칠 때 날짜+BPU+카테고리+브랜드+상품코드가 겹치면 현재 파일 쪽 값을
+    우선한다. 둘 다 없으면 빈 DataFrame 반환."""
     import os
 
-    path = PRODUCT_DATA_PATH_GZ if os.path.exists(PRODUCT_DATA_PATH_GZ) else PRODUCT_DATA_PATH
-    if not os.path.exists(path):
+    def _pick_path(gz_path, plain_path):
+        if os.path.exists(gz_path):
+            return gz_path
+        if os.path.exists(plain_path):
+            return plain_path
+        return None
+
+    _fixed_path = _pick_path(PRODUCT_DATA_PATH_FIXED_GZ, PRODUCT_DATA_PATH_FIXED)
+    _current_path = _pick_path(PRODUCT_DATA_PATH_GZ, PRODUCT_DATA_PATH)
+
+    frames = []
+    _read_failed_path = None
+    for _p in [_fixed_path, _current_path]:
+        if _p is None:
+            continue
+        _df = _read_category_csv_file(_p)  # gz/일반 CSV 안전 읽기 (카테고리 로더와 로직 공유)
+        if _df is None:
+            _read_failed_path = _p
+            continue
+        frames.append(_df)
+
+    if _read_failed_path is not None and not frames:
+        st.error(f"'{_read_failed_path}' 파일을 읽을 수 없어요. 컨버터에서 다시 받아서 그대로(수정 없이) 업로드해보세요.")
+        return pd.DataFrame(columns=_PRODUCT_EMPTY_COLS)
+    elif _read_failed_path is not None:
+        st.warning(f"'{_read_failed_path}' 파일은 못 읽었지만, 나머지 파일로 계속 진행할게요.")
+
+    if not frames:
         return pd.DataFrame(columns=_PRODUCT_EMPTY_COLS)
 
-    df = _read_category_csv_file(path)  # gz/일반 CSV 안전 읽기 (카테고리 로더와 로직 공유)
-    if df is None:
-        st.error(f"'{path}' 파일을 읽을 수 없어요. 컨버터에서 다시 받아서 그대로(수정 없이) 업로드해보세요.")
-        return pd.DataFrame(columns=_PRODUCT_EMPTY_COLS)
-
+    df = pd.concat(frames, ignore_index=True)
     df["날짜"] = pd.to_datetime(df["날짜"])
+    _dedup_keys = [c for c in ["날짜", "BPU", "카테고리", "브랜드", "상품코드"] if c in df.columns]
+    if _dedup_keys and len(frames) > 1:
+        # 마지막(=현재 파일)에 나온 값이 우선하도록 keep="last"
+        df = df.drop_duplicates(subset=_dedup_keys, keep="last")
+
     for col in ["BPU", "카테고리", "브랜드", "상품코드", "상품명"]:
         if col in df.columns:
             df[col] = df[col].astype("category")
