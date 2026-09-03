@@ -197,7 +197,7 @@ PRODUCT_DATA_PATH_GZ = "ep_product.csv.gz"
 PRODUCT_DATA_PATH_FIXED = "ep_product_archive.csv"
 PRODUCT_DATA_PATH_FIXED_GZ = "ep_product_archive.csv.gz"
 
-_PRODUCT_EMPTY_COLS = ["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액"]
+_PRODUCT_EMPTY_COLS = ["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액", "구매건수"]
 
 
 @st.cache_data(ttl=3600, show_spinner="상품 데이터를 불러오는 중...")
@@ -254,6 +254,11 @@ def load_product_data() -> pd.DataFrame:
         if col in df.columns:
             df[col] = df[col].astype("category")
     df["거래액"] = pd.to_numeric(df["거래액"], errors="coerce").astype("float32")
+    if "구매건수" not in df.columns:
+        # 구매건수 없이 변환된 과거 archive/current 파일과의 호환 — 없으면 결측으로 둔다
+        # (0으로 채우면 '주문 없음'과 '데이터 없음'이 구분 안 돼서 랭킹 표에서 오해를 살 수 있음).
+        df["구매건수"] = pd.NA
+    df["구매건수"] = pd.to_numeric(df["구매건수"], errors="coerce").astype("float32")
     return df.sort_values("날짜").reset_index(drop=True)
 
 

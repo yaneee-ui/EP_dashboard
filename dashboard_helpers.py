@@ -1807,10 +1807,11 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
 def render_top_products(sub_df, unit, selected_period_date, title, subtitle, brand_label=None, top_n=15):
     """상품(SKU) 단위 거래액 상위 랭킹 테이블.
 
-    sub_df: 날짜/상품코드/상품명/브랜드/카테고리/거래액 컬럼을 가진, 이미 BPU·카테고리로
-    필터링된 상품 데이터. selected_period_date가 속한 '한 기간'(일/주/월, unit 기준)의
-    거래액만 합산해서 랭킹을 매긴다 — 다른 카테고리 섹션의 KPI 카드와 같은 기준 시점.
-    """
+    sub_df: 날짜/상품코드/상품명/브랜드/카테고리/거래액(/구매건수) 컬럼을 가진, 이미
+    BPU·카테고리로 필터링된 상품 데이터. selected_period_date가 속한 '한 기간'(일/주/월,
+    unit 기준)의 거래액만 합산해서 랭킹을 매긴다 — 다른 카테고리 섹션의 KPI 카드와 같은
+    기준 시점. 구매건수는 있으면만 표시(과거 raw 미보유 구간 등 컬럼 자체가 없거나 전부
+    결측이면 건너뜀)."""
     st.markdown(f"**{title}**  ·  <span style='color:#6b7280;font-size:0.85rem'>{subtitle}</span>", unsafe_allow_html=True)
 
     if sub_df.empty:
@@ -1827,7 +1828,9 @@ def render_top_products(sub_df, unit, selected_period_date, title, subtitle, bra
         st.info("선택한 기간에 상품 데이터가 없습니다.")
         return
 
-    _agg = _win.groupby(["상품코드", "상품명", "브랜드", "카테고리"], as_index=False, observed=True)["거래액"].sum()
+    _has_qty = "구매건수" in _win.columns and _win["구매건수"].notna().any()
+    _sum_cols = ["거래액", "구매건수"] if _has_qty else ["거래액"]
+    _agg = _win.groupby(["상품코드", "상품명", "브랜드", "카테고리"], as_index=False, observed=True)[_sum_cols].sum(min_count=1)
     _agg = _agg[_agg["거래액"] > 0].sort_values("거래액", ascending=False).reset_index(drop=True)
     if _agg.empty:
         st.info("선택한 기간에 상품 데이터가 없습니다.")
@@ -1841,8 +1844,12 @@ def render_top_products(sub_df, unit, selected_period_date, title, subtitle, bra
         _agg["브랜드"] = _agg["브랜드"].map(brand_label)
 
     _show_cat_col = _win["카테고리"].nunique() > 1
-    _cols = ["순위", "상품코드", "상품명", "브랜드"] + (["카테고리"] if _show_cat_col else []) + ["거래액", "비중"]
+    _cols = ["순위", "상품코드", "상품명", "브랜드"] + (["카테고리"] if _show_cat_col else [])
+    _cols += ["구매건수"] if _has_qty else []
+    _cols += ["거래액", "비중"]
     _disp = _agg[_cols].copy()
+    if _has_qty:
+        _disp["구매건수"] = _disp["구매건수"].map(lambda v: "-" if pd.isna(v) else f"{v:,.0f}")
     _disp["거래액"] = _disp["거래액"].map(lambda v: f"{v:,.0f}")
     _disp["비중"] = _disp["비중"].map(lambda v: f"{v:.1f}%")
     st.dataframe(_disp, hide_index=True, use_container_width=True)

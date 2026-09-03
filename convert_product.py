@@ -1,5 +1,5 @@
 """ep_product.csv (사내 원본, 상품코드별 거래액 raw)를 대시보드가 쓰는
-표준 컬럼(날짜/BPU/카테고리/브랜드/상품코드/상품명/거래액)으로 변환.
+표준 컬럼(날짜/BPU/카테고리/브랜드/상품코드/상품명/거래액/구매건수)으로 변환.
 
 원본 특징: UTF-16(tab-separated), 컬럼명이 결제_일자(YYYYMMDD)/BPU/영업상품카테고리명/
 SAP대표브랜드코드/상품코드/상품명/거래액/주문수량. BPU에 e-영업1~4 외에 PROJECT-C,
@@ -33,6 +33,7 @@ df = df.rename(columns={
     "결제_일자(YYYYMMDD)": "날짜",
     "영업상품카테고리명": "카테고리",
     "SAP대표브랜드코드": "브랜드",
+    "주문수량": "구매건수",
 })
 
 df = df[df["BPU"].isin(KEEP_BPU)].copy()
@@ -41,8 +42,11 @@ df["날짜"] = pd.to_datetime(df["날짜"], format="%Y%m%d")
 df["거래액"] = (
     df["거래액"].astype(str).str.replace(",", "", regex=False).astype("int64")
 )
+df["구매건수"] = (
+    df["구매건수"].astype(str).str.replace(",", "", regex=False).astype("int64")
+)
 
-out_df = df[["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액"]]
+out_df = df[["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액", "구매건수"]]
 out_df = out_df.sort_values("날짜").reset_index(drop=True)
 
 cutoff = pd.Timestamp(ARCHIVE_CUTOFF)
