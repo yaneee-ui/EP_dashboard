@@ -6,6 +6,7 @@ from utils import COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, METRIC_COLS
 from excel_converter import convert_excel_to_long
 
 DEFAULT_DATA_PATH = "ep_data_long.csv"
+DEFAULT_DATA_PATH_FIXED = "ep_data_long_2025.csv"
 
 
 def _finalize(df: pd.DataFrame) -> pd.DataFrame:
@@ -32,7 +33,20 @@ def load_data(uploaded_file=None, file_name=None) -> pd.DataFrame:
     있어서 최근 5개까지만 남기고 오래된 항목은 자동으로 비운다.
     """
     if uploaded_file is None:
-        df = pd.read_csv(DEFAULT_DATA_PATH)
+        import os
+
+        frames = []
+        if os.path.exists(DEFAULT_DATA_PATH_FIXED):
+            frames.append(pd.read_csv(DEFAULT_DATA_PATH_FIXED))
+        if os.path.exists(DEFAULT_DATA_PATH):
+            frames.append(pd.read_csv(DEFAULT_DATA_PATH))
+        df = pd.concat(frames, ignore_index=True)
+        # 25년(마감 실적, ep_data_long_2025.csv)과 26년(현재분, ep_data_long.csv)을
+        # 합친다. 겹치는 경우(현재분에 실수로 25년 데이터가 같이 들어있는 경우) 마지막
+        # 파일(현재분) 쪽 값을 우선한다 - [[ep_category_fixed_current_split]]과 동일 패턴.
+        dedup_keys = [c for c in [COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST] if c in df.columns]
+        if dedup_keys:
+            df = df.drop_duplicates(subset=dedup_keys, keep="last")
         return _finalize(df)
 
     name = (file_name or getattr(uploaded_file, "name", "") or "").lower()

@@ -7,12 +7,19 @@
       -> 대시보드에서 2026 메인선 + 2025 전년비교선 둘 다 그릴 수 있음.
 
 BPU 필터: Total, e-영업1~4 만 유지 (e-Corner, PROJECT-C, 47996, 미매칭, SPACE-R 제외).
+
+[[ep_category_fixed_current_split]]과 동일하게 2025년(마감 실적, 더 이상 안 바뀜)은
+ep_data_long_2025.csv로 한 번만 고정 저장하고, 매번 다시 뽑을 필요 없게 한다.
+ep_data_long.csv는 2026년(현재분)만 담아서 매번 새로 만든다.
 """
+import os
 import datetime
 import pandas as pd
 
 SRC = "Data.xlsx"
-OUT = "ep_data_long.csv"
+OUT_CURRENT = "ep_data_long.csv"
+OUT_ARCHIVE = "ep_data_long_2025.csv"
+ARCHIVE_CUTOFF = datetime.date(2025, 12, 31)
 
 METRIC_ORDER = [
     "평균 EP 전시 상품수", "평균 원부매칭 상품수", "원부매칭율(%)",
@@ -87,9 +94,20 @@ for r in range(4, len(df)):
         rows.append(row)
 
 out_df = pd.DataFrame(rows).sort_values(["BPU", "원부매칭여부", "최저가여부", "날짜"]).reset_index(drop=True)
-out_df.to_csv(OUT, index=False, encoding="utf-8-sig")
 
-print(f"저장 완료: {OUT}, shape={out_df.shape}")
+archive_df = out_df[out_df["날짜"] <= ARCHIVE_CUTOFF]
+current_df = out_df[out_df["날짜"] > ARCHIVE_CUTOFF]
+
+if os.path.exists(OUT_ARCHIVE):
+    print(f"'{OUT_ARCHIVE}' 이미 있어서 다시 만들지 않았어요 (마감 실적은 안 바뀌니까). "
+          "다시 만들려면 이 파일을 지우고 재실행하세요.")
+else:
+    archive_df.to_csv(OUT_ARCHIVE, index=False, encoding="utf-8-sig")
+    print(f"마감분 저장: {OUT_ARCHIVE}, shape={archive_df.shape}, ~{ARCHIVE_CUTOFF}까지")
+
+current_df.to_csv(OUT_CURRENT, index=False, encoding="utf-8-sig")
+print(f"현재분 저장: {OUT_CURRENT}, shape={current_df.shape}")
+
 print("조합 개수:", out_df[["BPU", "원부매칭여부", "최저가여부"]].drop_duplicates().shape[0])
 print("BPU 목록:", sorted(out_df["BPU"].unique()))
 print("날짜 범위:", out_df["날짜"].min(), "~", out_df["날짜"].max())
