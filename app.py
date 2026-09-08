@@ -2929,20 +2929,51 @@ if side["page"].startswith("11."):
 
             st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
-            def _style_yoy_delta(df):
-                """전년비(%) 컬럼: 증가=초록, 감소=빨강+△ (엑셀 서식과 동일 규칙)."""
-                def _fmt(v):
-                    if pd.isna(v):
-                        return ""
-                    return f"{v:.1f}%" if v >= 0 else f"△{abs(v):.1f}%"
-                def _color(v):
-                    if pd.isna(v):
-                        return ""
-                    return "color:#16a34a;" if v >= 0 else "color:#dc2626;"
-                sty = df.style
-                if "전년비(%)" in df.columns:
-                    sty = sty.format({"전년비(%)": _fmt}).map(_color, subset=["전년비(%)"])
-                return sty
+            # df.style.format()을 st.dataframe()에 넘기는 방식은 이 표에서 신뢰할 수
+            # 없었다 — Styler가 내부적으로 Arrow 변환을 거치는데, 값 컬럼(연도 두 개)에
+            # int/float가 섞여 있어서(CR 행만 이미 문자열) 포맷 함수가 조용히 무시되거나
+            # (그래서 화면엔 '1499.000000'처럼 원본 실수가 그대로 나옴), 컬럼을 2개 이상
+            # format()으로 걸면 아예 그 컬럼들이 통째로 사라지는 것까지 확인함. 그래서
+            # 순수 HTML 표로 직접 그린다 — 이 페이지의 '최근 4주 일평균' 표와 동일한 방식.
+            _WK_LABEL_COLS = {"지표", "구분", "BPU", "카테고리"}
+
+            def _fmt_wk_num(v):
+                if isinstance(v, str):
+                    return v  # CR 행은 이미 "6.0%" 문자열로 들어와 있음 - 그대로 둔다
+                if v is None or pd.isna(v):
+                    return "-"
+                return f"{v:,.0f}"  # 나머지는 천단위 콤마, 소수점 없음
+
+            def _fmt_wk_delta(v):
+                if v is None or pd.isna(v):
+                    return "-"
+                return (
+                    f"<span style='color:#16a34a;'>{v:.1f}%</span>" if v >= 0
+                    else f"<span style='color:#dc2626;'>△{abs(v):.1f}%</span>"
+                )
+
+            def _render_wk_preview_table(df):
+                if df.empty:
+                    return "<div style='color:#9ca3af;font-size:0.85rem;padding:8px;'>데이터 없음</div>"
+                _cols = list(df.columns)
+                _header = "".join(f"<th>{c}</th>" for c in _cols)
+                _rows_html = []
+                for _, _row in df.iterrows():
+                    _cells = []
+                    for c in _cols:
+                        v = _row[c]
+                        if c in _WK_LABEL_COLS:
+                            _cells.append(f"<td>{v}</td>")
+                        elif c == "전년비(%)":
+                            _cells.append(f"<td style='text-align:right;'>{_fmt_wk_delta(v)}</td>")
+                        else:
+                            _cells.append(f"<td style='text-align:right;'>{_fmt_wk_num(v)}</td>")
+                    _rows_html.append(f"<tr>{''.join(_cells)}</tr>")
+                return (
+                    "<div style='max-height:360px;overflow:auto;border-radius:8px;'>"
+                    f"<table class='summary-table'><thead><tr>{_header}</tr></thead>"
+                    f"<tbody>{''.join(_rows_html)}</tbody></table></div>"
+                )
 
             _pc1, _pc2, _pc3 = st.columns(3)
             with _pc1:
@@ -2962,13 +2993,13 @@ if side["page"].startswith("11."):
                         _pv_left_disp.loc[_cr_mask, _c] = _pv_left_disp.loc[_cr_mask, _c].apply(
                             lambda v: f"{v*100:.1f}%" if pd.notna(v) else v
                         )
-                st.dataframe(_style_yoy_delta(_pv_left_disp), use_container_width=True, hide_index=True, height=360)
+                st.markdown(_render_wk_preview_table(_pv_left_disp), unsafe_allow_html=True)
             with _pc2:
                 st.markdown("**카테고리별 (거래액)**")
-                st.dataframe(_style_yoy_delta(_pv_right), use_container_width=True, hide_index=True, height=360)
+                st.markdown(_render_wk_preview_table(_pv_right), unsafe_allow_html=True)
             with _pc3:
                 st.markdown("**카테고리별 (트래픽)**")
-                st.dataframe(_style_yoy_delta(_pv_right_traffic), use_container_width=True, hide_index=True, height=360)
+                st.markdown(_render_wk_preview_table(_pv_right_traffic), unsafe_allow_html=True)
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
