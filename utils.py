@@ -287,11 +287,20 @@ def week_of_month(date) -> int:
     date = pd.Timestamp(date)
     eff_month_start = effective_month_of_week(date)
     eff_month_end = (eff_month_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
-    # eff_month_start가 date 자체보다 나중일 수 있다(예: date=8/31인데 eff_month_start=9/1) —
-    # 이 경우 date 자신을 목록에 포함시키려면 시작점을 date와 eff_month_start 중 이른
-    # 쪽으로 잡아야 한다. 그렇지 않으면 date보다 항상 큰 월요일들만 나열되어 0이 나옴.
-    mondays_in_month = pd.date_range(min(eff_month_start, date), eff_month_end, freq="W-MON")
-    return int((mondays_in_month <= date).sum())
+    # 후보 월요일은 eff_month_start 훨씬 이전(최대 10일 전, 달의 1일이 어느 요일이든
+    # 그 앞의 월요일을 반드시 포함하도록)부터 나열한 뒤, 각 월요일이 '실제로 속하는 달'
+    # (effective_month_of_week)이 이 달과 같은 것만 남긴다.
+    #
+    # 이전엔 date와 eff_month_start 중 이른 쪽만 시작점으로 잡았는데(예: date=8/31,
+    # eff_month_start=9/1 -> 8/31부터 나열), 정작 그 다음 진짜 9월 월요일(9/7)을 계산할
+    # 땐 eff_month_start(9/1)부터만 나열해서 8/31이 후보에서 빠지는 버그가 있었다. 그
+    # 결과 8/31(월)~9/6(일) 주도 '9월 1주차', 9/7(월)~9/13(일) 주도 '9월 1주차'로
+    # 겹쳐버렸다(전자만 예외로 9월에 편입됐다는 걸 후자 계산 시점엔 몰랐음). 항상 같은
+    # 넓은 후보 범위에서 effective_month_of_week로 필터링하면 두 계산이 일관된
+    # 목록을 보게 되어 8/31=9월 1주차, 9/7=9월 2주차로 올바르게 갈린다.
+    candidates = pd.date_range(eff_month_start - pd.Timedelta(days=10), eff_month_end, freq="W-MON")
+    mondays_in_month = [m for m in candidates if effective_month_of_week(m) == eff_month_start]
+    return sum(1 for m in mondays_in_month if m <= date)
 
 
 def make_period_label(last_date, unit: str) -> str:

@@ -342,6 +342,34 @@ def test_render_line_chart_handles_missing_yoy_data():
         check("전년 데이터 전부 없어도 크래시 안 남", False, f"TypeError: {e}")
 
 
+# ============================================================
+# 9. week_of_month — 월 경계에 걸친 주가 다음 달 1주차로 재배정될 때, 그 바로 다음
+#    (진짜 그 달의 첫) 월요일과 주차 번호가 겹치지 않는지
+#    (2026-09-08 버그: 8/31(월)~9/6(일) 주가 '9월 1주차'로 재배정된 뒤, 진짜 9월의
+#     첫 월요일인 9/7도 똑같이 '9월 1주차'로 계산되고 있었음 - 주간보고 탭에
+#     '9월 1주차'가 두 번 나란히 표시됨)
+# ============================================================
+def test_week_of_month_no_collision_at_month_boundary():
+    print("\n[9] week_of_month — 월 경계 주차 번호 충돌")
+    from utils import week_of_month, effective_month_of_week
+
+    boundary_monday = pd.Timestamp("2026-08-31")  # 화~일 6일이 전부 9월
+    next_monday = pd.Timestamp("2026-09-07")      # 달력상 진짜 9월의 첫 월요일
+
+    check(
+        "8/31(월)이 9월로 재배정됨",
+        effective_month_of_week(boundary_monday).month == 9,
+    )
+    check(
+        "8/31(월) 주는 9월 1주차",
+        week_of_month(boundary_monday) == 1,
+    )
+    check(
+        "9/7(월) 주는 9월 2주차(1주차와 안 겹침)",
+        week_of_month(next_monday) == 2,
+        f"실제 값: {week_of_month(next_monday)}",
+    )
+
 
 if __name__ == "__main__":
     print("=" * 60)
@@ -356,6 +384,7 @@ if __name__ == "__main__":
     test_converter_ffill_merged_cells()
     test_pct_delta_safe_handles_negative_base()
     test_render_line_chart_handles_missing_yoy_data()
+    test_week_of_month_no_collision_at_month_boundary()
 
     print()
     print("=" * 60)
