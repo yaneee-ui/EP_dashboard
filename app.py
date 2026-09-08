@@ -2956,18 +2956,21 @@ if side["page"].startswith("11."):
                 if df.empty:
                     return "<div style='color:#9ca3af;font-size:0.85rem;padding:8px;'>데이터 없음</div>"
                 _cols = list(df.columns)
-                _header = "".join(f"<th>{c}</th>" for c in _cols)
+                # "e-영업1"처럼 짧은 값도 컬럼 폭이 좁으면(3개 표를 나란히 두는 레이아웃이라
+                # 폭이 빠듯함) 하이픈에서 줄바꿈돼 두 줄로 잘리는 문제가 있어서, 이 표의
+                # 모든 셀에 줄바꿈 금지를 걸어 한 줄로 유지한다.
+                _header = "".join(f"<th style='white-space:nowrap;'>{c}</th>" for c in _cols)
                 _rows_html = []
                 for _, _row in df.iterrows():
                     _cells = []
                     for c in _cols:
                         v = _row[c]
                         if c in _WK_LABEL_COLS:
-                            _cells.append(f"<td>{v}</td>")
+                            _cells.append(f"<td style='white-space:nowrap;'>{v}</td>")
                         elif c == "전년비(%)":
-                            _cells.append(f"<td style='text-align:right;'>{_fmt_wk_delta(v)}</td>")
+                            _cells.append(f"<td style='text-align:right;white-space:nowrap;'>{_fmt_wk_delta(v)}</td>")
                         else:
-                            _cells.append(f"<td style='text-align:right;'>{_fmt_wk_num(v)}</td>")
+                            _cells.append(f"<td style='text-align:right;white-space:nowrap;'>{_fmt_wk_num(v)}</td>")
                     _rows_html.append(f"<tr>{''.join(_cells)}</tr>")
                 return (
                     "<div style='max-height:360px;overflow:auto;border-radius:8px;'>"
