@@ -3058,14 +3058,35 @@ if side["page"].startswith("11."):
                 f"<td style='text-align:right;'>{format_delta_html(_r['전년비'])}</td>"
                 f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk(_r['작년값'], _r['is_pct'])}</td></tr>"
             )
+        def _fmt_wk4_date_range(_s, _e):
+            _s, _e = pd.Timestamp(_s), pd.Timestamp(_e)
+            return f"{_s.month}/{_s.day}" if _s == _e else f"{_s.month}/{_s.day}~{_e.month}/{_e.day}"
+
+        # 마지막 주는 아직 다 안 지났을 수 있어서(예: 9/7만 있고 9/13까진 아직), 표시
+        # 범위도 실제 데이터가 있는 마지막 날(_wk4_abs_last)까지만 잘라서 보여준다 —
+        # 지난 주들은 이미 완결된 주라 _wk4_abs_last가 항상 그 주의 일요일 이후라서
+        # 그대로 원래 범위(월~일)가 나온다.
+        _wk4_display_ends = [min(_ws + pd.Timedelta(days=6), _wk4_abs_last) for _ws in _wk4_starts]
         _wk4_header = "".join(
             f"<th>{l}<br><span style='font-weight:400;font-size:0.72rem;color:#9ca3af;'>"
-            f"{_ws.month}/{_ws.day}~{(_ws + pd.Timedelta(days=6)).month}/{(_ws + pd.Timedelta(days=6)).day}</span></th>"
-            for l, _ws in zip(_wk4_labels, _wk4_starts)
+            f"{_fmt_wk4_date_range(_ws, _we)}</span></th>"
+            for l, _ws, _we in zip(_wk4_labels, _wk4_starts, _wk4_display_ends)
         )
+        # 작년(동요일) 컬럼도 실제로 몇 일자 실적이 들어갔는지 헤더에 표시 — 최신 주가
+        # 부분주면 그만큼만 동요일 매칭하므로(위 _matched_dates와 동일 원칙), 여기 범위도
+        # 그 실제 매칭 범위와 맞춰야 한다.
+        _wk4_yoy_start = _wk4_starts[-1] - pd.Timedelta(days=364)
+        _wk4_yoy_end = _wk4_display_ends[-1] - pd.Timedelta(days=364)
+        _wk4_yoy_header = f"작년(동요일)<br><span style='font-weight:400;font-size:0.72rem;color:#9ca3af;'>{_fmt_wk4_date_range(_wk4_yoy_start, _wk4_yoy_end)}</span>"
+        # 엑셀은 HTML을 못 쓰니 같은 날짜 정보를 괄호로 붙인 텍스트 라벨로 대신 넣는다.
+        _wk4_labels_xl = [
+            f"{l} ({_fmt_wk4_date_range(_ws, _we)})"
+            for l, _ws, _we in zip(_wk4_labels, _wk4_starts, _wk4_display_ends)
+        ]
+        _wk4_yoy_header_xl = f"작년(동요일) ({_fmt_wk4_date_range(_wk4_yoy_start, _wk4_yoy_end)})"
         st.markdown(
             "<div style='overflow-x:auto;'><table class='summary-table'>"
-            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
+            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>{_wk4_yoy_header}</th></tr></thead>"
             f"<tbody>{_wk4_sections_html}</tbody></table></div>",
             unsafe_allow_html=True,
         )
@@ -3081,7 +3102,7 @@ if side["page"].startswith("11."):
         _wk4_up_font = Font(color="16A34A")
         _wk4_down_font = Font(color="DC2626")
 
-        _wk4_col_headers = ["구분"] + _wk4_labels + ["전주비", "전년비", "작년(동요일)"]
+        _wk4_col_headers = ["구분"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
         _wk4_ws.append(_wk4_col_headers)
         for _c in range(1, len(_wk4_col_headers) + 1):
             _cell = _wk4_ws.cell(row=1, column=_c)
@@ -3243,7 +3264,7 @@ if side["page"].startswith("11."):
                         )
                         st.markdown(
                             "<div style='overflow-x:auto;margin-bottom:14px;'><table class='summary-table'>"
-                            f"<thead><tr><th>카테고리</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>작년(동요일)</th></tr></thead>"
+                            f"<thead><tr><th>카테고리</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>{_wk4_yoy_header}</th></tr></thead>"
                             f"<tbody>{_total_row_html}{_body}</tbody></table></div>",
                             unsafe_allow_html=True,
                         )
@@ -3253,7 +3274,7 @@ if side["page"].startswith("11."):
                             _wk4_cat_excel_ws = _wk4_wb.create_sheet("카테고리별")
                         _wk4_cat_excel_ws.append([f"{_bpu_label} · {_m_label}"])
                         _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=1).font = Font(bold=True)
-                        _hdr_row = ["카테고리"] + _wk4_labels + ["전주비", "전년비", "작년(동요일)"]
+                        _hdr_row = ["카테고리"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
                         _wk4_cat_excel_ws.append(_hdr_row)
                         for _c in range(1, len(_hdr_row) + 1):
                             _cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
