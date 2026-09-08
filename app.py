@@ -3353,7 +3353,10 @@ if side["page"].startswith("11."):
                                 for _c in range(2, 2 + len(_wk4_labels)):
                                     _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
                                 _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
-                            for _c, _val in [(len(_hdr_row) - 1, r["전주비"]), (len(_hdr_row), r["전년비"])]:
+                            # (len(_hdr_row)-2, -1) = (전주비, 전년비) 컬럼. TOTAL 행(위)과 같은
+                            # 공식이어야 하는데 여기만 하나씩 밀려서(-1, 그대로) 마지막 컬럼인
+                            # '작년(동요일)'까지 증감률(%) 서식+색이 잘못 입혀지고 있었음.
+                            for _c, _val in [(len(_hdr_row) - 2, r["전주비"]), (len(_hdr_row) - 1, r["전년비"])]:
                                 _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
                                 _cell.number_format = '+0.0%;-0.0%'
                                 if _val is not None:
