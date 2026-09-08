@@ -3017,9 +3017,9 @@ if side["page"].startswith("11."):
         _wk4_metric_defs = [
             ("거래액", "거래액", None, False),
             ("트래픽", "트래픽", None, False),
+            ("객단가", "거래액", "구매객수", True),
             ("구매객수", "구매객수", None, False),
             ("CR", "구매객수", "트래픽", True),
-            ("객단가", "거래액", "구매객수", True),
         ]
 
         def _wk4_series_for(bpu_list, num_col, den_col):
@@ -3135,6 +3135,16 @@ if side["page"].startswith("11."):
         _wk4_section_font = Font(bold=True)
         _wk4_up_font = Font(color="16A34A")
         _wk4_down_font = Font(color="DC2626")
+        # 카테고리별 시트는 지표 5개 x 구분(Total/자사/정상/이월/입점) 5개 = 25개 표가
+        # 세로로 쭉 이어지는 구조라, 스크롤하면서도 어느 구분(BPU) 블록인지 바로 알아볼
+        # 수 있게 구분별로 다른 배경색을 섹션 제목 줄에 입힌다.
+        _wk4_bpu_fill = {
+            "Total": PatternFill("solid", fgColor="E5E7EB"),
+            "자사": PatternFill("solid", fgColor="BFDBFE"),
+            "정상": PatternFill("solid", fgColor="BBF7D0"),
+            "이월": PatternFill("solid", fgColor="FDE68A"),
+            "입점": PatternFill("solid", fgColor="FBCFE8"),
+        }
 
         _wk4_col_headers = ["구분"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
         _wk4_ws.append(_wk4_col_headers)
@@ -3182,9 +3192,9 @@ if side["page"].startswith("11."):
         _wk4_cat_metric_defs = [
             ("거래액", "거래액", None, False, False),
             ("트래픽", "트래픽", None, False, False),
+            ("객단가", "거래액", "구매객수", True, False),
             ("구매객수", "구매객수", None, False, False),
             ("CR", "구매객수", "트래픽", True, True),
-            ("객단가", "거래액", "구매객수", True, False),
         ]
 
         _wk4_cat_base_all = pd.DataFrame()
@@ -3244,12 +3254,20 @@ if side["page"].startswith("11."):
         # 카테고리 순서를 '거래액' 기준으로 BPU별로 미리 한 번만 계산해서 고정한다 —
         # 그래야 트래픽/CR/객단가 표에서도 거래액 표와 항상 같은 카테고리 순서로 나온다
         # (지표마다 따로 정렬하면 표마다 카테고리 순서가 들쭉날쭉해지는 문제가 있었음).
+        def _cat_sort_key(r):
+            v = r["값"][-1]
+            _no_value = v is None or pd.isna(v) or v == 0
+            # 값이 없는(0/None) 카테고리는 그룹 자체를 뒤로 보낸다(0번째 자리) — 그냥
+            # 거래액 내림차순으로만 정렬하면 0이 마이너스(반품 등) 카테고리보다 위로
+            # 와버려서, '데이터가 아예 없다'는 신호가 눈에 잘 안 띄는 문제가 있었음.
+            return (1 if _no_value else 0, -(v if v is not None and not pd.isna(v) else 0))
+
         _cat_order_by_bpu = {}
         for _ob_label, _ob_list in FORECAST_BPU_ROWS.items():
             _ob_base = _wk4_cat_base_all if _ob_list is None else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_ob_list)]
             _ob_all_cats = sorted(_ob_base["카테고리"].dropna().unique().tolist()) if not _ob_base.empty else []
             _ob_rows = _compute_cat_rows(_ob_base, "거래액", None, False, False, _ob_all_cats)
-            _ob_rows.sort(key=lambda r: r["값"][-1] or 0, reverse=True)
+            _ob_rows.sort(key=_cat_sort_key)
             _cat_order_by_bpu[_ob_label] = [r["카테고리"] for r in _ob_rows]
 
         _wk4_cat_excel_ws = None
@@ -3307,8 +3325,13 @@ if side["page"].startswith("11."):
                         if _wk4_cat_excel_ws is None:
                             _wk4_cat_excel_ws = _wk4_wb.create_sheet("카테고리별")
                         _wk4_cat_excel_ws.append([f"{_bpu_label} · {_m_label}"])
-                        _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=1).font = Font(bold=True)
                         _hdr_row = ["카테고리"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
+                        _title_fill = _wk4_bpu_fill.get(_bpu_label)
+                        for _c in range(1, len(_hdr_row) + 1):
+                            _title_cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
+                            _title_cell.font = Font(bold=True)
+                            if _title_fill is not None:
+                                _title_cell.fill = _title_fill
                         _wk4_cat_excel_ws.append(_hdr_row)
                         for _c in range(1, len(_hdr_row) + 1):
                             _cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
