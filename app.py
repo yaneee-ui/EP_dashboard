@@ -1861,23 +1861,48 @@ if side["page"].startswith("2."):
                 "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
                 index=1, key="cat_compare_metric", horizontal=True, label_visibility="collapsed",
             )
-            _cat_compare_options = [c for c in _cat_options_top if c != "전체"]
+            # 이 비교 차트는 매체 필터를 페이지와 독립적으로 고를 수 있어서, 카테고리
+            # 목록도 페이지 상단 매체 기준(_cat_options_top)이 아니라 전체 카테고리
+            # 원본에서 뽑는다 — 안 그러면 상단 매체엔 없고 여기서 고른 매체에만 있는
+            # 카테고리가 선택지에서 아예 빠지는 문제가 생긴다.
+            _cat_compare_options_all = sorted(
+                c for c in df_category["카테고리"].dropna().unique() if c != "전체"
+            )
             _cat_compare_default = [
-                r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options
+                r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options_all
             ]
             selected_cats_compare = st.multiselect(
-                "비교할 카테고리 (2~5개)", _cat_compare_options, default=_cat_compare_default,
-                key=f"cat_compare_select_{bpu}", max_selections=5,
+                "비교할 카테고리 (2~5개)", _cat_compare_options_all, default=_cat_compare_default,
+                key="cat_compare_select", max_selections=5,
             )
+            # 매체 필터 — 페이지 상단 매체 필터와는 별개로, 이 비교 차트만 다른 매체
+            # 기준으로 보고 싶을 때를 위해 따로 둔다(자리는 필터들 중 맨 아래).
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
+            _cmp_bpu_label_sel = st.selectbox(
+                "매체 필터", [l for l, _ in BPU_OPTIONS],
+                index=[l for l, _ in BPU_OPTIONS].index(_bpu_label_sel),
+                key="cat_compare_bpu", label_visibility="collapsed",
+            )
+            bpu_compare = dict(BPU_OPTIONS)[_cmp_bpu_label_sel]
+            if bpu_compare in BPU_GROUPS:
+                _cmp_bpu_df = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu_compare])]
+            elif bpu_compare == "Total":
+                _cmp_bpu_df = df_category
+            else:
+                _cmp_bpu_df = df_category[df_category["BPU"] == bpu_compare]
+            if _has_segment:
+                _cmp_bpu_df = _cmp_bpu_df[_cmp_bpu_df["회원구분"] == cat_segment]
+            if _ff_exclude:
+                _cmp_bpu_df = exclude_ff_brand(_cmp_bpu_df)
+
             if len(selected_cats_compare) >= 2:
                 # 위 '카테고리별 요약'용 _cat_daily_df_early는 거래액 컬럼 하나뿐이라, CR/객단가처럼
                 # 트래픽·구매객수가 같이 필요한 비율 지표는 못 구한다 — 여기서 세 컬럼을 다
-                # 남긴 버전을 따로 만든다(cat_bpu_df는 이미 매체·세그먼트·핏플랍 필터가 다
-                # 적용된 상태라 그대로 재사용). 비율 지표는 날짜별 단순평균이 아니라 항상
+                # 남긴 버전을 따로 만든다. 비율 지표는 날짜별 단순평균이 아니라 항상
                 # 분자/분모를 먼저 더한 뒤 나눠야 하므로(비율 단순평균 금지 원칙), 리샘플
                 # 전에 일자 단위로 먼저 계산해둔다.
-                _cat_daily_metrics_bpu = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
-                if bpu == "Total" or bpu in BPU_GROUPS:
+                _cat_daily_metrics_bpu = _cmp_bpu_df[(_cmp_bpu_df["브랜드"] == "전체") & (_cmp_bpu_df["카테고리"] != "전체")]
+                if bpu_compare == "Total" or bpu_compare in BPU_GROUPS:
                     _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.groupby(
                         ["날짜", "카테고리"], as_index=False
                     )[["트래픽", "거래액", "구매객수"]].sum()
@@ -1935,7 +1960,7 @@ if side["page"].startswith("2."):
                         _cmp_max_d = _compare_df.index.max().date()
                         _cmp_min_d = _compare_df.index.min().date()
                         _cmp_default_start = max(_cmp_min_d, _cmp_max_d - _dt.timedelta(days=30))
-                        _cmp_range_key = f"cat_compare_range_{bpu}"
+                        _cmp_range_key = f"cat_compare_range_{bpu_compare}"
                         col_cmpd, col_cmpr = st.columns([3, 1])
                         with col_cmpd:
                             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간</div>", unsafe_allow_html=True)
@@ -1960,7 +1985,7 @@ if side["page"].startswith("2."):
                         # 그 범위로 자른 시리즈를 반환한다 — 첫 카테고리 열을 기준 삼아 선택
                         # 범위(날짜 인덱스)만 얻어서 전체 비교 표(_compare_df)에 동일하게 적용한다.
                         _cmp_ref_series = render_week_range_filter(
-                            _compare_df.iloc[:, 0], f"cat_compare_{bpu}", col_cmpw, col_cmpr,
+                            _compare_df.iloc[:, 0], f"cat_compare_{bpu_compare}", col_cmpw, col_cmpr,
                         )
                         _compare_df = _compare_df.loc[_cmp_ref_series.index]
 
