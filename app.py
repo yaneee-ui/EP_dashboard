@@ -1877,6 +1877,11 @@ if side["page"].startswith("2."):
                         _series_c.index = _series_c.index - pd.Timedelta(days=6)
                     elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
                         _series_c = _series_c.iloc[:-1]
+                    # 위 단일 카테고리 차트와 동일하게 최신 연도만 남긴다 — 안 그러면 일별/주별
+                    # 조회 시 2년치가 한 차트에 다 찍혀서 너무 빽빽해진다(전년 비교는 이 차트에선
+                    # 안 그리니, 지난해 구간을 같이 보여줄 이유도 없음).
+                    if not _series_c.empty:
+                        _series_c = _series_c[_series_c.index.year == int(_series_c.index.max().year)]
                     if selected_period_date is not None and not _series_c.empty:
                         _series_c = _series_c[_series_c.index <= selected_period_date]
                         # 마지막 지점이 진행 중인(부분) 기간이면, 위 단일 카테고리 차트와
@@ -1890,8 +1895,46 @@ if side["page"].startswith("2."):
                             if pd.notna(_corrected_c):
                                 _series_c.iloc[-1] = _corrected_c
                     _compare_frames[_cname] = _series_c
+
                 if _compare_frames:
-                    render_category_compare_chart(pd.DataFrame(_compare_frames), height=320, unit=unit)
+                    _compare_df = pd.DataFrame(_compare_frames)
+                    # 조회 단위별 기간/주차 필터 — 위 단일 카테고리 차트와 동일한 UI·기본값
+                    # (일별=최근 30일, 주별=최근 12주). 월별/월마감은 단일 차트와 동일하게
+                    # 최신 연도 전체(위에서 이미 잘라둠)를 그대로 보여주고 별도 필터는 안 둔다.
+                    if unit == "일별" and not _compare_df.empty:
+                        _cmp_max_d = _compare_df.index.max().date()
+                        _cmp_min_d = _compare_df.index.min().date()
+                        _cmp_default_start = max(_cmp_min_d, _cmp_max_d - _dt.timedelta(days=30))
+                        _cmp_range_key = f"cat_compare_range_{bpu}"
+                        col_cmpd, col_cmpr = st.columns([3, 1])
+                        with col_cmpd:
+                            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간</div>", unsafe_allow_html=True)
+                            cmp_dr = st.date_input(
+                                "기간", value=(_cmp_default_start, _cmp_max_d),
+                                min_value=_cmp_min_d, max_value=_cmp_max_d,
+                                key=_cmp_range_key, label_visibility="collapsed",
+                            )
+                        with col_cmpr:
+                            st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
+                            st.button(
+                                "🔄 최근으로", key=f"{_cmp_range_key}_reset", use_container_width=True,
+                                on_click=_reset_date_range, args=(_cmp_range_key, (_cmp_default_start, _cmp_max_d)),
+                            )
+                        if isinstance(cmp_dr, tuple) and len(cmp_dr) == 2:
+                            _compare_df = _compare_df[
+                                (_compare_df.index >= pd.Timestamp(cmp_dr[0])) & (_compare_df.index <= pd.Timestamp(cmp_dr[1]))
+                            ]
+                    elif unit == "주별" and not _compare_df.empty:
+                        col_cmpw, col_cmpr = st.columns([3, 1])
+                        # render_week_range_filter는 시리즈 하나를 기준으로 슬라이더를 그리고
+                        # 그 범위로 자른 시리즈를 반환한다 — 첫 카테고리 열을 기준 삼아 선택
+                        # 범위(날짜 인덱스)만 얻어서 전체 비교 표(_compare_df)에 동일하게 적용한다.
+                        _cmp_ref_series = render_week_range_filter(
+                            _compare_df.iloc[:, 0], f"cat_compare_{bpu}", col_cmpw, col_cmpr,
+                        )
+                        _compare_df = _compare_df.loc[_cmp_ref_series.index]
+
+                    render_category_compare_chart(_compare_df, height=320, unit=unit)
                 else:
                     st.info("선택한 카테고리에 데이터가 없습니다.")
             else:
