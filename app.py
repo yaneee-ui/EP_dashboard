@@ -1853,150 +1853,6 @@ if side["page"].startswith("2."):
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-            # --- 카테고리 비교 (여러 카테고리의 실적 흐름을 한 차트에 겹쳐서) ---
-            # 위 단일 카테고리 필터(selected_cat)와는 별개의 멀티셀렉트라서, 페이지 전체
-            # 필터·표는 안 건드리고 이 차트만 여러 카테고리를 동시에 보여준다.
-            st.markdown("**카테고리 비교**")
-            cat_compare_metric = st.radio(
-                "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
-                index=1, key="cat_compare_metric", horizontal=True, label_visibility="collapsed",
-            )
-            # 이 비교 차트는 매체 필터를 페이지와 독립적으로 고를 수 있어서, 카테고리
-            # 목록도 페이지 상단 매체 기준(_cat_options_top)이 아니라 전체 카테고리
-            # 원본에서 뽑는다 — 안 그러면 상단 매체엔 없고 여기서 고른 매체에만 있는
-            # 카테고리가 선택지에서 아예 빠지는 문제가 생긴다.
-            _cat_compare_options_all = sorted(
-                c for c in df_category["카테고리"].dropna().unique() if c != "전체"
-            )
-            _cat_compare_default = [
-                r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options_all
-            ]
-            selected_cats_compare = st.multiselect(
-                "비교할 카테고리 (2~5개)", _cat_compare_options_all, default=_cat_compare_default,
-                key="cat_compare_select", max_selections=5,
-            )
-            # 매체 필터 — 페이지 상단 매체 필터와는 별개로, 이 비교 차트만 다른 매체
-            # 기준으로 보고 싶을 때를 위해 따로 둔다(자리는 필터들 중 맨 아래).
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
-            _cmp_bpu_label_sel = st.selectbox(
-                "매체 필터", [l for l, _ in BPU_OPTIONS],
-                index=[l for l, _ in BPU_OPTIONS].index(_bpu_label_sel),
-                key="cat_compare_bpu", label_visibility="collapsed",
-            )
-            bpu_compare = dict(BPU_OPTIONS)[_cmp_bpu_label_sel]
-            if bpu_compare in BPU_GROUPS:
-                _cmp_bpu_df = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu_compare])]
-            elif bpu_compare == "Total":
-                _cmp_bpu_df = df_category
-            else:
-                _cmp_bpu_df = df_category[df_category["BPU"] == bpu_compare]
-            if _has_segment:
-                _cmp_bpu_df = _cmp_bpu_df[_cmp_bpu_df["회원구분"] == cat_segment]
-            if _ff_exclude:
-                _cmp_bpu_df = exclude_ff_brand(_cmp_bpu_df)
-
-            if len(selected_cats_compare) >= 2:
-                # 위 '카테고리별 요약'용 _cat_daily_df_early는 거래액 컬럼 하나뿐이라, CR/객단가처럼
-                # 트래픽·구매객수가 같이 필요한 비율 지표는 못 구한다 — 여기서 세 컬럼을 다
-                # 남긴 버전을 따로 만든다. 비율 지표는 날짜별 단순평균이 아니라 항상
-                # 분자/분모를 먼저 더한 뒤 나눠야 하므로(비율 단순평균 금지 원칙), 리샘플
-                # 전에 일자 단위로 먼저 계산해둔다.
-                _cat_daily_metrics_bpu = _cmp_bpu_df[(_cmp_bpu_df["브랜드"] == "전체") & (_cmp_bpu_df["카테고리"] != "전체")]
-                if bpu_compare == "Total" or bpu_compare in BPU_GROUPS:
-                    _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.groupby(
-                        ["날짜", "카테고리"], as_index=False
-                    )[["트래픽", "거래액", "구매객수"]].sum()
-                else:
-                    _cat_daily_metrics_bpu = _cat_daily_metrics_bpu[["날짜", "카테고리", "트래픽", "거래액", "구매객수"]]
-                if cat_compare_metric in ("CR", "객단가"):
-                    _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.copy()
-                    _cat_daily_metrics_bpu["CR"] = (
-                        _cat_daily_metrics_bpu["구매객수"] / _cat_daily_metrics_bpu["트래픽"] * 100
-                    ).where(_cat_daily_metrics_bpu["트래픽"] > 0, 0)
-                    _cat_daily_metrics_bpu["객단가"] = (
-                        _cat_daily_metrics_bpu["거래액"] / _cat_daily_metrics_bpu["구매객수"]
-                    ).where(_cat_daily_metrics_bpu["구매객수"] > 0, 0)
-                # 절대값 지표(트래픽/거래액/구매객수)는 월마감일 때 기간 합계, 그 외엔 일평균 —
-                # 위 단일 카테고리 차트(cat_full 리샘플)와 동일한 규칙. 비율 지표(CR/객단가)는
-                # 이미 일자별로 계산해뒀으니 항상 평균(=해당 기간 일별 비율의 평균)으로 묶는다.
-                _cmp_agg = "sum" if (unit == "월마감" and cat_compare_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
-
-                _compare_frames = {}
-                for _cname in selected_cats_compare:
-                    _g = _cat_daily_metrics_bpu[_cat_daily_metrics_bpu["카테고리"] == _cname]
-                    if _g.empty:
-                        continue
-                    _s_raw_c = _g.set_index("날짜")[cat_compare_metric].sort_index()
-                    _series_c = _s_raw_c.resample(UNIT_CONFIG[unit]["rule"]).agg(_cmp_agg)
-                    if unit == "주별":
-                        _series_c.index = _series_c.index - pd.Timedelta(days=6)
-                    elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
-                        _series_c = _series_c.iloc[:-1]
-                    # 위 단일 카테고리 차트와 동일하게 최신 연도만 남긴다 — 안 그러면 일별/주별
-                    # 조회 시 2년치가 한 차트에 다 찍혀서 너무 빽빽해진다(전년 비교는 이 차트에선
-                    # 안 그리니, 지난해 구간을 같이 보여줄 이유도 없음).
-                    if not _series_c.empty:
-                        _series_c = _series_c[_series_c.index.year == int(_series_c.index.max().year)]
-                    if selected_period_date is not None and not _series_c.empty:
-                        _series_c = _series_c[_series_c.index <= selected_period_date]
-                        # 마지막 지점이 진행 중인(부분) 기간이면, 위 단일 카테고리 차트와
-                        # 동일하게 실제 원본 평균으로 보정한다(안 그러면 아직 안 끝난 주/달의
-                        # 평균이 낮게 잡혀서 마지막 지점이 뚝 떨어져 보이는 착시가 생김).
-                        _is_partial_c, _cur_days_c, _ = _partial_last_period(
-                            _s_raw_c[_s_raw_c.index <= raw_cutoff_date(selected_period_date, unit)], unit
-                        )
-                        if _is_partial_c and _cur_days_c is not None and len(_cur_days_c) > 0:
-                            _corrected_c = _s_raw_c.loc[_cur_days_c].mean()
-                            if pd.notna(_corrected_c):
-                                _series_c.iloc[-1] = _corrected_c
-                    _compare_frames[_cname] = _series_c
-
-                if _compare_frames:
-                    _compare_df = pd.DataFrame(_compare_frames)
-                    # 조회 단위별 기간/주차 필터 — 위 단일 카테고리 차트와 동일한 UI·기본값
-                    # (일별=최근 30일, 주별=최근 12주). 월별/월마감은 단일 차트와 동일하게
-                    # 최신 연도 전체(위에서 이미 잘라둠)를 그대로 보여주고 별도 필터는 안 둔다.
-                    if unit == "일별" and not _compare_df.empty:
-                        _cmp_max_d = _compare_df.index.max().date()
-                        _cmp_min_d = _compare_df.index.min().date()
-                        _cmp_default_start = max(_cmp_min_d, _cmp_max_d - _dt.timedelta(days=30))
-                        _cmp_range_key = f"cat_compare_range_{bpu_compare}"
-                        col_cmpd, col_cmpr = st.columns([3, 1])
-                        with col_cmpd:
-                            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간</div>", unsafe_allow_html=True)
-                            cmp_dr = st.date_input(
-                                "기간", value=(_cmp_default_start, _cmp_max_d),
-                                min_value=_cmp_min_d, max_value=_cmp_max_d,
-                                key=_cmp_range_key, label_visibility="collapsed",
-                            )
-                        with col_cmpr:
-                            st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
-                            st.button(
-                                "🔄 최근으로", key=f"{_cmp_range_key}_reset", use_container_width=True,
-                                on_click=_reset_date_range, args=(_cmp_range_key, (_cmp_default_start, _cmp_max_d)),
-                            )
-                        if isinstance(cmp_dr, tuple) and len(cmp_dr) == 2:
-                            _compare_df = _compare_df[
-                                (_compare_df.index >= pd.Timestamp(cmp_dr[0])) & (_compare_df.index <= pd.Timestamp(cmp_dr[1]))
-                            ]
-                    elif unit == "주별" and not _compare_df.empty:
-                        col_cmpw, col_cmpr = st.columns([3, 1])
-                        # render_week_range_filter는 시리즈 하나를 기준으로 슬라이더를 그리고
-                        # 그 범위로 자른 시리즈를 반환한다 — 첫 카테고리 열을 기준 삼아 선택
-                        # 범위(날짜 인덱스)만 얻어서 전체 비교 표(_compare_df)에 동일하게 적용한다.
-                        _cmp_ref_series = render_week_range_filter(
-                            _compare_df.iloc[:, 0], f"cat_compare_{bpu_compare}", col_cmpw, col_cmpr,
-                        )
-                        _compare_df = _compare_df.loc[_cmp_ref_series.index]
-
-                    render_category_compare_chart(_compare_df, height=320, unit=unit, metric_label=cat_compare_metric)
-                else:
-                    st.info("선택한 카테고리에 데이터가 없습니다.")
-            else:
-                st.caption("2개 이상 선택하면 비교 그래프가 표시돼요.")
-
-            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-
             # --- 카테고리 실적 요약 표 (EP실적/EP채널과 동일 스타일·기준) ---
             st.markdown(
                 f"**카테고리 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · {selected_cat} / {brand_label(selected_brand)}</span>",
@@ -2205,6 +2061,156 @@ if side["page"].startswith("2."):
                 _p2_base, f"{bpu} · {selected_cat}/{brand_label(selected_brand)}",
                 caption_extra="매체·카테고리·브랜드 필터를 바꾸면 이 표도 같이 바뀌어요.",
             )
+
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+
+        # --- 카테고리 비교 (여러 카테고리의 실적 흐름을 한 차트에 겹쳐서) — 페이지
+        # 제일 하단에 배치. 위 단일 카테고리 필터(selected_cat)와는 별개의 멀티셀렉트라서,
+        # 페이지 나머지 필터·표는 안 건드리고 이 차트만 여러 카테고리를 동시에 보여준다. ---
+        st.markdown("**카테고리 비교**")
+        cat_compare_metric = st.radio(
+            "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
+            index=1, key="cat_compare_metric", horizontal=True, label_visibility="collapsed",
+        )
+        # 이 비교 차트는 매체 필터를 페이지와 독립적으로 고를 수 있어서, 카테고리
+        # 목록도 페이지 상단 매체 기준(_cat_options_top)이 아니라 전체 카테고리
+        # 원본에서 뽑는다 — 안 그러면 상단 매체엔 없고 여기서 고른 매체에만 있는
+        # 카테고리가 선택지에서 아예 빠지는 문제가 생긴다.
+        _cat_compare_options_all = sorted(
+            c for c in df_category["카테고리"].dropna().unique() if c != "전체"
+        )
+        _cat_compare_default = [
+            r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options_all
+        ]
+        # 비교할 카테고리 / 매체 필터를 나란히 배치
+        _cmp_col_cat, _cmp_col_bpu = st.columns([3, 1])
+        with _cmp_col_cat:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교할 카테고리 (2~5개)</div>", unsafe_allow_html=True)
+            selected_cats_compare = st.multiselect(
+                "비교할 카테고리 (2~5개)", _cat_compare_options_all, default=_cat_compare_default,
+                key="cat_compare_select", max_selections=5, label_visibility="collapsed",
+            )
+        with _cmp_col_bpu:
+            # 페이지 상단 매체 필터와는 별개로, 이 비교 차트만 다른 매체 기준으로
+            # 보고 싶을 때를 위해 따로 둔다.
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
+            _cmp_bpu_label_sel = st.selectbox(
+                "매체 필터", [l for l, _ in BPU_OPTIONS],
+                index=[l for l, _ in BPU_OPTIONS].index(_bpu_label_sel),
+                key="cat_compare_bpu", label_visibility="collapsed",
+            )
+        bpu_compare = dict(BPU_OPTIONS)[_cmp_bpu_label_sel]
+        if bpu_compare in BPU_GROUPS:
+            _cmp_bpu_df = df_category[df_category["BPU"].isin(BPU_GROUPS[bpu_compare])]
+        elif bpu_compare == "Total":
+            _cmp_bpu_df = df_category
+        else:
+            _cmp_bpu_df = df_category[df_category["BPU"] == bpu_compare]
+        if _has_segment:
+            _cmp_bpu_df = _cmp_bpu_df[_cmp_bpu_df["회원구분"] == cat_segment]
+        if _ff_exclude:
+            _cmp_bpu_df = exclude_ff_brand(_cmp_bpu_df)
+
+        if len(selected_cats_compare) >= 2:
+            # 위 '카테고리별 요약'용 _cat_daily_df_early는 거래액 컬럼 하나뿐이라, CR/객단가처럼
+            # 트래픽·구매객수가 같이 필요한 비율 지표는 못 구한다 — 여기서 세 컬럼을 다
+            # 남긴 버전을 따로 만든다. 비율 지표는 날짜별 단순평균이 아니라 항상
+            # 분자/분모를 먼저 더한 뒤 나눠야 하므로(비율 단순평균 금지 원칙), 리샘플
+            # 전에 일자 단위로 먼저 계산해둔다.
+            _cat_daily_metrics_bpu = _cmp_bpu_df[(_cmp_bpu_df["브랜드"] == "전체") & (_cmp_bpu_df["카테고리"] != "전체")]
+            if bpu_compare == "Total" or bpu_compare in BPU_GROUPS:
+                _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.groupby(
+                    ["날짜", "카테고리"], as_index=False
+                )[["트래픽", "거래액", "구매객수"]].sum()
+            else:
+                _cat_daily_metrics_bpu = _cat_daily_metrics_bpu[["날짜", "카테고리", "트래픽", "거래액", "구매객수"]]
+            if cat_compare_metric in ("CR", "객단가"):
+                _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.copy()
+                _cat_daily_metrics_bpu["CR"] = (
+                    _cat_daily_metrics_bpu["구매객수"] / _cat_daily_metrics_bpu["트래픽"] * 100
+                ).where(_cat_daily_metrics_bpu["트래픽"] > 0, 0)
+                _cat_daily_metrics_bpu["객단가"] = (
+                    _cat_daily_metrics_bpu["거래액"] / _cat_daily_metrics_bpu["구매객수"]
+                ).where(_cat_daily_metrics_bpu["구매객수"] > 0, 0)
+            # 절대값 지표(트래픽/거래액/구매객수)는 월마감일 때 기간 합계, 그 외엔 일평균 —
+            # 위 단일 카테고리 차트(cat_full 리샘플)와 동일한 규칙. 비율 지표(CR/객단가)는
+            # 이미 일자별로 계산해뒀으니 항상 평균(=해당 기간 일별 비율의 평균)으로 묶는다.
+            _cmp_agg = "sum" if (unit == "월마감" and cat_compare_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
+
+            _compare_frames = {}
+            for _cname in selected_cats_compare:
+                _g = _cat_daily_metrics_bpu[_cat_daily_metrics_bpu["카테고리"] == _cname]
+                if _g.empty:
+                    continue
+                _s_raw_c = _g.set_index("날짜")[cat_compare_metric].sort_index()
+                _series_c = _s_raw_c.resample(UNIT_CONFIG[unit]["rule"]).agg(_cmp_agg)
+                if unit == "주별":
+                    _series_c.index = _series_c.index - pd.Timedelta(days=6)
+                elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
+                    _series_c = _series_c.iloc[:-1]
+                # 위 단일 카테고리 차트와 동일하게 최신 연도만 남긴다 — 안 그러면 일별/주별
+                # 조회 시 2년치가 한 차트에 다 찍혀서 너무 빽빽해진다(전년 비교는 이 차트에선
+                # 안 그리니, 지난해 구간을 같이 보여줄 이유도 없음).
+                if not _series_c.empty:
+                    _series_c = _series_c[_series_c.index.year == int(_series_c.index.max().year)]
+                if selected_period_date is not None and not _series_c.empty:
+                    _series_c = _series_c[_series_c.index <= selected_period_date]
+                    # 마지막 지점이 진행 중인(부분) 기간이면, 위 단일 카테고리 차트와
+                    # 동일하게 실제 원본 평균으로 보정한다(안 그러면 아직 안 끝난 주/달의
+                    # 평균이 낮게 잡혀서 마지막 지점이 뚝 떨어져 보이는 착시가 생김).
+                    _is_partial_c, _cur_days_c, _ = _partial_last_period(
+                        _s_raw_c[_s_raw_c.index <= raw_cutoff_date(selected_period_date, unit)], unit
+                    )
+                    if _is_partial_c and _cur_days_c is not None and len(_cur_days_c) > 0:
+                        _corrected_c = _s_raw_c.loc[_cur_days_c].mean()
+                        if pd.notna(_corrected_c):
+                            _series_c.iloc[-1] = _corrected_c
+                _compare_frames[_cname] = _series_c
+
+            if _compare_frames:
+                _compare_df = pd.DataFrame(_compare_frames)
+                # 조회 단위별 기간/주차 필터 — 위 단일 카테고리 차트와 동일한 UI·기본값
+                # (일별=최근 30일, 주별=최근 12주). 월별/월마감은 단일 차트와 동일하게
+                # 최신 연도 전체(위에서 이미 잘라둠)를 그대로 보여주고 별도 필터는 안 둔다.
+                if unit == "일별" and not _compare_df.empty:
+                    _cmp_max_d = _compare_df.index.max().date()
+                    _cmp_min_d = _compare_df.index.min().date()
+                    _cmp_default_start = max(_cmp_min_d, _cmp_max_d - _dt.timedelta(days=30))
+                    _cmp_range_key = f"cat_compare_range_{bpu_compare}"
+                    col_cmpd, col_cmpr = st.columns([3, 1])
+                    with col_cmpd:
+                        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간</div>", unsafe_allow_html=True)
+                        cmp_dr = st.date_input(
+                            "기간", value=(_cmp_default_start, _cmp_max_d),
+                            min_value=_cmp_min_d, max_value=_cmp_max_d,
+                            key=_cmp_range_key, label_visibility="collapsed",
+                        )
+                    with col_cmpr:
+                        st.markdown("<div style='height:1.5rem;'></div>", unsafe_allow_html=True)
+                        st.button(
+                            "🔄 최근으로", key=f"{_cmp_range_key}_reset", use_container_width=True,
+                            on_click=_reset_date_range, args=(_cmp_range_key, (_cmp_default_start, _cmp_max_d)),
+                        )
+                    if isinstance(cmp_dr, tuple) and len(cmp_dr) == 2:
+                        _compare_df = _compare_df[
+                            (_compare_df.index >= pd.Timestamp(cmp_dr[0])) & (_compare_df.index <= pd.Timestamp(cmp_dr[1]))
+                        ]
+                elif unit == "주별" and not _compare_df.empty:
+                    col_cmpw, col_cmpr = st.columns([3, 1])
+                    # render_week_range_filter는 시리즈 하나를 기준으로 슬라이더를 그리고
+                    # 그 범위로 자른 시리즈를 반환한다 — 첫 카테고리 열을 기준 삼아 선택
+                    # 범위(날짜 인덱스)만 얻어서 전체 비교 표(_compare_df)에 동일하게 적용한다.
+                    _cmp_ref_series = render_week_range_filter(
+                        _compare_df.iloc[:, 0], f"cat_compare_{bpu_compare}", col_cmpw, col_cmpr,
+                    )
+                    _compare_df = _compare_df.loc[_cmp_ref_series.index]
+
+                render_category_compare_chart(_compare_df, height=320, unit=unit, metric_label=cat_compare_metric)
+            else:
+                st.info("선택한 카테고리에 데이터가 없습니다.")
+        else:
+            st.caption("2개 이상 선택하면 비교 그래프가 표시돼요.")
 
 
 
