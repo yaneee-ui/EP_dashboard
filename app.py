@@ -3017,9 +3017,9 @@ if side["page"].startswith("11."):
         _wk4_metric_defs = [
             ("거래액", "거래액", None, False),
             ("트래픽", "트래픽", None, False),
-            ("객단가", "거래액", "구매객수", True),
             ("구매객수", "구매객수", None, False),
             ("CR", "구매객수", "트래픽", True),
+            ("객단가", "거래액", "구매객수", True),
         ]
 
         def _wk4_series_for(bpu_list, num_col, den_col):
