@@ -41,6 +41,7 @@ from dashboard_helpers import (
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart, compute_official_total,
     render_revenue_ranking, render_top_products,
+    load_event_calendar, compute_event_comparison, render_event_comparison_tables, build_event_comparison_excel,
 )
 
 
@@ -235,6 +236,7 @@ with _sticky:
         "4": "📋 누적 데이터", "5": "🏷️ 누적 데이터 (카테고리)",
         "6": "📅 전체 실적 (주차별)", "7": "👤 회원 실적 (주차별)", "8": "✨ 신규 실적 (주차별)",
         "9": "🎟️ 쿠폰 비용 분석", "10": "📈 마감 예상 실적", "11": "📑 주간보고용",
+        "12": "🎉 행사 기간 비교",
     }
 
     # ========================================================
@@ -495,6 +497,17 @@ with _sticky:
     # 여기서는 간단한 제목만 표시
     # ========================================================
     elif _page_num == "11":
+        st.markdown(
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            unsafe_allow_html=True,
+        )
+
+    # ========================================================
+    # 페이지 12: 행사 기간 비교도 자체 필터(행사 선택, 두 기간)를 페이지 본문에서
+    # 처리하므로, 여기서는 간단한 제목만 표시 (안 그러면 4/5번 페이지용 매체/기간유형/
+    # 집계방식 필터가 여기에도 딸려나옴 - 이 페이지엔 의미 없는 필터라서).
+    # ========================================================
+    elif _page_num == "12":
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -4222,3 +4235,119 @@ if side["page"].startswith("10."):
             st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         else:
             st.info("EP채널 데이터가 없어서 전시상품수는 건너뛰었어요 (사이드바에서 ep_data_long.csv를 업로드하면 나와요).")
+
+
+# ============================================================
+# 페이지 12: 행사 기간 비교 — 임의의 두 구간(보통 작년 vs 올해 같은 행사)을 BPU별/
+# 카테고리별로 비교. 조회단위(일별/주별/월별)나 364일 고정 오프셋의 '전년동요일'
+# 로직과 무관하게, 완전히 자유로운 두 날짜 구간을 받아서 일평균 기준으로 맞대본다
+# (L:Festa처럼 행사 날짜가 해마다 며칠씩 밀리는 경우를 위한 페이지).
+# ============================================================
+if side["page"].startswith("12."):
+    st.markdown("---")
+    st.markdown("### 🎉 행사 기간 비교")
+
+    if df_traffic.empty or df_category.empty:
+        st.info("데이터가 없습니다. 사이드바에서 EP실적/카테고리 CSV를 업로드해주세요.")
+    else:
+        _event_cal = load_event_calendar()
+        _event_options = []
+        if not _event_cal.empty:
+            _event_cal["표시"] = _event_cal.apply(
+                lambda r: f"{int(r['연도'])}.{int(r['월']):02d} · {r['행사명']} "
+                          f"({r['시작일'].strftime('%m/%d')}~{r['종료일'].strftime('%m/%d')})",
+                axis=1,
+            )
+            _event_options = _event_cal["표시"].tolist()
+        else:
+            st.warning("event_calendar.csv가 없어서 행사 목록을 못 불러왔어요 — 아래에서 직접 기간을 입력해주세요.")
+
+        ec1, ec2 = st.columns(2)
+        with ec1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>이번 행사</div>", unsafe_allow_html=True)
+            _sel_b_label = st.selectbox(
+                "이번 행사", _event_options, index=len(_event_options) - 1,
+                key="event_b_select", label_visibility="collapsed",
+            ) if _event_options else None
+
+        # 이번 행사와 같은 '월 슬롯'의 작년 행사를 자동으로 찾아서 비교 대상 기본값으로 제안
+        _default_a_idx = 0
+        if _sel_b_label is not None:
+            _row_b = _event_cal.loc[_event_cal["표시"] == _sel_b_label].iloc[0]
+            _match = _event_cal[(_event_cal["연도"] == _row_b["연도"] - 1) & (_event_cal["월"] == _row_b["월"])]
+            if not _match.empty:
+                _default_a_idx = _match.index[0]
+
+        with ec2:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교할 행사 (보통 작년)</div>", unsafe_allow_html=True)
+            _sel_a_label = st.selectbox(
+                "비교할 행사", _event_options, index=_default_a_idx,
+                key="event_a_select", label_visibility="collapsed",
+            ) if _event_options else None
+
+        _default_range_a = (
+            (_event_cal.loc[_event_cal["표시"] == _sel_a_label, "시작일"].iloc[0].date(),
+             _event_cal.loc[_event_cal["표시"] == _sel_a_label, "종료일"].iloc[0].date())
+            if _sel_a_label is not None else (_dt.date(2025, 1, 1), _dt.date(2025, 1, 1))
+        )
+        _default_range_b = (
+            (_event_cal.loc[_event_cal["표시"] == _sel_b_label, "시작일"].iloc[0].date(),
+             _event_cal.loc[_event_cal["표시"] == _sel_b_label, "종료일"].iloc[0].date())
+            if _sel_b_label is not None else (_dt.date.today(), _dt.date.today())
+        )
+
+        st.markdown("<div style='height:6px;'></div>", unsafe_allow_html=True)
+        st.caption("자동으로 채워진 기간이 실제 행사일과 다르면 아래에서 직접 조정할 수 있어요.")
+        ed1, ed2 = st.columns(2)
+        _tr_min_d = df_traffic["날짜"].min().date()
+        _tr_max_d = df_traffic["날짜"].max().date()
+        with ed1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교 기간</div>", unsafe_allow_html=True)
+            range_a_input = st.date_input(
+                "비교 기간", value=_default_range_a, min_value=_tr_min_d, max_value=_tr_max_d,
+                key="event_range_a", label_visibility="collapsed",
+            )
+        with ed2:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>이번 기간</div>", unsafe_allow_html=True)
+            range_b_input = st.date_input(
+                "이번 기간", value=_default_range_b, min_value=_tr_min_d, max_value=_tr_max_d,
+                key="event_range_b", label_visibility="collapsed",
+            )
+
+        if not (
+            isinstance(range_a_input, tuple) and len(range_a_input) == 2
+            and isinstance(range_b_input, tuple) and len(range_b_input) == 2
+        ):
+            st.info("두 기간 모두 시작일~종료일을 선택해주세요.")
+        else:
+            range_a = (pd.Timestamp(range_a_input[0]), pd.Timestamp(range_a_input[1]))
+            range_b = (pd.Timestamp(range_b_input[0]), pd.Timestamp(range_b_input[1]))
+            _ndays_a = (range_a[1] - range_a[0]).days + 1
+            _ndays_b = (range_b[1] - range_b[0]).days + 1
+            _label_a = _sel_a_label.split(" · ")[0] if _sel_a_label else range_a_input[0].strftime("%Y.%m")
+            _label_b = _sel_b_label.split(" · ")[0] if _sel_b_label else range_b_input[0].strftime("%Y.%m")
+
+            st.markdown(
+                f"<div style='background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin:8px 0;'>"
+                f"<div style='font-size:0.85rem;color:#374151;'>📅 <b>{_label_a}</b> {range_a_input[0]}~{range_a_input[1]} ({_ndays_a}일)"
+                f" &nbsp;vs&nbsp; <b>{_label_b}</b> {range_b_input[0]}~{range_b_input[1]} ({_ndays_b}일)</div>"
+                f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>모든 값은 일평균(기간 합계 ÷ 일수) 기준이에요 "
+                f"— 두 기간 길이가 달라도 공정하게 비교돼요.</div></div>",
+                unsafe_allow_html=True,
+            )
+            if _ndays_a != _ndays_b:
+                st.caption(f"⚠️ 두 기간 일수가 달라요 ({_ndays_a}일 vs {_ndays_b}일) — 일평균 기준이라 비교 자체는 괜찮지만 참고하세요.")
+
+            try:
+                _result = compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b)
+                render_event_comparison_tables(_result, label_a=_label_a, label_b=_label_b)
+
+                _xlsx = build_event_comparison_excel(_result, label_a=_label_a, label_b=_label_b)
+                st.download_button(
+                    "⬇️ 엑셀 다운로드",
+                    data=_xlsx,
+                    file_name=f"행사비교_{range_b_input[0].strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                )
+            except Exception as _e:
+                st.error(f"비교표 생성 중 문제가 발생했어요: {_e}")

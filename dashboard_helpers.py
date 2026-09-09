@@ -1947,3 +1947,301 @@ def render_top_products(sub_df, unit, selected_period_date, title, subtitle, bra
     _disp["거래액"] = _disp["거래액"].map(lambda v: f"{v:,.0f}")
     _disp["비중"] = _disp["비중"].map(lambda v: f"{v:.1f}%")
     st.dataframe(_disp, hide_index=True, use_container_width=True)
+
+
+# ============================================================
+# 12. 행사 기간 비교 — 임의의 두 날짜 구간(보통 작년 같은 행사 vs 올해 같은 행사)을
+# BPU별/카테고리별로 비교. 조회단위(일별/주별/월별)에 묶인 기존 페이지들과 달리
+# 완전히 자유로운 두 구간을 받는다 (전년동요일=364일 고정 오프셋이 아님).
+# ============================================================
+BPUS_ALL = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"]
+_BPU_ROW_LABEL = {"Total": "전체", "e-영업1": "e-영업1", "e-영업2": "e-영업2", "e-영업3": "e-영업3", "e-영업4": "e-영업4"}
+
+
+def load_event_calendar(path="event_calendar.csv"):
+    """행사 캘린더(연도/월/행사명/시작일/종료일) CSV를 읽는다. 파일이 없으면 빈 DF."""
+    import os
+
+    if not os.path.exists(path):
+        return pd.DataFrame(columns=["연도", "월", "행사명", "시작일", "종료일"])
+    df = pd.read_csv(path)
+    df["시작일"] = pd.to_datetime(df["시작일"])
+    df["종료일"] = pd.to_datetime(df["종료일"])
+    return df.sort_values(["연도", "월"]).reset_index(drop=True)
+
+
+def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b):
+    """구간 A(보통 작년 행사) vs 구간 B(보통 올해 행사)를 일평균 기준으로 비교.
+    range_a/range_b: (시작 Timestamp, 종료 Timestamp) - 각 자기 구간의 일수로 나눠서
+    일평균을 낸다(구간 길이가 서로 달라도 공정하게 비교되도록).
+
+    반환: {
+      'ndays_a', 'ndays_b',
+      'bpu_rows': [{'지표','구분','A','B','전년비'}...],
+      'cat_rows': {'거래액': [...], '트래픽': [...]} (각 BPU별 '전체' 행 포함),
+      'coupon': {'A':{'쿠폰할인','거래액','비용률'}, 'B':{...}},
+    }
+    """
+    ndays_a = (range_a[1] - range_a[0]).days + 1
+    ndays_b = (range_b[1] - range_b[0]).days + 1
+
+    def _tr_bpu_metrics(rng, ndays):
+        s = df_traffic[(df_traffic["날짜"] >= rng[0]) & (df_traffic["날짜"] <= rng[1])]
+        s_all = s[s["회원구분"] == "전체"]
+        s_mem = s[s["회원구분"] == "회원"]
+        out = {}
+        for b in BPUS_ALL:
+            t = s_all[s_all["BPU"] == b]
+            trf, gmv, cnt = t["트래픽"].sum(), t["거래액"].sum(), t["구매객수"].sum()
+            out[b] = {
+                "트래픽": trf / ndays, "거래액": gmv / ndays, "구매객수": cnt / ndays,
+                "CR": (cnt / trf * 100 if trf else None), "객단가": (gmv / cnt if cnt else None),
+                "회원 트래픽": s_mem[s_mem["BPU"] == b]["트래픽"].sum() / ndays,
+            }
+        return out
+
+    m_a = _tr_bpu_metrics(range_a, ndays_a)
+    m_b = _tr_bpu_metrics(range_b, ndays_b)
+
+    bpu_rows = []
+    for metric in ["트래픽", "회원 트래픽", "거래액", "구매객수", "CR", "객단가"]:
+        for b in BPUS_ALL:
+            va, vb = m_a[b][metric], m_b[b][metric]
+            d = (vb / va - 1) * 100 if va else None
+            bpu_rows.append({
+                "지표": metric, "구분": _BPU_ROW_LABEL[b],
+                "A": va, "B": vb, "전년비": d, "is_pct": metric == "CR",
+            })
+
+    cat_sub = df_category[
+        (df_category["브랜드"] == "전체") & (df_category["회원구분"] == "전체") & (df_category["카테고리"] != "전체")
+    ]
+    cat_total_sub = df_category[
+        (df_category["브랜드"] == "전체") & (df_category["회원구분"] == "전체") & (df_category["카테고리"] == "전체")
+    ]
+
+    def _cat_metric(rng, ndays, metric):
+        s = cat_sub[(cat_sub["날짜"] >= rng[0]) & (cat_sub["날짜"] <= rng[1])]
+        return s.groupby(["BPU", "카테고리"])[metric].sum() / ndays
+
+    def _cat_total_metric(rng, ndays, metric):
+        s = cat_total_sub[(cat_total_sub["날짜"] >= rng[0]) & (cat_total_sub["날짜"] <= rng[1])]
+        return s.groupby("BPU")[metric].sum() / ndays
+
+    cat_rows = {}
+    for metric in ["거래액", "트래픽"]:
+        pv_all = _cat_metric(range_a, ndays_a, metric)
+        cv_all = _cat_metric(range_b, ndays_b, metric)
+        pv_tot = _cat_total_metric(range_a, ndays_a, metric)
+        cv_tot = _cat_total_metric(range_b, ndays_b, metric)
+        rows = []
+        for bpu in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+            cats = sorted(
+                set(pv_all.get(bpu, pd.Series(dtype=float)).index) | set(cv_all.get(bpu, pd.Series(dtype=float)).index)
+            )
+            bpu_group = [("전체", pv_tot.get(bpu, 0.0), cv_tot.get(bpu, 0.0), True)]
+            for c in cats:
+                p = pv_all.get((bpu, c), 0.0)
+                cu = cv_all.get((bpu, c), 0.0)
+                bpu_group.append((c, p, cu, False))
+            bpu_group[1:] = sorted(bpu_group[1:], key=lambda x: x[2], reverse=True)
+            for name, p, cu, is_total in bpu_group:
+                d = (cu / p - 1) * 100 if p else None
+                rows.append({"BPU": bpu, "카테고리": name, "A": p, "B": cu, "전년비": d, "is_total": is_total})
+        cat_rows[metric] = rows
+
+    def _coupon_stats(rng, ndays):
+        c = df_coupon_daily[(df_coupon_daily["날짜"] >= rng[0]) & (df_coupon_daily["날짜"] <= rng[1])]
+        t = df_traffic[
+            (df_traffic["날짜"] >= rng[0]) & (df_traffic["날짜"] <= rng[1])
+            & (df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")
+        ]
+        cost, gmv = c["쿠폰할인"].sum(), t["거래액"].sum()
+        return {"쿠폰할인": cost / ndays, "거래액": gmv / ndays, "비용률": (cost / gmv * 100) if gmv else None}
+
+    coupon = {"A": _coupon_stats(range_a, ndays_a), "B": _coupon_stats(range_b, ndays_b)}
+
+    return {"ndays_a": ndays_a, "ndays_b": ndays_b, "bpu_rows": bpu_rows, "cat_rows": cat_rows, "coupon": coupon}
+
+
+def render_event_comparison_tables(result, label_a="작년", label_b="올해"):
+    """compute_event_comparison() 결과를 화면용 HTML 표 3개(BPU별/카테고리별 거래액/
+    카테고리별 트래픽)로 그린다. 엑셀과 동일한 숫자를 쓰므로 화면·다운로드가 항상 일치."""
+
+    def _fmt_num(v, is_pct=False):
+        if v is None or pd.isna(v):
+            return "-"
+        return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
+
+    def _fmt_delta(v):
+        if v is None or pd.isna(v):
+            return "-"
+        return (
+            f"<span style='color:#16a34a;'>{v:.1f}%</span>" if v >= 0
+            else f"<span style='color:#dc2626;'>△{abs(v):.1f}%</span>"
+        )
+
+    st.markdown("**BPU별 상세실적**  ·  <span style='color:#6b7280;font-size:0.85rem'>일평균 기준</span>", unsafe_allow_html=True)
+    _sections = ""
+    _cur_metric = None
+    for r in result["bpu_rows"]:
+        if r["지표"] != _cur_metric:
+            _cur_metric = r["지표"]
+            _sections += f"<tr><td colspan='4' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
+        _sections += (
+            f"<tr><td class='m'>{r['구분']}</td>"
+            f"<td style='text-align:right;'>{_fmt_num(r['A'], r['is_pct'])}</td>"
+            f"<td style='text-align:right;'>{_fmt_num(r['B'], r['is_pct'])}</td>"
+            f"<td style='text-align:right;'>{_fmt_delta(r['전년비'])}</td></tr>"
+        )
+    st.markdown(
+        "<div style='overflow-x:auto;'><table class='summary-table'>"
+        f"<thead><tr><th>구분</th><th>{label_a}</th><th>{label_b}</th><th>증감</th></tr></thead>"
+        f"<tbody>{_sections}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+    for title, metric in [("카테고리별 거래액", "거래액"), ("카테고리별 트래픽", "트래픽")]:
+        st.markdown(f"**{title}**", unsafe_allow_html=True)
+        _body = ""
+        _cur_bpu = None
+        for r in result["cat_rows"][metric]:
+            if r["BPU"] != _cur_bpu:
+                _cur_bpu = r["BPU"]
+                _body += f"<tr><td colspan='4' style='background:#eef2ff;font-weight:700;'>{_cur_bpu}</td></tr>"
+            _row_style = "font-weight:600;" if r["is_total"] else ""
+            _body += (
+                f"<tr style='{_row_style}'><td class='m'>{r['카테고리']}</td>"
+                f"<td style='text-align:right;'>{_fmt_num(r['A'])}</td>"
+                f"<td style='text-align:right;'>{_fmt_num(r['B'])}</td>"
+                f"<td style='text-align:right;'>{_fmt_delta(r['전년비'])}</td></tr>"
+            )
+        st.markdown(
+            "<div style='overflow-x:auto;max-height:420px;overflow-y:auto;'><table class='summary-table'>"
+            f"<thead><tr><th>카테고리</th><th>{label_a}</th><th>{label_b}</th><th>증감</th></tr></thead>"
+            f"<tbody>{_body}</tbody></table></div>",
+            unsafe_allow_html=True,
+        )
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+    st.markdown("**쿠폰 비용률**", unsafe_allow_html=True)
+    _ca, _cb = result["coupon"]["A"], result["coupon"]["B"]
+    _rate_a = f"{_ca['비용률']:.2f}%" if _ca["비용률"] is not None else "-"
+    _rate_b = f"{_cb['비용률']:.2f}%" if _cb["비용률"] is not None else "-"
+    st.markdown(
+        "<div style='overflow-x:auto;'><table class='summary-table'>"
+        f"<thead><tr><th>구분</th><th>{label_a}</th><th>{label_b}</th></tr></thead>"
+        "<tbody>"
+        f"<tr><td class='m'>쿠폰할인(일평균)</td><td style='text-align:right;'>{_fmt_num(_ca['쿠폰할인'])}</td>"
+        f"<td style='text-align:right;'>{_fmt_num(_cb['쿠폰할인'])}</td></tr>"
+        f"<tr><td class='m'>거래액(일평균, Total)</td><td style='text-align:right;'>{_fmt_num(_ca['거래액'])}</td>"
+        f"<td style='text-align:right;'>{_fmt_num(_cb['거래액'])}</td></tr>"
+        f"<tr><td class='m'>비용률</td><td style='text-align:right;font-weight:700;'>{_rate_a}</td>"
+        f"<td style='text-align:right;font-weight:700;'>{_rate_b}</td></tr>"
+        "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def build_event_comparison_excel(result, label_a="작년", label_b="올해"):
+    """compute_event_comparison() 결과를 엑셀 bytes로 - BPU별 상세실적/카테고리별
+    거래액/카테고리별 트래픽 3개 시트. 화면(render_event_comparison_tables)과 완전히
+    같은 result를 쓰므로 화면에 보이는 숫자와 다운로드 숫자가 항상 일치한다."""
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill
+
+    wb = openpyxl.Workbook()
+    HEADER_FILL = PatternFill("solid", fgColor="D9D9D9")
+    SECTION_FILL = PatternFill("solid", fgColor="EEF2FF")
+    UP_FONT = Font(color="16A34A")
+    DOWN_FONT = Font(color="DC2626")
+    BOLD = Font(bold=True)
+
+    def _write_header(ws, cols):
+        for c, val in enumerate(cols, start=1):
+            cell = ws.cell(row=1, column=c, value=val)
+            cell.fill = HEADER_FILL
+            cell.font = BOLD
+
+    ws1 = wb.active
+    ws1.title = "BPU별 상세실적"
+    _write_header(ws1, ["지표", "구분", label_a, label_b, "증감"])
+    r = 2
+    _cur_metric = None
+    for row in result["bpu_rows"]:
+        if row["지표"] != _cur_metric:
+            _cur_metric = row["지표"]
+            ws1.cell(row=r, column=1, value=_cur_metric).font = BOLD
+            for c in range(1, 6):
+                ws1.cell(row=r, column=c).fill = SECTION_FILL
+            r += 1
+        ws1.cell(row=r, column=1, value=row["지표"])
+        ws1.cell(row=r, column=2, value=row["구분"])
+        va_cell = ws1.cell(row=r, column=3, value=round(row["A"], 1) if row["A"] is not None else None)
+        vb_cell = ws1.cell(row=r, column=4, value=round(row["B"], 1) if row["B"] is not None else None)
+        if row["is_pct"]:
+            va_cell.number_format = vb_cell.number_format = '0.0"%"'
+        else:
+            va_cell.number_format = vb_cell.number_format = "#,##0"
+        d_cell = ws1.cell(row=r, column=5, value=round(row["전년비"], 1) if row["전년비"] is not None else None)
+        if row["전년비"] is not None:
+            d_cell.number_format = '+0.0"%";-0.0"%"'
+            d_cell.font = UP_FONT if row["전년비"] >= 0 else DOWN_FONT
+        r += 1
+    for c, w in zip("ABCDE", [12, 12, 14, 14, 10]):
+        ws1.column_dimensions[c].width = w
+    ws1.freeze_panes = "A2"
+
+    for title, metric in [("카테고리별 거래액", "거래액"), ("카테고리별 트래픽", "트래픽")]:
+        ws = wb.create_sheet(title)
+        _write_header(ws, ["BPU", "카테고리", label_a, label_b, "증감"])
+        r = 2
+        _cur_bpu = None
+        for row in result["cat_rows"][metric]:
+            if row["BPU"] != _cur_bpu:
+                _cur_bpu = row["BPU"]
+                ws.cell(row=r, column=1, value=_cur_bpu).font = BOLD
+                for c in range(1, 6):
+                    ws.cell(row=r, column=c).fill = SECTION_FILL
+                r += 1
+            b_cell = ws.cell(row=r, column=1, value=row["BPU"])
+            c_cell = ws.cell(row=r, column=2, value=row["카테고리"])
+            va_cell = ws.cell(row=r, column=3, value=round(row["A"]) if row["A"] else (0 if row["A"] == 0 else None))
+            vb_cell = ws.cell(row=r, column=4, value=round(row["B"]) if row["B"] else (0 if row["B"] == 0 else None))
+            va_cell.number_format = vb_cell.number_format = "#,##0"
+            if row["is_total"]:
+                for cell in (b_cell, c_cell, va_cell, vb_cell):
+                    cell.font = BOLD
+            d_cell = ws.cell(row=r, column=5, value=round(row["전년비"], 1) if row["전년비"] is not None else None)
+            if row["전년비"] is not None:
+                d_cell.number_format = '+0.0"%";-0.0"%"'
+                _base_font = UP_FONT if row["전년비"] >= 0 else DOWN_FONT
+                d_cell.font = Font(bold=True, color=_base_font.color) if row["is_total"] else _base_font
+            r += 1
+        for c, w in zip("ABCDE", [10, 10, 14, 14, 10]):
+            ws.column_dimensions[c].width = w
+        ws.freeze_panes = "A2"
+
+    ws_c = wb.create_sheet("쿠폰 비용률")
+    _write_header(ws_c, ["구분", label_a, label_b])
+    _ca, _cb = result["coupon"]["A"], result["coupon"]["B"]
+    ws_c.append(["쿠폰할인(일평균)", round(_ca["쿠폰할인"]), round(_cb["쿠폰할인"])])
+    ws_c.append(["거래액(일평균, Total)", round(_ca["거래액"]), round(_cb["거래액"])])
+    ws_c.append([
+        "비용률",
+        round(_ca["비용률"] / 100, 4) if _ca["비용률"] is not None else None,
+        round(_cb["비용률"] / 100, 4) if _cb["비용률"] is not None else None,
+    ])
+    for c in ("B", "C"):
+        ws_c[f"{c}2"].number_format = ws_c[f"{c}3"].number_format = "#,##0"
+        ws_c[f"{c}4"].number_format = "0.00%"
+        ws_c[f"{c}4"].font = BOLD
+    ws_c["A4"].font = BOLD
+    for c, w in zip("ABC", [22, 16, 16]):
+        ws_c.column_dimensions[c].width = w
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
