@@ -46,8 +46,15 @@ else:
     _cr_is_ratio = False  # csv: CR이 이미 "9.1%" 문자열
 
     def _clean_number(s):
-        """콤마 붙은 숫자 문자열("2,540") -> float. CR은 별도로 % 기호까지 제거."""
-        return pd.to_numeric(s.astype(str).str.replace(",", "", regex=False).str.replace("%", "", regex=False), errors="coerce")
+        """콤마 붙은 숫자 문자열("2,540") -> float. CR은 별도로 % 기호까지 제거.
+        반품 등으로 음수인 셀은 원본이 "-" 대신 "△"를 쓰기도 해서("△25.00%") 먼저
+        마이너스 부호로 바꿔둔다 - 안 그러면 to_numeric이 파싱 못 해서 조용히
+        NaN이 되고, 그 카테고리·날짜의 CR/객단가가 통째로 비어버린다."""
+        return pd.to_numeric(
+            s.astype(str).str.replace("△", "-", regex=False)
+            .str.replace(",", "", regex=False).str.replace("%", "", regex=False),
+            errors="coerce",
+        )
 
     # 판다스가 이 파일을 전부 고정 str dtype으로 읽어서, 날짜 값 칸에 .loc로 숫자를
     # 바로 대입하면 dtype 에러가 난다 - 라벨 칸(0~6열)은 그대로 두고 날짜 칸(7열~)만
