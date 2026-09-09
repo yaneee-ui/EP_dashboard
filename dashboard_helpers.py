@@ -2064,6 +2064,148 @@ def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, 
     return {"ndays_a": ndays_a, "ndays_b": ndays_b, "bpu_rows": bpu_rows, "cat_rows": cat_rows, "coupon": coupon}
 
 
+def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
+    """compute_event_comparison() 결과를 '한눈에 보는' 대시보드 형태로 그린다
+    (KPI 카드 + BPU별 거래액 바 차트 + 카테고리 Top 변동 + 쿠폰 비용률 카드).
+    상세 표(render_event_comparison_tables)는 이 요약 아래 expander에 넣는 용도로
+    분리했다 - 요약은 스캔하기 좋게, 전체 숫자가 필요할 때만 펼쳐보게."""
+    import altair as alt
+
+    _bpu_lookup = {(r["지표"], r["구분"]): r for r in result["bpu_rows"]}
+
+    # --- 1) Total KPI 카드 ---
+    st.markdown("**핵심 지표 (Total · 일평균)**")
+    _metrics = ["트래픽", "회원 트래픽", "거래액", "구매객수", "CR", "객단가"]
+    _cols = st.columns(len(_metrics))
+    for i, m in enumerate(_metrics):
+        r = _bpu_lookup.get((m, "전체"))
+        with _cols[i]:
+            if r is None or r["B"] is None:
+                st.markdown(
+                    "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;"
+                    "padding:14px 12px;min-height:118px;'>"
+                    f"<div style='color:#6b7280;font-size:0.78rem;'>{m}</div>"
+                    "<div style='font-size:1.2rem;color:#9ca3af;'>-</div></div>",
+                    unsafe_allow_html=True,
+                )
+                continue
+            _is_pct = r["is_pct"]
+            _val_str = f"{r['B']:.1f}%" if _is_pct else f"{r['B']:,.0f}"
+            st.markdown(
+                "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;"
+                "padding:14px 12px;min-height:118px;'>"
+                f"<div style='color:#6b7280;font-size:0.78rem;margin-bottom:4px;'>{m}</div>"
+                f"<div style='font-size:1.35rem;font-weight:700;color:#111827;'>{_val_str}</div>"
+                f"<div style='font-size:0.74rem;margin-top:6px;'>{label_a}비 {format_delta_html(r['전년비'])}"
+                f"{_ref_str(r['A'], _is_pct)}</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+    # --- 2) BPU별 거래액 비교 바 차트 ---
+    st.markdown("**BPU별 거래액 비교**  ·  <span style='color:#6b7280;font-size:0.85rem'>일평균</span>", unsafe_allow_html=True)
+    _bar_rows = []
+    for b in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+        r = _bpu_lookup.get(("거래액", b))
+        if r and r["A"] is not None and r["B"] is not None:
+            _bar_rows.append({"BPU": b, "구분": label_a, "값": r["A"]})
+            _bar_rows.append({"BPU": b, "구분": label_b, "값": r["B"]})
+    if _bar_rows:
+        _bar_df = pd.DataFrame(_bar_rows)
+        _chart = (
+            alt.Chart(_bar_df)
+            .mark_bar()
+            .encode(
+                x=alt.X("BPU:N", title=None, axis=alt.Axis(labelAngle=0)),
+                xOffset=alt.XOffset("구분:N", sort=[label_a, label_b]),
+                y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
+                color=alt.Color(
+                    "구분:N", scale=alt.Scale(domain=[label_a, label_b], range=["#93c5fd", "#2563eb"]),
+                    legend=alt.Legend(orient="bottom", title=None),
+                ),
+                tooltip=[alt.Tooltip("BPU:N", title="BPU"), alt.Tooltip("구분:N", title="구분"),
+                         alt.Tooltip("값:Q", title="거래액", format=",.0f")],
+            )
+            .properties(height=260)
+        )
+        st.altair_chart(_chart, use_container_width=True)
+    else:
+        st.info("표시할 데이터가 없습니다.")
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+    # --- 3) 카테고리 Top 변동 (전 BPU 합산 거래액 기준) ---
+    st.markdown(
+        "**카테고리 Top 변동**  ·  <span style='color:#6b7280;font-size:0.85rem'>전 BPU 합산 거래액, 일평균</span>",
+        unsafe_allow_html=True,
+    )
+    _cat_agg = {}
+    for row in result["cat_rows"]["거래액"]:
+        if row["is_total"]:
+            continue
+        e = _cat_agg.setdefault(row["카테고리"], {"A": 0.0, "B": 0.0})
+        e["A"] += row["A"] or 0.0
+        e["B"] += row["B"] or 0.0
+    _movers = []
+    for cat, v in _cat_agg.items():
+        diff = v["B"] - v["A"]
+        pct = (v["B"] / v["A"] - 1) * 100 if v["A"] else None
+        _movers.append({"카테고리": cat, "diff": diff, "pct": pct})
+    _movers.sort(key=lambda x: x["diff"], reverse=True)
+
+    def _mover_card(title, items, positive):
+        _color = "#16a34a" if positive else "#dc2626"
+        _rows_html = ""
+        for it in items:
+            _sign = "+" if it["diff"] >= 0 else "△"
+            _pct_txt = f"({it['pct']:+.1f}%)" if it["pct"] is not None else ""
+            _rows_html += (
+                "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f2f4;'>"
+                f"<span>{it['카테고리']}</span>"
+                f"<span style='color:{_color};font-weight:600;'>{_sign}{abs(it['diff']):,.0f} {_pct_txt}</span></div>"
+            )
+        if not _rows_html:
+            _rows_html = "<div style='color:#9ca3af;font-size:0.85rem;'>데이터 없음</div>"
+        return (
+            "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;'>"
+            f"<div style='font-weight:600;margin-bottom:4px;'>{title}</div>{_rows_html}</div>"
+        )
+
+    _mc1, _mc2 = st.columns(2)
+    with _mc1:
+        st.markdown(_mover_card("🔺 가장 많이 증가", [m for m in _movers[:3] if m["diff"] > 0] or _movers[:3], True), unsafe_allow_html=True)
+    with _mc2:
+        _down = sorted(_movers, key=lambda x: x["diff"])[:3]
+        st.markdown(_mover_card("🔻 가장 많이 감소", [m for m in _down if m["diff"] < 0] or _down, False), unsafe_allow_html=True)
+
+    st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+
+    # --- 4) 쿠폰 비용률 카드 ---
+    st.markdown("**쿠폰 비용률**", unsafe_allow_html=True)
+    _ca, _cb = result["coupon"]["A"], result["coupon"]["B"]
+    _cc1, _cc2 = st.columns(2)
+    for _col, _label, _stat in [(_cc1, label_a, _ca), (_cc2, label_b, _cb)]:
+        with _col:
+            _rate_str = f"{_stat['비용률']:.2f}%" if _stat["비용률"] is not None else "-"
+            st.markdown(
+                "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
+                f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_label} 비용률</div>"
+                f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_rate_str}</div>"
+                f"<div style='font-size:0.76rem;color:#9ca3af;margin-top:4px;'>"
+                f"쿠폰할인 {_stat['쿠폰할인']:,.0f} · 거래액 {_stat['거래액']:,.0f} (일평균)</div>"
+                "</div>",
+                unsafe_allow_html=True,
+            )
+    if _ca["비용률"] is not None and _cb["비용률"] is not None:
+        _pt_diff = _cb["비용률"] - _ca["비용률"]
+        _worse = _pt_diff >= 0  # 비용률은 오르면 나쁜 지표(마진 악화)라 부호 해석이 반대
+        _diff_html = (
+            f"<span style='color:#dc2626;'>△{_pt_diff:.2f}%p 상승(비용 부담 증가)</span>" if _worse
+            else f"<span style='color:#16a34a;'>{abs(_pt_diff):.2f}%p 하락(비용 부담 감소)</span>"
+        )
+        st.markdown(f"<div style='font-size:0.78rem;color:#6b7280;margin-top:4px;'>{label_a} 대비 {_diff_html}</div>", unsafe_allow_html=True)
+
+
 def render_event_comparison_tables(result, label_a="작년", label_b="올해"):
     """compute_event_comparison() 결과를 화면용 HTML 표 3개(BPU별/카테고리별 거래액/
     카테고리별 트래픽)로 그린다. 엑셀과 동일한 숫자를 쓰므로 화면·다운로드가 항상 일치."""

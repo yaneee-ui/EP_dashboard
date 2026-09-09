@@ -41,7 +41,8 @@ from dashboard_helpers import (
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart, compute_official_total,
     render_revenue_ranking, render_top_products,
-    load_event_calendar, compute_event_comparison, render_event_comparison_tables, build_event_comparison_excel,
+    load_event_calendar, compute_event_comparison, render_event_comparison_tables,
+    render_event_comparison_summary, build_event_comparison_excel,
 )
 
 
@@ -4340,7 +4341,11 @@ if side["page"].startswith("12."):
 
             try:
                 _result = compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b)
-                render_event_comparison_tables(_result, label_a=_label_a, label_b=_label_b)
+                render_event_comparison_summary(_result, label_a=_label_a, label_b=_label_b)
+
+                st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+                with st.expander("📋 상세 표 보기 (BPU별 전체 지표 · 카테고리별 전체 목록)", expanded=False):
+                    render_event_comparison_tables(_result, label_a=_label_a, label_b=_label_b)
 
                 _xlsx = build_event_comparison_excel(_result, label_a=_label_a, label_b=_label_b)
                 st.download_button(
