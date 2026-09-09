@@ -1853,10 +1853,14 @@ if side["page"].startswith("2."):
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-            # --- 카테고리 비교 (여러 카테고리의 거래액 흐름을 한 차트에 겹쳐서) ---
+            # --- 카테고리 비교 (여러 카테고리의 실적 흐름을 한 차트에 겹쳐서) ---
             # 위 단일 카테고리 필터(selected_cat)와는 별개의 멀티셀렉트라서, 페이지 전체
             # 필터·표는 안 건드리고 이 차트만 여러 카테고리를 동시에 보여준다.
-            st.markdown("**카테고리 비교 (거래액 흐름)**")
+            st.markdown("**카테고리 비교**")
+            cat_compare_metric = st.radio(
+                "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"],
+                index=1, key="cat_compare_metric", horizontal=True, label_visibility="collapsed",
+            )
             _cat_compare_options = [c for c in _cat_options_top if c != "전체"]
             _cat_compare_default = [
                 r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options
@@ -1866,13 +1870,39 @@ if side["page"].startswith("2."):
                 key=f"cat_compare_select_{bpu}", max_selections=5,
             )
             if len(selected_cats_compare) >= 2:
+                # 위 '카테고리별 요약'용 _cat_daily_df_early는 거래액 컬럼 하나뿐이라, CR/객단가처럼
+                # 트래픽·구매객수가 같이 필요한 비율 지표는 못 구한다 — 여기서 세 컬럼을 다
+                # 남긴 버전을 따로 만든다(cat_bpu_df는 이미 매체·세그먼트·핏플랍 필터가 다
+                # 적용된 상태라 그대로 재사용). 비율 지표는 날짜별 단순평균이 아니라 항상
+                # 분자/분모를 먼저 더한 뒤 나눠야 하므로(비율 단순평균 금지 원칙), 리샘플
+                # 전에 일자 단위로 먼저 계산해둔다.
+                _cat_daily_metrics_bpu = cat_bpu_df[(cat_bpu_df["브랜드"] == "전체") & (cat_bpu_df["카테고리"] != "전체")]
+                if bpu == "Total" or bpu in BPU_GROUPS:
+                    _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.groupby(
+                        ["날짜", "카테고리"], as_index=False
+                    )[["트래픽", "거래액", "구매객수"]].sum()
+                else:
+                    _cat_daily_metrics_bpu = _cat_daily_metrics_bpu[["날짜", "카테고리", "트래픽", "거래액", "구매객수"]]
+                if cat_compare_metric in ("CR", "객단가"):
+                    _cat_daily_metrics_bpu = _cat_daily_metrics_bpu.copy()
+                    _cat_daily_metrics_bpu["CR"] = (
+                        _cat_daily_metrics_bpu["구매객수"] / _cat_daily_metrics_bpu["트래픽"] * 100
+                    ).where(_cat_daily_metrics_bpu["트래픽"] > 0, 0)
+                    _cat_daily_metrics_bpu["객단가"] = (
+                        _cat_daily_metrics_bpu["거래액"] / _cat_daily_metrics_bpu["구매객수"]
+                    ).where(_cat_daily_metrics_bpu["구매객수"] > 0, 0)
+                # 절대값 지표(트래픽/거래액/구매객수)는 월마감일 때 기간 합계, 그 외엔 일평균 —
+                # 위 단일 카테고리 차트(cat_full 리샘플)와 동일한 규칙. 비율 지표(CR/객단가)는
+                # 이미 일자별로 계산해뒀으니 항상 평균(=해당 기간 일별 비율의 평균)으로 묶는다.
+                _cmp_agg = "sum" if (unit == "월마감" and cat_compare_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
+
                 _compare_frames = {}
                 for _cname in selected_cats_compare:
-                    _g = _cat_daily_df_early[_cat_daily_df_early["카테고리"] == _cname]
+                    _g = _cat_daily_metrics_bpu[_cat_daily_metrics_bpu["카테고리"] == _cname]
                     if _g.empty:
                         continue
-                    _s_raw_c = _g.set_index("날짜")["거래액"].sort_index()
-                    _series_c = _s_raw_c.resample(UNIT_CONFIG[unit]["rule"]).agg("sum" if unit == "월마감" else "mean")
+                    _s_raw_c = _g.set_index("날짜")[cat_compare_metric].sort_index()
+                    _series_c = _s_raw_c.resample(UNIT_CONFIG[unit]["rule"]).agg(_cmp_agg)
                     if unit == "주별":
                         _series_c.index = _series_c.index - pd.Timedelta(days=6)
                     elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
@@ -1934,7 +1964,7 @@ if side["page"].startswith("2."):
                         )
                         _compare_df = _compare_df.loc[_cmp_ref_series.index]
 
-                    render_category_compare_chart(_compare_df, height=320, unit=unit)
+                    render_category_compare_chart(_compare_df, height=320, unit=unit, metric_label=cat_compare_metric)
                 else:
                     st.info("선택한 카테고리에 데이터가 없습니다.")
             else:

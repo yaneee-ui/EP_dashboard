@@ -872,12 +872,15 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         st.caption(_ev_caption)
 
 
-def render_category_compare_chart(df_wide, height=320, unit="일별"):
-    """카테고리 여러 개의 흐름(기본 거래액)을 한 차트에 겹쳐 그린다.
+def render_category_compare_chart(df_wide, height=320, unit="일별", metric_label="거래액"):
+    """카테고리 여러 개의 흐름을 한 차트에 겹쳐 그린다.
     render_line_chart는 '금년 1개 + 전년 비교 1개' 정확히 2계열만 상정하고 있어서
     (색상 팔레트도 2개뿐, 전년비 툴팁도 cols[0] 전용) 카테고리 N개 비교에는 못 쓴다.
     이 함수는 전년비교선·이벤트 마커 없이(계열이 늘어나면 오히려 더 복잡해져서) 카테고리별
-    라인만 겹쳐 그리는 용도로 따로 뺐다. df_wide: index=날짜, columns=카테고리명."""
+    라인만 겹쳐 그리는 용도로 따로 뺐다. df_wide: index=날짜, columns=카테고리명.
+    metric_label: "거래액"/"트래픽"/"구매객수"/"CR"/"객단가" — 축·툴팁 단위 표시를 결정한다
+    (Vega의 기본 SI 접두사 포맷("~s")은 "50M"처럼 알파벳 단위를 쓰는데, 거래액처럼 값이 큰
+    지표는 "5,000만원"에 익숙한 국내 보고서 관행에 안 맞아서 "백만" 단위를 직접 계산해 붙인다)."""
     import altair as alt
 
     if df_wide is None or df_wide.empty:
@@ -887,6 +890,17 @@ def render_category_compare_chart(df_wide, height=320, unit="일별"):
     cols = list(df_wide.columns)
     _palette = ["#2563eb", "#f97316", "#16a34a", "#db2777", "#7c3aed", "#0891b2", "#ca8a04"]
     colors = [_palette[i % len(_palette)] for i in range(len(cols))]
+
+    if metric_label == "CR":
+        y_axis = alt.Axis(title=None, format=".1f", labelExpr="datum.label + '%'")
+        tooltip_val = alt.Tooltip("값:Q", title="값", format=",.1f")
+    elif metric_label == "거래액":
+        # 축 라벨만 "N백만"으로 줄여 보여주고(값/1,000,000), 툴팁은 원 단위 정확한 값 그대로.
+        y_axis = alt.Axis(title=None, labelExpr="format(datum.value / 1000000, ',.0f') + '백만'")
+        tooltip_val = alt.Tooltip("값:Q", title="값", format=",.0f")
+    else:
+        y_axis = alt.Axis(title=None, format=",.0f")
+        tooltip_val = alt.Tooltip("값:Q", title="값", format=",.0f")
 
     _df = df_wide.copy()
     _df.index.name = "날짜"
@@ -922,12 +936,12 @@ def render_category_compare_chart(df_wide, height=320, unit="일별"):
         .mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=40, filled=True, opacity=1))
         .encode(
             x=x_enc,
-            y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
+            y=alt.Y("값:Q", title=None, axis=y_axis, scale=alt.Scale(zero=False)),
             color=alt.Color(
                 "카테고리:N", scale=alt.Scale(domain=cols, range=colors),
                 legend=alt.Legend(orient="bottom", title=None),
             ),
-            tooltip=[tooltip_date, alt.Tooltip("카테고리:N", title="카테고리"), alt.Tooltip("값:Q", title="값", format=",.0f")],
+            tooltip=[tooltip_date, alt.Tooltip("카테고리:N", title="카테고리"), tooltip_val],
         )
         .properties(height=height)
     )
