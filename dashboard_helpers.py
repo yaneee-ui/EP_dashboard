@@ -872,6 +872,69 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         st.caption(_ev_caption)
 
 
+def render_category_compare_chart(df_wide, height=320, unit="일별"):
+    """카테고리 여러 개의 흐름(기본 거래액)을 한 차트에 겹쳐 그린다.
+    render_line_chart는 '금년 1개 + 전년 비교 1개' 정확히 2계열만 상정하고 있어서
+    (색상 팔레트도 2개뿐, 전년비 툴팁도 cols[0] 전용) 카테고리 N개 비교에는 못 쓴다.
+    이 함수는 전년비교선·이벤트 마커 없이(계열이 늘어나면 오히려 더 복잡해져서) 카테고리별
+    라인만 겹쳐 그리는 용도로 따로 뺐다. df_wide: index=날짜, columns=카테고리명."""
+    import altair as alt
+
+    if df_wide is None or df_wide.empty:
+        st.info("표시할 데이터가 없습니다.")
+        return
+
+    cols = list(df_wide.columns)
+    _palette = ["#2563eb", "#f97316", "#16a34a", "#db2777", "#7c3aed", "#0891b2", "#ca8a04"]
+    colors = [_palette[i % len(_palette)] for i in range(len(cols))]
+
+    _df = df_wide.copy()
+    _df.index.name = "날짜"
+    long_df = _df.reset_index().melt("날짜", var_name="카테고리", value_name="값")
+    long_df = long_df.dropna(subset=["값"])
+    if long_df.empty:
+        st.info("표시할 데이터가 없습니다.")
+        return
+
+    _is_monthly = unit in ("월별", "월마감")
+    if _is_monthly:
+        x_enc = alt.X("날짜:T", title=None, timeUnit="yearmonth", axis=alt.Axis(format="%Y-%m", labelAngle=0))
+        tooltip_date = alt.Tooltip("날짜:T", title="날짜", format="%Y-%m")
+    else:
+        # render_line_chart와 동일한 이유로 temporal(T) x축 대신 실제 데이터 날짜만
+        # 문자열(ordinal) 라벨로 써서, 좁은 구간에서 틱이 중복 표시되는 문제를 피한다.
+        long_df["_date_label"] = long_df["날짜"].dt.strftime("%m/%d")
+        _uniq_dates = sorted(long_df["날짜"].unique())
+        _label_order = [pd.Timestamp(d).strftime("%m/%d") for d in _uniq_dates]
+        _n = len(_label_order)
+        if _n > 20:
+            _step = -(-_n // 20)  # ceil(n/20)
+            _tick_vals = _label_order[::_step]
+            if _label_order[-1] not in _tick_vals:
+                _tick_vals.append(_label_order[-1])
+        else:
+            _tick_vals = _label_order
+        x_enc = alt.X("_date_label:O", title=None, sort=_label_order, axis=alt.Axis(labelAngle=0, values=_tick_vals))
+        tooltip_date = alt.Tooltip("_date_label:N", title="날짜")
+
+    chart = (
+        alt.Chart(long_df)
+        .mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=40, filled=True, opacity=1))
+        .encode(
+            x=x_enc,
+            y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
+            color=alt.Color(
+                "카테고리:N", scale=alt.Scale(domain=cols, range=colors),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            tooltip=[tooltip_date, alt.Tooltip("카테고리:N", title="카테고리"), alt.Tooltip("값:Q", title="값", format=",.0f")],
+        )
+        .properties(height=height)
+    )
+    # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
+    st.altair_chart(chart, use_container_width=True)
+
+
 FORECAST_BPU_ROWS = {"Total": None, "자사": BPU_GROUPS["자사"], "정상": ["e-영업1"], "이월": ["e-영업2"], "입점": BPU_GROUPS["입점"]}
 
 

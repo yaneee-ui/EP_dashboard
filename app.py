@@ -36,7 +36,7 @@ from dashboard_helpers import (
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
-    DASHBOARD_EVENTS, render_line_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
+    DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart, compute_official_total,
@@ -1850,6 +1850,52 @@ if side["page"].startswith("2."):
                 cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
                 _cat_yoy_actual_dates = yoy_actual
             render_line_chart(cat_chart_df, height=350, unit=unit, yoy_actual_dates=_cat_yoy_actual_dates)
+
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+            # --- 카테고리 비교 (여러 카테고리의 거래액 흐름을 한 차트에 겹쳐서) ---
+            # 위 단일 카테고리 필터(selected_cat)와는 별개의 멀티셀렉트라서, 페이지 전체
+            # 필터·표는 안 건드리고 이 차트만 여러 카테고리를 동시에 보여준다.
+            st.markdown("**카테고리 비교 (거래액 흐름)**")
+            _cat_compare_options = [c for c in _cat_options_top if c != "전체"]
+            _cat_compare_default = [
+                r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options
+            ]
+            selected_cats_compare = st.multiselect(
+                "비교할 카테고리 (2~5개)", _cat_compare_options, default=_cat_compare_default,
+                key=f"cat_compare_select_{bpu}", max_selections=5,
+            )
+            if len(selected_cats_compare) >= 2:
+                _compare_frames = {}
+                for _cname in selected_cats_compare:
+                    _g = _cat_daily_df_early[_cat_daily_df_early["카테고리"] == _cname]
+                    if _g.empty:
+                        continue
+                    _s_raw_c = _g.set_index("날짜")["거래액"].sort_index()
+                    _series_c = _s_raw_c.resample(UNIT_CONFIG[unit]["rule"]).agg("sum" if unit == "월마감" else "mean")
+                    if unit == "주별":
+                        _series_c.index = _series_c.index - pd.Timedelta(days=6)
+                    elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
+                        _series_c = _series_c.iloc[:-1]
+                    if selected_period_date is not None and not _series_c.empty:
+                        _series_c = _series_c[_series_c.index <= selected_period_date]
+                        # 마지막 지점이 진행 중인(부분) 기간이면, 위 단일 카테고리 차트와
+                        # 동일하게 실제 원본 평균으로 보정한다(안 그러면 아직 안 끝난 주/달의
+                        # 평균이 낮게 잡혀서 마지막 지점이 뚝 떨어져 보이는 착시가 생김).
+                        _is_partial_c, _cur_days_c, _ = _partial_last_period(
+                            _s_raw_c[_s_raw_c.index <= raw_cutoff_date(selected_period_date, unit)], unit
+                        )
+                        if _is_partial_c and _cur_days_c is not None and len(_cur_days_c) > 0:
+                            _corrected_c = _s_raw_c.loc[_cur_days_c].mean()
+                            if pd.notna(_corrected_c):
+                                _series_c.iloc[-1] = _corrected_c
+                    _compare_frames[_cname] = _series_c
+                if _compare_frames:
+                    render_category_compare_chart(pd.DataFrame(_compare_frames), height=320, unit=unit)
+                else:
+                    st.info("선택한 카테고리에 데이터가 없습니다.")
+            else:
+                st.caption("2개 이상 선택하면 비교 그래프가 표시돼요.")
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
