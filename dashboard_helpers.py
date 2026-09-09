@@ -358,9 +358,16 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     left_df = pd.DataFrame(left_rows)
 
     # --- 시트2: 카테고리별 (거래액, e-영업1~4 각각) — 2번 페이지와 동일 함수 ---
+    # 여기서 정해지는 카테고리 순서(거래액 내림차순)를 '고정 순서'로 저장해뒀다가,
+    # 트래픽 시트에도 그대로 적용한다 — 원래는 트래픽 시트가 자기 자신의 트래픽값
+    # 기준으로 따로 정렬돼서, 같은 카테고리라도 두 시트에서 행 순서가 달라지는
+    # 문제가 있었음(거래액 1위 카테고리가 트래픽 시트에선 3위 자리에 있는 식).
     right_rows = []
+    _cat_order_by_bpu = {}
     for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        for r in compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date):
+        _rev_rows = compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date)
+        _cat_order_by_bpu[bv] = [r["카테고리"] for r in _rev_rows]
+        for r in _rev_rows:
             right_rows.append({
                 "BPU": bv, "카테고리": r["카테고리"],
                 col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
@@ -370,9 +377,19 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     right_df = pd.DataFrame(right_rows)
 
     # --- 시트3: 카테고리별 (트래픽, e-영업1~4 각각) — 시트2와 동일 로직, 지표만 트래픽 ---
+    # 위에서 고정한 거래액 순서(_cat_order_by_bpu)를 그대로 따라가고, 거래액 쪽엔 없는데
+    # 트래픽 쪽에만 있는 카테고리(거래는 없지만 방문은 있는 경우)만 뒤에 이어붙인다.
     right_rows_traffic = []
     for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        for r in compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col="트래픽"):
+        _traffic_rows = compute_category_yoy_rows(
+            df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col="트래픽"
+        )
+        _by_cat = {r["카테고리"]: r for r in _traffic_rows}
+        _order = _cat_order_by_bpu.get(bv, [])
+        _ordered = [_by_cat[c] for c in _order if c in _by_cat] + [
+            r for r in _traffic_rows if r["카테고리"] not in _order
+        ]
+        for r in _ordered:
             right_rows_traffic.append({
                 "BPU": bv, "카테고리": r["카테고리"],
                 col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
