@@ -1143,10 +1143,15 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
         for _item in category_movers:
             _bpu_name, _tops, _bottoms = _item[0], _item[1], _item[2]
             _all_movers = _item[3] if len(_item) > 3 else []
+            # 상승/하락을 BPU당 한 줄로 합친다 (예전엔 두 줄이라 BPU 4개면 8줄까지
+            # 늘어나서 너무 길었음 - 사용자 피드백으로 줄임).
+            _bits = []
             if _tops:
-                _lines.append(f"{_bpu_name} 최대 상승(비율): <b>{_tops[0]['카테고리']}</b> ({_fmt_delta(_tops[0]['전년비'])})")
+                _bits.append(f"최대 상승(비율): <b>{_tops[0]['카테고리']}</b> ({_fmt_delta(_tops[0]['전년비'])})")
             if _bottoms:
-                _lines.append(f"{_bpu_name} 최대 하락(비율): <b>{_bottoms[0]['카테고리']}</b> ({_fmt_delta(_bottoms[0]['전년비'])})")
+                _bits.append(f"최대 하락(비율): <b>{_bottoms[0]['카테고리']}</b> ({_fmt_delta(_bottoms[0]['전년비'])})")
+            if _bits:
+                _lines.append(f"{_bpu_name} " + " · ".join(_bits))
             for _c in _all_movers:
                 if _c.get("작년거래액") is not None:
                     _all_cats_flat.append({**_c, "BPU": _bpu_name, "절대변화": _c["거래액"] - _c["작년거래액"]})
@@ -1424,6 +1429,63 @@ def render_insight_panel(sections, key_prefix=""):
             for s in sections
         )
         + "</div>",
+        unsafe_allow_html=True,
+    )
+
+
+def render_conversion_funnel(traffic_val, purchase_val, subtitle=None):
+    """트래픽(UV) -> 구매전환 2단계 퍼널 카드. 사용자가 보여준 '노출→클릭→전환' 예시와
+    같은 형태로 만들고 싶었지만, 이 대시보드 데이터엔 노출수·클릭수가 없어서(EP실적/
+    카테고리 원본 둘 다 트래픽(UV)과 구매객수까지만 있음) 실제로 있는 2단계로 구성했다.
+    KPI 카드와 동일한 값(호출부에서 이미 계산해둔 _kpi_computed의 current)을 그대로
+    받아쓰므로 카드 숫자와 항상 일치한다."""
+    if traffic_val is None or purchase_val is None or pd.isna(traffic_val) or traffic_val <= 0:
+        st.info("표시할 데이터가 없습니다.")
+        return
+
+    cr = purchase_val / traffic_val * 100
+    drop_n = traffic_val - purchase_val
+    drop_pct = 100 - cr
+    _bar_w2 = min(max(cr, 6), 100)  # 라벨이 안 보일 만큼 얇아지지 않게 최소 폭만 확보(통과율 숫자는 실제 값 그대로 표시)
+
+    st.markdown(
+        "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px 24px;'>"
+        "<div style='font-size:1.05rem;font-weight:700;color:#111827;'>전환 퍼널</div>"
+        f"<div style='font-size:0.8rem;color:#6b7280;margin-bottom:16px;'>"
+        f"트래픽 → 구매 단계별 이탈률{f' · {subtitle}' if subtitle else ''}</div>"
+
+        "<div style='display:flex;align-items:center;gap:12px;'>"
+        "<div style='width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#ccfbf1;"
+        "display:flex;align-items:center;justify-content:center;font-size:1.05rem;'>👁️</div>"
+        "<div style='font-weight:600;width:52px;flex:0 0 52px;'>트래픽</div>"
+        "<div style='flex:1;background:#f1f5f9;border-radius:8px;'>"
+        f"<div style='width:100%;background:#0d9488;color:#fff;font-weight:700;padding:10px 14px;border-radius:8px;'>"
+        f"{traffic_val:,.0f}</div></div>"
+        "<div style='width:120px;flex:0 0 120px;text-align:right;font-size:0.85rem;color:#6b7280;'>"
+        "통과율 <span style='color:#0d9488;font-weight:700;'>100%</span></div>"
+        "</div>"
+
+        f"<div style='padding-left:58px;margin:6px 0;font-size:0.82rem;color:#9ca3af;'>"
+        f"┊ 이탈 {drop_pct:.1f}% ({drop_n:,.0f})</div>"
+
+        "<div style='display:flex;align-items:center;gap:12px;'>"
+        "<div style='width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#fee2e2;"
+        "display:flex;align-items:center;justify-content:center;font-size:1.05rem;'>🛒</div>"
+        "<div style='font-weight:600;width:52px;flex:0 0 52px;'>구매</div>"
+        "<div style='flex:1;background:#f1f5f9;border-radius:8px;'>"
+        f"<div style='width:{_bar_w2:.1f}%;background:#ef4444;color:#fff;font-weight:700;padding:10px 14px;"
+        f"border-radius:8px;white-space:nowrap;'>{purchase_val:,.0f}</div></div>"
+        f"<div style='width:120px;flex:0 0 120px;text-align:right;font-size:0.85rem;color:#6b7280;'>"
+        f"통과율 <span style='color:#ef4444;font-weight:700;'>{cr:.2f}%</span></div>"
+        "</div>"
+
+        "<div style='margin-top:16px;padding-top:14px;border-top:1px solid #f1f2f4;"
+        "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;'>"
+        "<div><span style='font-weight:600;'>최종 전환율</span> "
+        "<span style='color:#9ca3af;font-size:0.8rem;'>트래픽 대비 구매 비율</span></div>"
+        f"<div style='font-size:1.3rem;font-weight:800;color:#2563eb;'>{cr:.2f}% "
+        f"<span style='font-size:0.8rem;font-weight:400;color:#9ca3af;'>({purchase_val:,.0f} / {traffic_val:,.0f})</span></div>"
+        "</div></div>",
         unsafe_allow_html=True,
     )
 

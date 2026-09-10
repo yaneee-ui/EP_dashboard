@@ -39,7 +39,7 @@ from dashboard_helpers import (
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
-    render_monthly_comparison_table, render_insight_panel, render_donut_chart, compute_official_total,
+    render_monthly_comparison_table, render_insight_panel, render_donut_chart, render_conversion_funnel, compute_official_total,
     render_revenue_ranking, render_top_products,
     load_event_calendar, compute_event_comparison, render_event_comparison_tables,
     render_event_comparison_summary, build_event_comparison_excel,
@@ -1078,6 +1078,52 @@ if side["page"].startswith("1."):
                         unsafe_allow_html=True,
                     )
                     render_metric_insight(_ai_result_ep, display_name)
+
+        st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+        # --- 전환 퍼널 (트래픽 → 구매전환) ---
+        # 노출/클릭 데이터가 없어서 '노출→클릭→전환' 3단계 대신, 우리 데이터가 실제로
+        # 갖고 있는 트래픽(UV)→구매전환 2단계로 구성한다. 위 KPI 카드와 똑같은
+        # _kpi_computed(현재값)를 그대로 재사용해서 카드 숫자와 항상 일치시킨다.
+        # 상단 '고객 구분' 라디오(segment)로 전체/회원/신규 등을 그대로 전환해서 볼 수 있다.
+        _funnel_traffic_stats = _kpi_computed.get("EP UV", (None, None))[1]
+        _funnel_purchase_stats = _kpi_computed.get("구매객수", (None, None))[1]
+        if _funnel_traffic_stats and _funnel_purchase_stats:
+            render_conversion_funnel(
+                _funnel_traffic_stats["current"], _funnel_purchase_stats["current"],
+                subtitle=f"{bpu} · {segment} · {period_label} 기준",
+            )
+        st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+
+        # --- 카테고리별 거래액 (같은 매체·세그먼트·기간 기준) ---
+        # 페이지 1엔 카테고리 필터가 따로 없어서, 지금 선택된 매체(bpu)+고객구분(segment)
+        # 그대로에서 전 카테고리 거래액 랭킹을 보여준다 (2번 페이지의 '카테고리별 거래액
+        # 비중'과 동일한 함수 재사용).
+        if df_category.empty:
+            st.caption("ℹ️ 카테고리 데이터가 없어서 카테고리별 거래액은 건너뛰었어요 (사이드바에서 ep_category.csv를 업로드하면 나와요).")
+        else:
+            _p1_cat_base = df_category
+            if bpu in BPU_GROUPS:
+                _p1_cat_base = _p1_cat_base[_p1_cat_base["BPU"].isin(BPU_GROUPS[bpu])]
+            elif bpu != "Total":
+                _p1_cat_base = _p1_cat_base[_p1_cat_base["BPU"] == bpu]
+            if "회원구분" in _p1_cat_base.columns:
+                _p1_cat_base = _p1_cat_base[_p1_cat_base["회원구분"] == segment]
+
+            _p1_share_df = _p1_cat_base[(_p1_cat_base["브랜드"] == "전체") & (_p1_cat_base["카테고리"] != "전체")]
+            if bpu == "Total" or bpu in BPU_GROUPS:
+                _p1_share_df = _p1_share_df.groupby(["날짜", "카테고리"], as_index=False)["거래액"].sum()
+            _p1_official_df = _p1_cat_base[(_p1_cat_base["카테고리"] == "전체") & (_p1_cat_base["브랜드"] == "전체")]
+            if bpu == "Total" or bpu in BPU_GROUPS:
+                _p1_official_df = _p1_official_df.groupby("날짜", as_index=False)["거래액"].sum()
+            _p1_official_total = compute_official_total(_p1_official_df, unit, selected_period_date)
+
+            render_revenue_ranking(
+                _p1_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액", f"{bpu} · {segment} 기준",
+                donut=True, official_total=_p1_official_total,
+                ai_key="p1_cat_share",
+                ai_context=f"실적요약 카테고리별 거래액 · {bpu} · {segment} · {unit} · 기준 {period_label}",
+            )
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
