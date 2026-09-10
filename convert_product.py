@@ -1,10 +1,20 @@
 """ep_product.csv (사내 원본, 상품코드별 거래액 raw)를 대시보드가 쓰는
 표준 컬럼(날짜/BPU/카테고리/브랜드/상품코드/상품명/거래액/구매건수)으로 변환.
 
-원본 특징: UTF-16(tab-separated), 컬럼명이 결제_일자(YYYYMMDD)/BPU/영업상품카테고리명/
-SAP대표브랜드코드/상품코드/상품명/거래액/주문수량. BPU에 e-영업1~4 외에 PROJECT-C,
-e-Corner 등 다른 사업부 데이터도 섞여 있어서 카테고리 데이터(ep_category.csv.gz)와
-동일하게 e-영업1~4만 남긴다.
+원본은 두 형식을 다 지원한다 (ep_product_raw.xlsx가 있으면 그걸 우선 쓰고, 없으면
+ep_product_raw.csv를 예전 형식으로 읽는다):
+  - .csv (예전 형식): UTF-16(tab-separated), 모든 행에 결제_일자/BPU/카테고리/브랜드
+    값이 그대로 반복돼 있음.
+  - .xlsx (2026-09-11부터 이 형식으로도 옴): 같은 컬럼이지만 엑셀 병합 셀처럼
+    결제_일자/BPU/영업상품카테고리명/SAP대표브랜드코드가 그 블록 첫 행에만 채워져
+    있고 나머지 행은 빈칸(NaN) - convert_traffic.py/convert_category.py의 병합 셀
+    ffill과 동일한 처리가 필요하다. 거래액도 정수 문자열이 아니라 소수가 섞인 순수
+    숫자로 온다(반올림해서 저장).
+
+컬럼명: 결제_일자(YYYYMMDD)/BPU/영업상품카테고리명/SAP대표브랜드코드/상품코드/
+상품명/거래액/주문수량. BPU에 e-영업1~4 외에 PROJECT-C, e-Corner 등 다른 사업부
+데이터도 섞여 있어서 카테고리 데이터(ep_category.csv.gz)와 동일하게 e-영업1~4만
+남긴다.
 
 카테고리 데이터와 동일하게 마감분/현재분 두 파일로 나눠서 저장한다 (data_loader.
 load_product_data()가 두 파일을 합쳐서 읽음):
@@ -18,7 +28,8 @@ import os
 
 import pandas as pd
 
-SRC = "ep_product_raw.csv"
+SRC_XLSX = "ep_product_raw.xlsx"
+SRC_CSV = "ep_product_raw.csv"
 OUT_CURRENT = "ep_product.csv.gz"
 OUT_ARCHIVE = "ep_product_archive.csv.gz"
 
@@ -27,7 +38,15 @@ ARCHIVE_CUTOFF = "2026-08-31"
 
 KEEP_BPU = {"e-영업1", "e-영업2", "e-영업3", "e-영업4"}
 
-df = pd.read_csv(SRC, sep="\t", encoding="utf-16")
+_FFILL_COLS = ["결제_일자(YYYYMMDD)", "BPU", "영업상품카테고리명", "SAP대표브랜드코드"]
+
+if os.path.exists(SRC_XLSX):
+    SRC = SRC_XLSX
+    df = pd.read_excel(SRC, sheet_name=0)
+    df[_FFILL_COLS] = df[_FFILL_COLS].ffill()
+else:
+    SRC = SRC_CSV
+    df = pd.read_csv(SRC, sep="\t", encoding="utf-16")
 
 df = df.rename(columns={
     "결제_일자(YYYYMMDD)": "날짜",
@@ -38,13 +57,16 @@ df = df.rename(columns={
 
 df = df[df["BPU"].isin(KEEP_BPU)].copy()
 
-df["날짜"] = pd.to_datetime(df["날짜"], format="%Y%m%d")
-df["거래액"] = (
-    df["거래액"].astype(str).str.replace(",", "", regex=False).astype("int64")
-)
-df["구매건수"] = (
-    df["구매건수"].astype(str).str.replace(",", "", regex=False).astype("int64")
-)
+df["날짜"] = pd.to_datetime(df["날짜"].astype("int64").astype(str), format="%Y%m%d")
+# xlsx는 이미 숫자(소수 섞임), csv는 콤마 붙은 문자열 - 둘 다 안전하게 통과하도록
+# 문자열화 후 콤마 제거 -> 숫자 변환 -> 반올림(예전엔 정수 문자열이라 astype(int64)로
+# 충분했는데, xlsx 쪽은 진짜 소수라 그냥 자르면 계속 절삭 방향으로 오차가 쌓인다).
+df["거래액"] = pd.to_numeric(
+    df["거래액"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+).round().astype("int64")
+df["구매건수"] = pd.to_numeric(
+    df["구매건수"].astype(str).str.replace(",", "", regex=False), errors="coerce"
+).round().astype("int64")
 
 out_df = df[["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액", "구매건수"]]
 out_df = out_df.sort_values("날짜").reset_index(drop=True)
