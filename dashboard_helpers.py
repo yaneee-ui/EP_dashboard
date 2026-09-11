@@ -1413,18 +1413,41 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
     st.caption(_cap)
 
 
+_INSIGHT_CIRCLED_DIGITS = "①②③④⑤⑥⑦⑧⑨⑩"
+
+
+def _insight_bullet_title(title):
+    """'① 이번 기간 기본 지표는?' / '②-2 절대 매출액 기준으로는...' 같은 번호 매긴
+    제목을 글머리표 옆에 붙는 짧은 굵은 리드 문구로 다듬는다(앞 번호·물음표 제거).
+    정규식 없이 문자열 조작만 쓴다 — 이 함수가 test_regression.py에서 소스 일부만
+    떼어내 exec()하는 범위에 포함돼 있어서, 모듈 top-level import(re 등)에 기대면
+    그 격리 실행 환경에 없어서 깨진다."""
+    t = title.strip()
+    if t and t[0] in _INSIGHT_CIRCLED_DIGITS:
+        t = t[1:]
+        if t.startswith("-"):
+            t = t[1:]
+            while t and t[0].isdigit():
+                t = t[1:]
+        t = t.lstrip()
+    return t[:-1] if t.endswith("?") else t
+
+
 def render_insight_panel(sections, key_prefix=""):
-    """generate_rule_based_insights() 결과를 카드 형태로 렌더링."""
+    """generate_rule_based_insights() 결과를 카드 형태로 렌더링.
+    파란 테마 '핵심 요약' 스타일 참고 이미지에 맞춰, 흰 배경/회색 테두리 대신
+    옅은 파란 배경·테두리에 글머리표(•) 목록 형태로 표시한다."""
     if not sections:
         return
     st.markdown(
-        "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:16px 20px;'>"
-        "<div style='font-weight:700;font-size:0.95rem;margin-bottom:4px;'>🔍 자동 인사이트</div>"
-        "<div style='font-size:0.76rem;color:#9ca3af;margin-bottom:12px;'>현재 조회조건 기준으로 자동 정리돼요 (계산된 값 그대로 조립 — AI 호출 없음).</div>"
+        "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;'>"
+        "<div style='font-weight:700;font-size:0.95rem;margin-bottom:4px;color:#1d4ed8;'>💡 자동 인사이트</div>"
+        "<div style='font-size:0.76rem;color:#60a5fa;margin-bottom:12px;'>현재 조회조건 기준으로 자동 정리돼요 (계산된 값 그대로 조립 — AI 호출 없음).</div>"
         + "".join(
-            f"<div style='margin-bottom:10px;'>"
-            f"<div style='font-weight:600;font-size:0.85rem;color:#374151;margin-bottom:2px;'>{s['title']}</div>"
-            f"<div style='font-size:0.82rem;color:#4b5563;line-height:1.5;'>{s['body']}</div>"
+            f"<div style='margin-bottom:8px;font-size:0.82rem;color:#374151;line-height:1.55;'>"
+            f"<span style='color:#2563eb;font-weight:700;margin-right:4px;'>•</span>"
+            f"<span style='font-weight:600;color:#1e3a8a;'>{_insight_bullet_title(s['title'])}</span>"
+            f"<span style='color:#9ca3af;'>: </span>{s['body']}"
             f"</div>"
             for s in sections
         )

@@ -10,6 +10,7 @@ import pandas as pd
 
 from utils import format_delta_html
 from ai_insights import generate_insights
+from dashboard_helpers import render_insight_panel
 
 
 def generate_auto_summary(payload, period_label="", extra_sections=None):
@@ -224,20 +225,10 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     # 방식이었는데, 접기/펼치기 요청이 와서 이 참에 더 안정적인 방식으로 교체함).
     with st.expander("📊 인사이트  ·  좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)", expanded=True):
         if rule_based_sections:
-            st.markdown(
-                "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;"
-                "padding:14px 18px;margin-bottom:14px;'>"
-                "<div style='font-weight:700;font-size:0.88rem;margin-bottom:8px;'>🔍 자동 인사이트</div>"
-                + "".join(
-                    f"<div style='margin-bottom:8px;'>"
-                    f"<div style='font-weight:600;font-size:0.8rem;color:#374151;margin-bottom:2px;'>{s['title']}</div>"
-                    f"<div style='font-size:0.8rem;color:#4b5563;line-height:1.6;'>{s['body']}</div>"
-                    f"</div>"
-                    for s in rule_based_sections
-                )
-                + "</div>",
-                unsafe_allow_html=True,
-            )
+            # dashboard_helpers.render_insight_panel과 동일한 컴포넌트를 재사용 —
+            # 예전엔 여기 따로 <div>를 그려서 두 군데(이 카드 vs 다른 페이지의
+            # '🔍 자동 인사이트' 박스) 디자인이 어긋나 있었음.
+            render_insight_panel(rule_based_sections)
 
         _col_l, _col_r = st.columns(2)
 
