@@ -1226,8 +1226,17 @@ if side["page"].startswith("1."):
             _is_partial, _cur_days, _ = _partial_last_period(
                 s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_raw, unit
             )
+            # _is_partial은 '진짜 오늘 기준 최신 기간'이 부분기간인지를 나타낼 뿐이라,
+            # 사용자가 과거 연도로 기간을 옮기면 화면의 마지막 지점이 그 진짜 최신 기간이
+            # 아닐 수 있다 — 그때도 i==len(prev_dates)-1이라는 이유만으로 보정을 걸면
+            # 엉뚱한 지점(예: 작년 10월 마지막 주)에 '오늘 기준 부분기간'의 전년 비교값이
+            # 잘못 씌워진다. 화면에 실제로 보이는 마지막 지점이 그 진짜 최신 기간과 같을
+            # 때만 이 보정을 적용한다.
+            _tr_last_is_current = (
+                not tr_series.empty and not tr_full.empty and tr_series.index[-1] == tr_full.index[-1]
+            )
             for i, pd_date in enumerate(prev_dates):
-                if _is_partial and i == len(prev_dates) - 1 and _cur_days is not None:
+                if _is_partial and _tr_last_is_current and i == len(prev_dates) - 1 and _cur_days is not None:
                     _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cur_days])
                     yoy_vals.append(_matched)
                     yoy_actual.append(pd_date)
@@ -1928,8 +1937,14 @@ if side["page"].startswith("2."):
                 _cat_is_partial, _cat_cur_days, _ = _partial_last_period(
                     s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_raw, unit
                 )
+                # 페이지1과 동일한 이유로, 화면에 보이는 마지막 지점이 '오늘 기준 진짜 최신
+                # 기간'일 때만 부분기간 보정을 적용한다(과거 연도 조회 시 엉뚱한 지점에
+                # 씌워지는 것 방지).
+                _cat_last_is_current = (
+                    not cat_series.empty and not cat_full.empty and cat_series.index[-1] == cat_full.index[-1]
+                )
                 for i, pd_date in enumerate(prev_dates):
-                    if _cat_is_partial and i == len(prev_dates) - 1 and _cat_cur_days is not None:
+                    if _cat_is_partial and _cat_last_is_current and i == len(prev_dates) - 1 and _cat_cur_days is not None:
                         _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cat_cur_days])
                         yoy_vals.append(_matched)
                         yoy_actual.append(pd_date)
