@@ -39,7 +39,8 @@ from dashboard_helpers import (
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
-    render_monthly_comparison_table, render_insight_panel, render_donut_chart, render_conversion_funnel, compute_official_total,
+    render_monthly_comparison_table, render_insight_panel, render_donut_chart,
+    render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
     load_event_calendar, compute_event_comparison, render_event_comparison_tables,
     render_event_comparison_summary, build_event_comparison_excel,
@@ -1081,18 +1082,25 @@ if side["page"].startswith("1."):
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-        # --- 전환 퍼널 (트래픽 → 구매전환) ---
+        # --- 전환 퍼널 (트래픽 → 구매전환, 세그먼트별 3개 나란히) ---
         # 노출/클릭 데이터가 없어서 '노출→클릭→전환' 3단계 대신, 우리 데이터가 실제로
-        # 갖고 있는 트래픽(UV)→구매전환 2단계로 구성한다. 위 KPI 카드와 똑같은
-        # _kpi_computed(현재값)를 그대로 재사용해서 카드 숫자와 항상 일치시킨다.
-        # 상단 '고객 구분' 라디오(segment)로 전체/회원/신규 등을 그대로 전환해서 볼 수 있다.
-        _funnel_traffic_stats = _kpi_computed.get("EP UV", (None, None))[1]
-        _funnel_purchase_stats = _kpi_computed.get("구매객수", (None, None))[1]
-        if _funnel_traffic_stats and _funnel_purchase_stats:
-            render_conversion_funnel(
-                _funnel_traffic_stats["current"], _funnel_purchase_stats["current"],
-                subtitle=f"{bpu} · {segment} · {period_label} 기준",
-            )
+        # 갖고 있는 트래픽(UV)→구매전환 2단계로 구성한다. 상단 '고객 구분' 라디오
+        # (segment) 값과 무관하게 전체/회원/신규 3개를 한 번에 계산해서 나란히 보여줘야
+        # 세그먼트 간 비교가 한눈에 되므로, segment 하나만 반영하는 _kpi_computed 대신
+        # 세그먼트별로 직접 다시 필터링해서 계산한다 (compute_official_total이 KPI 카드와
+        # 동일한 리샘플·부분기간 보정 로직이라 숫자는 항상 일치함).
+        st.markdown("**전환 퍼널**")
+        st.caption(f"{bpu} · {period_label} 기준 · 세그먼트별 트래픽 → 구매 전환")
+        _funnel_segments = []
+        for _fseg in ["전체", "회원", "신규"]:
+            if bpu in BPU_GROUPS:
+                _fseg_df = aggregate_traffic(df_traffic, BPU_GROUPS[bpu], _fseg)
+            else:
+                _fseg_df = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == _fseg)]
+            _f_tr, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="트래픽")
+            _f_pur, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="구매객수")
+            _funnel_segments.append((_fseg, _f_tr, _f_pur))
+        render_conversion_funnel_row(_funnel_segments)
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
         # --- 카테고리별 거래액 (같은 매체·세그먼트·기간 기준) ---
@@ -1806,6 +1814,28 @@ if side["page"].startswith("2."):
                         )
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+
+            # --- 전환 퍼널 (트래픽 → 구매전환, 세그먼트별 3개 나란히) ---
+            # 페이지 상단 '고객 구분'(cat_segment) 라디오와 무관하게 전체/회원/신규를
+            # 한 번에 계산해서 나란히 보여준다. cat_bpu_df_all_seg는 세그먼트 필터를
+            # 적용하기 '전' 원본(위에서 이미 매체+핏플랍 필터까지만 적용해서 보관해둔
+            # 것)이라, 여기서 카테고리/브랜드 범위만 더 좁혀서 세그먼트별로 다시 뽑는다.
+            st.markdown("**전환 퍼널**")
+            st.caption(f"{bpu} · {selected_cat}/{brand_label(selected_brand)} · {period_label} 기준 · 세그먼트별 트래픽 → 구매 전환")
+            _cat_funnel_segments = []
+            for _fseg in ["전체", "회원", "신규"]:
+                _fseg_df = cat_bpu_df_all_seg[
+                    (cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] == selected_brand)
+                ]
+                if _has_segment:
+                    _fseg_df = _fseg_df[_fseg_df["회원구분"] == _fseg]
+                if bpu == "Total" or bpu in BPU_GROUPS:
+                    _fseg_df = _fseg_df.groupby("날짜", as_index=False)[["트래픽", "구매객수"]].sum()
+                _f_tr, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="트래픽")
+                _f_pur, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="구매객수")
+                _cat_funnel_segments.append((_fseg, _f_tr, _f_pur))
+            render_conversion_funnel_row(_cat_funnel_segments)
+            st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
             # --- 추이 차트 (전년 비교선 포함) ---
             st.markdown("**카테고리 실적 추이**")

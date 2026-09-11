@@ -1433,12 +1433,13 @@ def render_insight_panel(sections, key_prefix=""):
     )
 
 
-def render_conversion_funnel(traffic_val, purchase_val, subtitle=None):
+def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=False):
     """트래픽(UV) -> 구매전환 2단계 퍼널 카드. 사용자가 보여준 '노출→클릭→전환' 예시와
     같은 형태로 만들고 싶었지만, 이 대시보드 데이터엔 노출수·클릭수가 없어서(EP실적/
     카테고리 원본 둘 다 트래픽(UV)과 구매객수까지만 있음) 실제로 있는 2단계로 구성했다.
-    KPI 카드와 동일한 값(호출부에서 이미 계산해둔 _kpi_computed의 current)을 그대로
-    받아쓰므로 카드 숫자와 항상 일치한다."""
+    KPI 카드와 동일한 값(호출부에서 이미 계산해둔 current)을 그대로 받아쓰므로 카드
+    숫자와 항상 일치한다. compact=True면 세그먼트 3개를 나란히 놓는
+    render_conversion_funnel_row()용으로 패딩·글자 크기를 줄인다."""
     if traffic_val is None or purchase_val is None or pd.isna(traffic_val) or traffic_val <= 0:
         st.info("표시할 데이터가 없습니다.")
         return
@@ -1448,46 +1449,69 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None):
     drop_pct = 100 - cr
     _bar_w2 = min(max(cr, 6), 100)  # 라벨이 안 보일 만큼 얇아지지 않게 최소 폭만 확보(통과율 숫자는 실제 값 그대로 표시)
 
+    _pad = "14px 16px" if compact else "20px 24px"
+    _title_size = "0.92rem" if compact else "1.05rem"
+    _icon_size = "26px" if compact else "34px"
+    _icon_font = "0.85rem" if compact else "1.05rem"
+    _label_w = "40px" if compact else "52px"
+    _pct_w = "88px" if compact else "120px"
+    _bar_pad = "7px 10px" if compact else "10px 14px"
+    _final_pct_size = "1.05rem" if compact else "1.3rem"
+    _indent = "34px" if compact else "58px"
+    _final_sub = "" if compact else "<span style='color:#9ca3af;font-size:0.8rem;'>트래픽 대비 구매 비율</span>"
+
     st.markdown(
-        "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:20px 24px;'>"
-        "<div style='font-size:1.05rem;font-weight:700;color:#111827;'>전환 퍼널</div>"
-        f"<div style='font-size:0.8rem;color:#6b7280;margin-bottom:16px;'>"
+        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:{_pad};'>"
+        f"<div style='font-size:{_title_size};font-weight:700;color:#111827;'>전환 퍼널</div>"
+        f"<div style='font-size:0.76rem;color:#6b7280;margin-bottom:14px;'>"
         f"트래픽 → 구매 단계별 이탈률{f' · {subtitle}' if subtitle else ''}</div>"
 
-        "<div style='display:flex;align-items:center;gap:12px;'>"
-        "<div style='width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#ccfbf1;"
-        "display:flex;align-items:center;justify-content:center;font-size:1.05rem;'>👁️</div>"
-        "<div style='font-weight:600;width:52px;flex:0 0 52px;'>트래픽</div>"
-        "<div style='flex:1;background:#f1f5f9;border-radius:8px;'>"
-        f"<div style='width:100%;background:#0d9488;color:#fff;font-weight:700;padding:10px 14px;border-radius:8px;'>"
-        f"{traffic_val:,.0f}</div></div>"
-        "<div style='width:120px;flex:0 0 120px;text-align:right;font-size:0.85rem;color:#6b7280;'>"
+        "<div style='display:flex;align-items:center;gap:8px;'>"
+        f"<div style='width:{_icon_size};height:{_icon_size};flex:0 0 {_icon_size};border-radius:50%;background:#ccfbf1;"
+        f"display:flex;align-items:center;justify-content:center;font-size:{_icon_font};'>👁️</div>"
+        f"<div style='font-weight:600;width:{_label_w};flex:0 0 {_label_w};font-size:0.85rem;'>트래픽</div>"
+        "<div style='flex:1;background:#f1f5f9;border-radius:8px;min-width:0;'>"
+        f"<div style='width:100%;background:#0d9488;color:#fff;font-weight:700;padding:{_bar_pad};border-radius:8px;"
+        f"white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{traffic_val:,.0f}</div></div>"
+        f"<div style='width:{_pct_w};flex:0 0 {_pct_w};text-align:right;font-size:0.78rem;color:#6b7280;'>"
         "통과율 <span style='color:#0d9488;font-weight:700;'>100%</span></div>"
         "</div>"
 
-        f"<div style='padding-left:58px;margin:6px 0;font-size:0.82rem;color:#9ca3af;'>"
+        f"<div style='padding-left:{_indent};margin:6px 0;font-size:0.78rem;color:#9ca3af;'>"
         f"┊ 이탈 {drop_pct:.1f}% ({drop_n:,.0f})</div>"
 
-        "<div style='display:flex;align-items:center;gap:12px;'>"
-        "<div style='width:34px;height:34px;flex:0 0 34px;border-radius:50%;background:#fee2e2;"
-        "display:flex;align-items:center;justify-content:center;font-size:1.05rem;'>🛒</div>"
-        "<div style='font-weight:600;width:52px;flex:0 0 52px;'>구매</div>"
-        "<div style='flex:1;background:#f1f5f9;border-radius:8px;'>"
-        f"<div style='width:{_bar_w2:.1f}%;background:#ef4444;color:#fff;font-weight:700;padding:10px 14px;"
-        f"border-radius:8px;white-space:nowrap;'>{purchase_val:,.0f}</div></div>"
-        f"<div style='width:120px;flex:0 0 120px;text-align:right;font-size:0.85rem;color:#6b7280;'>"
+        "<div style='display:flex;align-items:center;gap:8px;'>"
+        f"<div style='width:{_icon_size};height:{_icon_size};flex:0 0 {_icon_size};border-radius:50%;background:#fee2e2;"
+        f"display:flex;align-items:center;justify-content:center;font-size:{_icon_font};'>🛒</div>"
+        f"<div style='font-weight:600;width:{_label_w};flex:0 0 {_label_w};font-size:0.85rem;'>구매</div>"
+        "<div style='flex:1;background:#f1f5f9;border-radius:8px;min-width:0;'>"
+        f"<div style='width:{_bar_w2:.1f}%;background:#ef4444;color:#fff;font-weight:700;padding:{_bar_pad};"
+        f"border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{purchase_val:,.0f}</div></div>"
+        f"<div style='width:{_pct_w};flex:0 0 {_pct_w};text-align:right;font-size:0.78rem;color:#6b7280;'>"
         f"통과율 <span style='color:#ef4444;font-weight:700;'>{cr:.2f}%</span></div>"
         "</div>"
 
-        "<div style='margin-top:16px;padding-top:14px;border-top:1px solid #f1f2f4;"
+        "<div style='margin-top:14px;padding-top:12px;border-top:1px solid #f1f2f4;"
         "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;'>"
-        "<div><span style='font-weight:600;'>최종 전환율</span> "
-        "<span style='color:#9ca3af;font-size:0.8rem;'>트래픽 대비 구매 비율</span></div>"
-        f"<div style='font-size:1.3rem;font-weight:800;color:#2563eb;'>{cr:.2f}% "
-        f"<span style='font-size:0.8rem;font-weight:400;color:#9ca3af;'>({purchase_val:,.0f} / {traffic_val:,.0f})</span></div>"
+        f"<div><span style='font-weight:600;font-size:0.85rem;'>최종 전환율</span> {_final_sub}</div>"
+        f"<div style='font-size:{_final_pct_size};font-weight:800;color:#2563eb;'>{cr:.2f}% "
+        f"<span style='font-size:0.72rem;font-weight:400;color:#9ca3af;'>({purchase_val:,.0f} / {traffic_val:,.0f})</span></div>"
         "</div></div>",
         unsafe_allow_html=True,
     )
+
+
+def render_conversion_funnel_row(segments, subtitle=None):
+    """전환 퍼널을 세그먼트별(보통 전체/회원/신규)로 나란히 st.columns에 배치해서
+    한눈에 비교할 수 있게 한다. segments: [(라벨, 트래픽값, 구매값), ...]."""
+    if not segments:
+        st.info("표시할 데이터가 없습니다.")
+        return
+    cols = st.columns(len(segments))
+    for col, (label, tv, pv) in zip(cols, segments):
+        with col:
+            st.markdown(f"<div style='font-weight:700;margin-bottom:4px;color:#374151;'>{label}</div>", unsafe_allow_html=True)
+            render_conversion_funnel(tv, pv, subtitle=subtitle, compact=True)
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,
