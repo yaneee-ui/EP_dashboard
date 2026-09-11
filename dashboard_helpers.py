@@ -1440,11 +1440,12 @@ def render_insight_panel(sections, key_prefix=""):
     if not sections:
         return
     st.markdown(
-        "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;padding:16px 20px;'>"
-        "<div style='font-weight:700;font-size:0.95rem;margin-bottom:4px;color:#1d4ed8;'>💡 자동 인사이트</div>"
-        "<div style='font-size:0.76rem;color:#60a5fa;margin-bottom:12px;'>현재 조회조건 기준으로 자동 정리돼요 (계산된 값 그대로 조립 — AI 호출 없음).</div>"
+        "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-radius:10px;"
+        "padding:18px 22px 20px;margin-bottom:14px;'>"
+        "<div style='font-weight:700;font-size:0.95rem;margin-bottom:6px;color:#1d4ed8;'>💡 자동 인사이트</div>"
+        "<div style='font-size:0.76rem;color:#60a5fa;margin-bottom:14px;'>현재 조회조건 기준으로 자동 정리돼요 (계산된 값 그대로 조립 — AI 호출 없음).</div>"
         + "".join(
-            f"<div style='margin-bottom:8px;font-size:0.82rem;color:#374151;line-height:1.55;'>"
+            f"<div style='margin-bottom:14px;font-size:0.82rem;color:#374151;line-height:1.7;'>"
             f"<span style='color:#2563eb;font-weight:700;margin-right:4px;'>•</span>"
             f"<span style='font-weight:600;color:#1e3a8a;'>{_insight_bullet_title(s['title'])}</span>"
             f"<span style='color:#9ca3af;'>: </span>{s['body']}"

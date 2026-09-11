@@ -1180,12 +1180,9 @@ if side["page"].startswith("1."):
         elif unit == "월마감" and not tr_full.empty and s_raw.index.max() < tr_full.index[-1]:
             tr_full = tr_full.iloc[:-1]
 
-        # 전체 연도를 다 남긴다 — 예전엔 최신 연도만 남겼는데, 그러면 "작년 10월 흐름이
-        # 어땠는지" 같은 지난 연도 자체 조회가 아예 불가능했다(전년 비교선은 항상 최신
-        # 연도 창에 겹쳐 그려지는 것뿐이라서). 아래 '기간' 선택기가 이 전체 범위를 그대로
-        # min/max로 받으므로, 사용자가 직접 과거 연도로 스크롤해서 그 구간만 볼 수 있다
-        # (전년 비교선은 그 경우 2년 더 전 데이터가 없어 자동으로 안 그려짐 — 정상).
-        tr_series = tr_full
+        # 올해만 추출
+        latest_year = int(tr_full.index.max().year)
+        tr_series = tr_full[tr_full.index.year == latest_year]
         # 표/KPI 카드는 selected_period_date까지만 자르는데 이 차트는 최신 연도 데이터를
         # 끝까지 다 보여주고 있어서 표랑 차트 마지막 지점이 다른 값을 가리키는 버그가
         # 있었음(2번 페이지에서 먼저 발견됨) — 여기도 동일하게 자른다.
@@ -1254,17 +1251,8 @@ if side["page"].startswith("1."):
             _is_partial, _cur_days, _ = _partial_last_period(
                 s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_raw, unit
             )
-            # _is_partial은 '진짜 오늘 기준 최신 기간'이 부분기간인지를 나타낼 뿐이라,
-            # 사용자가 과거 연도로 기간을 옮기면 화면의 마지막 지점이 그 진짜 최신 기간이
-            # 아닐 수 있다 — 그때도 i==len(prev_dates)-1이라는 이유만으로 보정을 걸면
-            # 엉뚱한 지점(예: 작년 10월 마지막 주)에 '오늘 기준 부분기간'의 전년 비교값이
-            # 잘못 씌워진다. 화면에 실제로 보이는 마지막 지점이 그 진짜 최신 기간과 같을
-            # 때만 이 보정을 적용한다.
-            _tr_last_is_current = (
-                not tr_series.empty and not tr_full.empty and tr_series.index[-1] == tr_full.index[-1]
-            )
             for i, pd_date in enumerate(prev_dates):
-                if _is_partial and _tr_last_is_current and i == len(prev_dates) - 1 and _cur_days is not None:
+                if _is_partial and i == len(prev_dates) - 1 and _cur_days is not None:
                     _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cur_days])
                     yoy_vals.append(_matched)
                     yoy_actual.append(pd_date)
@@ -1294,6 +1282,36 @@ if side["page"].startswith("1."):
             f"<div class='chart-caption'>올해: {_tr_start} - {_tr_end}{_yoy_note}</div>",
             unsafe_allow_html=True,
         )
+
+        # --- 지난 연도 흐름 보기 (전년 비교 없이, 과거 연도 하나만 명확하게) ---
+        # "작년 10월 흐름이 이랬으니 올해 미리 대응" 목적으로 과거 연도를 보고 싶다는
+        # 요청 — 처음엔 위 차트의 '기간' 선택기를 과거로도 옮길 수 있게 했었는데, 그러면
+        # 지금 보는 게 금년 구간인지 과거 구간인지 한눈에 구분이 안 된다는 피드백이 있어서
+        # 원복하고 이렇게 완전히 별도 영역으로 분리함 — 제목에 연도를 못박아 항상 명확하게.
+        _tr_past_years = sorted(
+            (y for y in tr_full.index.year.unique() if y != latest_year), reverse=True
+        ) if not tr_full.empty else []
+        if _tr_past_years:
+            with st.expander(f"📅 지난 연도 흐름 보기 ({_tr_past_years[0]}년 등, 전년 대비 없이 그 해만)"):
+                _tr_py_year = st.selectbox(
+                    "조회 연도", _tr_past_years, index=0, key=f"tr_past_year_{bpu}_{segment}",
+                )
+                _tr_py_series = tr_full[tr_full.index.year == _tr_py_year]
+                if _tr_py_series.empty:
+                    st.info("해당 연도 데이터가 없습니다.")
+                else:
+                    st.markdown(
+                        f"<div style='font-weight:700;font-size:1rem;color:#1d4ed8;margin-bottom:6px;'>"
+                        f"🗓️ {_tr_py_year}년 {tr_metric} 흐름 <span style='font-weight:400;color:#6b7280;font-size:0.8rem;'>"
+                        f"(전년 비교선 없음 — {_tr_py_year}년 데이터만 표시)</span></div>",
+                        unsafe_allow_html=True,
+                    )
+                    render_line_chart(pd.DataFrame({tr_metric: _tr_py_series}), height=300, unit=unit)
+                    st.markdown(
+                        f"<div class='chart-caption'>{_tr_py_year}년: "
+                        f"{_tr_py_series.index.min().strftime('%Y-%m-%d')} - {_tr_py_series.index.max().strftime('%Y-%m-%d')}</div>",
+                        unsafe_allow_html=True,
+                    )
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -1929,9 +1947,8 @@ if side["page"].startswith("2."):
             elif unit == "월마감" and not cat_full.empty and s_raw.index.max() < cat_full.index[-1]:
                 cat_full = cat_full.iloc[:-1]
 
-            # 전체 연도를 다 남긴다 (위 EP 실적 추이 차트와 동일한 이유 — 지난 연도 자체를
-            # 조회할 수 있게).
-            cat_series = cat_full
+            latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
+            cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
             # 표(카테고리 실적 요약 표)/KPI 카드는 selected_period_date까지만 자르는데,
             # 이 차트는 그걸 안 하고 최신 연도 데이터를 끝까지 다 보여주고 있어서 표랑 차트
             # 마지막 지점이 다른 값을 가리키는 버그가 있었음 — 여기서도 동일하게 자른다.
@@ -2002,14 +2019,8 @@ if side["page"].startswith("2."):
                 _cat_is_partial, _cat_cur_days, _ = _partial_last_period(
                     s_raw[s_raw.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s_raw, unit
                 )
-                # 페이지1과 동일한 이유로, 화면에 보이는 마지막 지점이 '오늘 기준 진짜 최신
-                # 기간'일 때만 부분기간 보정을 적용한다(과거 연도 조회 시 엉뚱한 지점에
-                # 씌워지는 것 방지).
-                _cat_last_is_current = (
-                    not cat_series.empty and not cat_full.empty and cat_series.index[-1] == cat_full.index[-1]
-                )
                 for i, pd_date in enumerate(prev_dates):
-                    if _cat_is_partial and _cat_last_is_current and i == len(prev_dates) - 1 and _cat_cur_days is not None:
+                    if _cat_is_partial and i == len(prev_dates) - 1 and _cat_cur_days is not None:
                         _matched = _match_mean(s_raw, [d - pd.Timedelta(days=364) for d in _cat_cur_days])
                         yoy_vals.append(_matched)
                         yoy_actual.append(pd_date)
@@ -2024,6 +2035,33 @@ if side["page"].startswith("2."):
                 cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
                 _cat_yoy_actual_dates = yoy_actual
             render_line_chart(cat_chart_df, height=350, unit=unit, yoy_actual_dates=_cat_yoy_actual_dates)
+
+            # --- 지난 연도 흐름 보기 (페이지1과 동일한 이유·구조) ---
+            _cat_past_years = sorted(
+                (y for y in cat_full.index.year.unique() if y != latest_year_cat), reverse=True
+            ) if not cat_full.empty else []
+            if _cat_past_years:
+                with st.expander(f"📅 지난 연도 흐름 보기 ({_cat_past_years[0]}년 등, 전년 대비 없이 그 해만)"):
+                    _cat_py_year = st.selectbox(
+                        "조회 연도", _cat_past_years, index=0,
+                        key=f"cat_past_year_{bpu}_{selected_cat}_{selected_brand}",
+                    )
+                    _cat_py_series = cat_full[cat_full.index.year == _cat_py_year]
+                    if _cat_py_series.empty:
+                        st.info("해당 연도 데이터가 없습니다.")
+                    else:
+                        st.markdown(
+                            f"<div style='font-weight:700;font-size:1rem;color:#1d4ed8;margin-bottom:6px;'>"
+                            f"🗓️ {_cat_py_year}년 {cat_metric} 흐름 <span style='font-weight:400;color:#6b7280;font-size:0.8rem;'>"
+                            f"(전년 비교선 없음 — {_cat_py_year}년 데이터만 표시)</span></div>",
+                            unsafe_allow_html=True,
+                        )
+                        render_line_chart(pd.DataFrame({cat_metric: _cat_py_series}), height=300, unit=unit)
+                        st.markdown(
+                            f"<div class='chart-caption'>{_cat_py_year}년: "
+                            f"{_cat_py_series.index.min().strftime('%Y-%m-%d')} - {_cat_py_series.index.max().strftime('%Y-%m-%d')}</div>",
+                            unsafe_allow_html=True,
+                        )
 
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
@@ -2323,12 +2361,11 @@ if side["page"].startswith("2."):
                     _series_c.index = _series_c.index - pd.Timedelta(days=6)
                 elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
                     _series_c = _series_c.iloc[:-1]
-                # 예전엔 여기서 최신 연도만 남겼는데, 그러면 지난 연도 자체(예: 작년 10월
-                # 흐름)를 조회할 방법이 없었다. 이제 전체 연도를 다 남기고, 아래 '기간'/
-                # '주차 범위' 선택기에서 사용자가 원하는 구간(과거 연도 포함)을 직접 고르게
-                # 한다 — 이 차트는 전년 비교선이 없어서 여러 해가 안 섞이고 선택한 구간만
-                # 딱 그만큼 보인다.
-                pass
+                # 위 단일 카테고리 차트와 동일하게 최신 연도만 남긴다 — 안 그러면 일별/주별
+                # 조회 시 2년치가 한 차트에 다 찍혀서 너무 빽빽해진다(전년 비교는 이 차트에선
+                # 안 그리니, 지난해 구간을 같이 보여줄 이유도 없음).
+                if not _series_c.empty:
+                    _series_c = _series_c[_series_c.index.year == int(_series_c.index.max().year)]
                 if selected_period_date is not None and not _series_c.empty:
                     _series_c = _series_c[_series_c.index <= selected_period_date]
                     # 마지막 지점이 진행 중인(부분) 기간이면, 위 단일 카테고리 차트와
