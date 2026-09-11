@@ -400,17 +400,10 @@ with _sticky:
                 # 매번 날짜를 직접 고르는 대신 자주 쓰는 최근 시점으로 바로 이동하는 단축
                 # 버튼 — 항상 실제 데이터의 최신일(_max_d) 기준 상대값이라, 눌러도 위치가
                 # 누적되지 않고 매번 같은 곳으로 이동한다(달력 조작 없이 빠르게 확인 용도).
-                _pq1, _pq2 = st.columns(2)
-                with _pq1:
-                    st.button(
-                        "전일", key="period_quick_d1", use_container_width=True,
-                        on_click=_reset_date_range, args=("period_filter_date", _max_d - _dt.timedelta(days=1)),
-                    )
-                with _pq2:
-                    st.button(
-                        "전전일", key="period_quick_d2", use_container_width=True,
-                        on_click=_reset_date_range, args=("period_filter_date", _max_d - _dt.timedelta(days=2)),
-                    )
+                # 버튼 자체는 이 필터 줄 오른쪽 빈 공간(_fc_spacer)에 그린다 — fc2 밑에
+                # 바로 붙이면 이 칼럼만 두 줄이 돼서 다른 필터들과 높이가 안 맞았음.
+                _pq1_label, _pq1_key, _pq1_args = "전일", "period_quick_d1", ("period_filter_date", _max_d - _dt.timedelta(days=1))
+                _pq2_label, _pq2_key, _pq2_args = "전전일", "period_quick_d2", ("period_filter_date", _max_d - _dt.timedelta(days=2))
             else:
                 _sel_label = st.selectbox(
                     "기준 시점", _period_labels, index=len(_period_labels) - 1,
@@ -420,17 +413,16 @@ with _sticky:
                 _pq_cur_label, _pq_prev_label = ("금주", "전주") if unit == "주별" else ("당월", "전월")
                 _pq_cur_val = _period_labels[-1] if _period_labels else _sel_label
                 _pq_prev_val = _period_labels[-2] if len(_period_labels) >= 2 else _pq_cur_val
-                _pq1, _pq2 = st.columns(2)
-                with _pq1:
-                    st.button(
-                        _pq_cur_label, key="period_quick_cur", use_container_width=True,
-                        on_click=_reset_date_range, args=("period_filter", _pq_cur_val),
-                    )
-                with _pq2:
-                    st.button(
-                        _pq_prev_label, key="period_quick_prev", use_container_width=True,
-                        on_click=_reset_date_range, args=("period_filter", _pq_prev_val),
-                    )
+                _pq1_label, _pq1_key, _pq1_args = _pq_cur_label, "period_quick_cur", ("period_filter", _pq_cur_val)
+                _pq2_label, _pq2_key, _pq2_args = _pq_prev_label, "period_quick_prev", ("period_filter", _pq_prev_val)
+
+        with _fc_spacer:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+            _pq_col1, _pq_col2, _pq_col_rest = st.columns([1, 1, 6])
+            with _pq_col1:
+                st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
+            with _pq_col2:
+                st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
 
         # 1번 페이지(카테고리 필터가 없는 페이지)는 매체필터/기준시점과 같은 줄 fc3에 핏플랍 제외 배치
         # (2번 페이지는 카테고리/브랜드 뒤 fc5에 배치 — 두 페이지 다 '마지막 필터 바로 옆' 위치로 통일)
