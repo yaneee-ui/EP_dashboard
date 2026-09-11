@@ -1152,9 +1152,12 @@ if side["page"].startswith("1."):
         elif unit == "월마감" and not tr_full.empty and s_raw.index.max() < tr_full.index[-1]:
             tr_full = tr_full.iloc[:-1]
 
-        # 올해만 추출
-        latest_year = int(tr_full.index.max().year)
-        tr_series = tr_full[tr_full.index.year == latest_year]
+        # 전체 연도를 다 남긴다 — 예전엔 최신 연도만 남겼는데, 그러면 "작년 10월 흐름이
+        # 어땠는지" 같은 지난 연도 자체 조회가 아예 불가능했다(전년 비교선은 항상 최신
+        # 연도 창에 겹쳐 그려지는 것뿐이라서). 아래 '기간' 선택기가 이 전체 범위를 그대로
+        # min/max로 받으므로, 사용자가 직접 과거 연도로 스크롤해서 그 구간만 볼 수 있다
+        # (전년 비교선은 그 경우 2년 더 전 데이터가 없어 자동으로 안 그려짐 — 정상).
+        tr_series = tr_full
         # 표/KPI 카드는 selected_period_date까지만 자르는데 이 차트는 최신 연도 데이터를
         # 끝까지 다 보여주고 있어서 표랑 차트 마지막 지점이 다른 값을 가리키는 버그가
         # 있었음(2번 페이지에서 먼저 발견됨) — 여기도 동일하게 자른다.
@@ -1852,8 +1855,9 @@ if side["page"].startswith("2."):
             elif unit == "월마감" and not cat_full.empty and s_raw.index.max() < cat_full.index[-1]:
                 cat_full = cat_full.iloc[:-1]
 
-            latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
-            cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
+            # 전체 연도를 다 남긴다 (위 EP 실적 추이 차트와 동일한 이유 — 지난 연도 자체를
+            # 조회할 수 있게).
+            cat_series = cat_full
             # 표(카테고리 실적 요약 표)/KPI 카드는 selected_period_date까지만 자르는데,
             # 이 차트는 그걸 안 하고 최신 연도 데이터를 끝까지 다 보여주고 있어서 표랑 차트
             # 마지막 지점이 다른 값을 가리키는 버그가 있었음 — 여기서도 동일하게 자른다.
@@ -2239,11 +2243,12 @@ if side["page"].startswith("2."):
                     _series_c.index = _series_c.index - pd.Timedelta(days=6)
                 elif unit == "월마감" and not _series_c.empty and _s_raw_c.index.max() < _series_c.index[-1]:
                     _series_c = _series_c.iloc[:-1]
-                # 위 단일 카테고리 차트와 동일하게 최신 연도만 남긴다 — 안 그러면 일별/주별
-                # 조회 시 2년치가 한 차트에 다 찍혀서 너무 빽빽해진다(전년 비교는 이 차트에선
-                # 안 그리니, 지난해 구간을 같이 보여줄 이유도 없음).
-                if not _series_c.empty:
-                    _series_c = _series_c[_series_c.index.year == int(_series_c.index.max().year)]
+                # 예전엔 여기서 최신 연도만 남겼는데, 그러면 지난 연도 자체(예: 작년 10월
+                # 흐름)를 조회할 방법이 없었다. 이제 전체 연도를 다 남기고, 아래 '기간'/
+                # '주차 범위' 선택기에서 사용자가 원하는 구간(과거 연도 포함)을 직접 고르게
+                # 한다 — 이 차트는 전년 비교선이 없어서 여러 해가 안 섞이고 선택한 구간만
+                # 딱 그만큼 보인다.
+                pass
                 if selected_period_date is not None and not _series_c.empty:
                     _series_c = _series_c[_series_c.index <= selected_period_date]
                     # 마지막 지점이 진행 중인(부분) 기간이면, 위 단일 카테고리 차트와
