@@ -397,12 +397,40 @@ with _sticky:
                 if selected_period_date not in _period_s.index:
                     _cand = _period_s.index[_period_s.index <= selected_period_date]
                     selected_period_date = _cand[-1] if len(_cand) else _period_s.index[-1]
+                # 매번 날짜를 직접 고르는 대신 자주 쓰는 최근 시점으로 바로 이동하는 단축
+                # 버튼 — 항상 실제 데이터의 최신일(_max_d) 기준 상대값이라, 눌러도 위치가
+                # 누적되지 않고 매번 같은 곳으로 이동한다(달력 조작 없이 빠르게 확인 용도).
+                _pq1, _pq2 = st.columns(2)
+                with _pq1:
+                    st.button(
+                        "전일", key="period_quick_d1", use_container_width=True,
+                        on_click=_reset_date_range, args=("period_filter_date", _max_d - _dt.timedelta(days=1)),
+                    )
+                with _pq2:
+                    st.button(
+                        "전전일", key="period_quick_d2", use_container_width=True,
+                        on_click=_reset_date_range, args=("period_filter_date", _max_d - _dt.timedelta(days=2)),
+                    )
             else:
                 _sel_label = st.selectbox(
                     "기준 시점", _period_labels, index=len(_period_labels) - 1,
                     label_visibility="collapsed", key="period_filter",
                 )
                 selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
+                _pq_cur_label, _pq_prev_label = ("금주", "전주") if unit == "주별" else ("당월", "전월")
+                _pq_cur_val = _period_labels[-1] if _period_labels else _sel_label
+                _pq_prev_val = _period_labels[-2] if len(_period_labels) >= 2 else _pq_cur_val
+                _pq1, _pq2 = st.columns(2)
+                with _pq1:
+                    st.button(
+                        _pq_cur_label, key="period_quick_cur", use_container_width=True,
+                        on_click=_reset_date_range, args=("period_filter", _pq_cur_val),
+                    )
+                with _pq2:
+                    st.button(
+                        _pq_prev_label, key="period_quick_prev", use_container_width=True,
+                        on_click=_reset_date_range, args=("period_filter", _pq_prev_val),
+                    )
 
         # 1번 페이지(카테고리 필터가 없는 페이지)는 매체필터/기준시점과 같은 줄 fc3에 핏플랍 제외 배치
         # (2번 페이지는 카테고리/브랜드 뒤 fc5에 배치 — 두 페이지 다 '마지막 필터 바로 옆' 위치로 통일)
@@ -1847,6 +1875,43 @@ if side["page"].startswith("2."):
                 _f_pur, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="구매객수")
                 _cat_funnel_segments.append((_fseg, _f_tr, _f_pur))
             render_conversion_funnel_row(_cat_funnel_segments)
+
+            # 위 퍼널은 '선택한 카테고리' 하나만 보여주는데, 여기서는 전체 카테고리를 놓고
+            # 어디가 가장 효율적인지(트래픽 대비 구매전환이 높은지) 비교한다. 비율 지표
+            # 단순평균 금지 원칙에 따라 카테고리별로 트래픽/구매객수를 각각 합산한 뒤
+            # 나눠서 계산(compute_official_total이 이미 그렇게 처리). 세그먼트는 상단
+            # '고객 구분' 필터와 무관하게 '전체' 기준으로 고정 — 위 퍼널의 '전체' 카드와
+            # 같은 기준이라 숫자가 서로 어긋나지 않는다.
+            _eff_base_df = cat_bpu_df_all_seg[
+                (cat_bpu_df_all_seg["브랜드"] == "전체") & (cat_bpu_df_all_seg["카테고리"] != "전체")
+            ]
+            if _has_segment:
+                _eff_base_df = _eff_base_df[_eff_base_df["회원구분"] == "전체"]
+            _eff_rows = []
+            for _cat_name, _g in _eff_base_df.groupby("카테고리"):
+                if bpu == "Total" or bpu in BPU_GROUPS:
+                    _g = _g.groupby("날짜", as_index=False)[["트래픽", "구매객수"]].sum()
+                _e_tr, _ = compute_official_total(_g, unit, selected_period_date, metric_col="트래픽")
+                _e_pur, _ = compute_official_total(_g, unit, selected_period_date, metric_col="구매객수")
+                # 트래픽이 극히 적은(하루 한두 명 수준) 카테고리는 전환율이 0%나 100%
+                # 근처로 튀어서 진짜 '부진/효율' 신호처럼 보이지만 사실은 노이즈다 —
+                # 최소 트래픽 기준(30) 미만은 랭킹에서 제외한다.
+                if _e_tr and _e_tr >= 30 and _e_pur is not None:
+                    _eff_rows.append((_cat_name, _e_tr, _e_pur, _e_pur / _e_tr * 100))
+            if len(_eff_rows) >= 2:
+                _eff_rows.sort(key=lambda r: r[3], reverse=True)
+                _best_e, _worst_e = _eff_rows[0], _eff_rows[-1]
+                _eff_body = (
+                    f"<b>{_best_e[0]}</b>{_josa_ga(_best_e[0])} 구매전환율 {_best_e[3]:.1f}%로 가장 효율적이에요 "
+                    f"(트래픽 {_best_e[1]:,.0f} · 구매 {_best_e[2]:,.0f}).<br>"
+                    f"반대로 <b>{_worst_e[0]}</b>{_josa_eun(_worst_e[0])} {_worst_e[3]:.1f}%로 가장 부진해요 "
+                    f"(트래픽 {_worst_e[1]:,.0f} · 구매 {_worst_e[2]:,.0f}) — {_emphasize('전환 동선 점검이 필요해요.')}"
+                )
+                render_insight_panel([{
+                    "title": f"🎯 카테고리별 효율은 어디가 가장 좋은가? ({bpu} · {period_label} 기준 · 전체 세그먼트 · 트래픽 30 이상)",
+                    "body": _eff_body,
+                }])
+
             st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
             # --- 추이 차트 (전년 비교선 포함) ---
