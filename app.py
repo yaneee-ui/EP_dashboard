@@ -3307,9 +3307,24 @@ if side["page"].startswith("11."):
                 else:
                     _yoy_v = _num_yoy.mean() if not _num_yoy.empty else None
                 _yoy = pct_delta_safe(_latest_v, _yoy_v) if (_latest_v is not None and _yoy_v) else None
+                # 전주(바로 이전 주, 표의 뒤에서 두 번째 컬럼)의 작년 동요일 값도 맨 오른쪽에
+                # 추가로 보여준다 — 최신 주와 달리 이 주는 이미 끝난 완성된 주라 부분주 보정은
+                # 필요 없지만, 혹시 데이터에 빈 날짜가 있어도 안전하게 '실제 존재하는 날짜'
+                # 기준으로 동일하게 매칭한다.
+                _prev_ws = _wk4_starts[-2]
+                _prev_we = _prev_ws + pd.Timedelta(days=6)
+                _prev_actual_days = _s_num[(_s_num.index >= _prev_ws) & (_s_num.index <= _prev_we)].index
+                _prev_matched_dates = [d - pd.Timedelta(days=364) for d in _prev_actual_days]
+                _prev_num_yoy = _s_num.reindex(_prev_matched_dates).dropna()
+                if _is_ratio:
+                    _prev_den_yoy = _s_den.reindex(_prev_matched_dates).dropna()
+                    _prev_yoy_v = (_prev_num_yoy.sum() / _prev_den_yoy.sum() * (100 if _label == "CR" else 1)) if _prev_den_yoy.sum() else None
+                else:
+                    _prev_yoy_v = _prev_num_yoy.mean() if not _prev_num_yoy.empty else None
                 _wk4_all_rows.append({
                     "지표": _label, "구분": _row_name, "값": _wk_vals,
-                    "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v, "is_pct": _label == "CR",
+                    "전주비": _wow, "전년비": _yoy, "작년값": _yoy_v, "전주작년값": _prev_yoy_v,
+                    "is_pct": _label == "CR",
                 })
 
         # --- HTML 표 ---
@@ -3318,7 +3333,7 @@ if side["page"].startswith("11."):
         for _r in _wk4_all_rows:
             if _r["지표"] != _cur_metric:
                 _cur_metric = _r["지표"]
-                _wk4_sections_html += f"<tr><td colspan='8' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
+                _wk4_sections_html += f"<tr><td colspan='{1 + len(_wk4_labels) + 4}' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
 
             def _fmt_wk(v, is_pct):
                 if v is None or pd.isna(v):
@@ -3330,7 +3345,8 @@ if side["page"].startswith("11."):
                 f"<tr><td class='m'>{_r['구분']}</td>{_cells}"
                 f"<td style='text-align:right;'>{format_delta_html(_r['전주비'])}</td>"
                 f"<td style='text-align:right;'>{format_delta_html(_r['전년비'])}</td>"
-                f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk(_r['작년값'], _r['is_pct'])}</td></tr>"
+                f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk(_r['작년값'], _r['is_pct'])}</td>"
+                f"<td style='text-align:right;color:#9ca3af;'>{_fmt_wk(_r['전주작년값'], _r['is_pct'])}</td></tr>"
             )
         def _fmt_wk4_date_range(_s, _e):
             _s, _e = pd.Timestamp(_s), pd.Timestamp(_e)
@@ -3352,15 +3368,25 @@ if side["page"].startswith("11."):
         _wk4_yoy_start = _wk4_starts[-1] - pd.Timedelta(days=364)
         _wk4_yoy_end = _wk4_display_ends[-1] - pd.Timedelta(days=364)
         _wk4_yoy_header = f"작년(동요일)<br><span style='font-weight:400;font-size:0.72rem;color:#9ca3af;'>{_fmt_wk4_date_range(_wk4_yoy_start, _wk4_yoy_end)}</span>"
+        # 맨 오른쪽에 '전주'(뒤에서 두 번째 컬럼, 표에서 지금 완결된 가장 최근 주)의
+        # 작년 동요일 값도 하나 더 보여준다 — 최신 주는 이미 작년(동요일) 컬럼이 있으니,
+        # 전주 몫도 있으면 전주비/전년비를 같이 놓고 볼 때 참고하기 좋다는 요청.
+        # 전주는 이미 끝난 완결된 주라 _wk4_display_ends 캡핑 없이 그대로 +6일 쓴다.
+        _wk4_prev_ws, _wk4_prev_we = _wk4_starts[-2], _wk4_starts[-2] + pd.Timedelta(days=6)
+        _wk4_prev_yoy_start = _wk4_prev_ws - pd.Timedelta(days=364)
+        _wk4_prev_yoy_end = _wk4_prev_we - pd.Timedelta(days=364)
+        _wk4_prev_yoy_header = f"전주 작년(동요일)<br><span style='font-weight:400;font-size:0.72rem;color:#9ca3af;'>{_fmt_wk4_date_range(_wk4_prev_yoy_start, _wk4_prev_yoy_end)}</span>"
         # 엑셀은 HTML을 못 쓰니 같은 날짜 정보를 괄호로 붙인 텍스트 라벨로 대신 넣는다.
         _wk4_labels_xl = [
             f"{l} ({_fmt_wk4_date_range(_ws, _we)})"
             for l, _ws, _we in zip(_wk4_labels, _wk4_starts, _wk4_display_ends)
         ]
         _wk4_yoy_header_xl = f"작년(동요일) ({_fmt_wk4_date_range(_wk4_yoy_start, _wk4_yoy_end)})"
+        _wk4_prev_yoy_header_xl = f"전주 작년(동요일) ({_fmt_wk4_date_range(_wk4_prev_yoy_start, _wk4_prev_yoy_end)})"
         st.markdown(
             "<div style='overflow-x:auto;'><table class='summary-table'>"
-            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>{_wk4_yoy_header}</th></tr></thead>"
+            f"<thead><tr><th>구분</th>{_wk4_header}<th>전주비</th><th>전년비</th><th>{_wk4_yoy_header}</th>"
+            f"<th>{_wk4_prev_yoy_header}</th></tr></thead>"
             f"<tbody>{_wk4_sections_html}</tbody></table></div>",
             unsafe_allow_html=True,
         )
@@ -3386,7 +3412,7 @@ if side["page"].startswith("11."):
             "입점": PatternFill("solid", fgColor="FBCFE8"),
         }
 
-        _wk4_col_headers = ["구분"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
+        _wk4_col_headers = ["구분"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl, _wk4_prev_yoy_header_xl]
         _wk4_ws.append(_wk4_col_headers)
         for _c in range(1, len(_wk4_col_headers) + 1):
             _cell = _wk4_ws.cell(row=1, column=_c)
@@ -3406,12 +3432,15 @@ if side["page"].startswith("11."):
             _row_vals.append(None if _r["전년비"] is None else round(_r["전년비"] / 100, 4))
             _yoy_v = _r.get("작년값")
             _row_vals.append(None if _yoy_v is None or pd.isna(_yoy_v) else (round(_yoy_v / 100, 4) if _r["is_pct"] else round(_yoy_v)))
+            _prev_yoy_v = _r.get("전주작년값")
+            _row_vals.append(None if _prev_yoy_v is None or pd.isna(_prev_yoy_v) else (round(_prev_yoy_v / 100, 4) if _r["is_pct"] else round(_prev_yoy_v)))
             _wk4_ws.append(_row_vals)
             _rr = _wk4_ws.max_row
             if _r["is_pct"]:
                 for _c in range(2, 2 + len(_wk4_labels)):
                     _wk4_ws.cell(row=_rr, column=_c).number_format = "0.0%"
                 _wk4_ws.cell(row=_rr, column=4 + len(_wk4_labels)).number_format = "0.0%"
+                _wk4_ws.cell(row=_rr, column=5 + len(_wk4_labels)).number_format = "0.0%"
             for _c, _val in [(2 + len(_wk4_labels), _r["전주비"]), (3 + len(_wk4_labels), _r["전년비"])]:
                 _cell = _wk4_ws.cell(row=_rr, column=_c)
                 _cell.number_format = '+0.0%;-0.0%'
@@ -3510,32 +3539,52 @@ if side["page"].startswith("11."):
             _ob_rows.sort(key=_cat_sort_key)
             _cat_order_by_bpu[_ob_label] = [r["카테고리"] for r in _ob_rows]
 
+        # 화면 미리보기는 25개(지표5 x 구분5)를 다 늘어놓으면 너무 길어서, 지표/구분을
+        # 골라 그 조합 하나만 탭처럼 보여준다 — 엑셀 다운로드에는 여전히 25개 다 들어간다
+        # (아래 엑셀 작성 루프는 화면 표시 여부와 무관하게 항상 전체를 돈다).
+        _wk4_cat_metric_labels = [m for m, *_ in _wk4_cat_metric_defs]
+        _wk4_cat_bpu_labels = list(FORECAST_BPU_ROWS.keys())
+        _wcc1, _wcc2 = st.columns(2)
+        with _wcc1:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>지표</div>", unsafe_allow_html=True)
+            _wk4_cat_sel_metric = st.radio(
+                "지표", _wk4_cat_metric_labels, index=0, horizontal=True,
+                key="wk4_cat_metric_sel", label_visibility="collapsed",
+            )
+        with _wcc2:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
+            _wk4_cat_sel_bpu = st.radio(
+                "구분", _wk4_cat_bpu_labels, index=0, horizontal=True,
+                key="wk4_cat_bpu_sel", label_visibility="collapsed",
+            )
+        st.caption("고른 조합의 표만 화면에 보여드려요 — 25개 표 전체는 아래 엑셀 다운로드에 다 들어있어요.")
+
         _wk4_cat_excel_ws = None
         if not _wk4_cat_base_all.empty:
-            with st.expander("펼쳐서 보기 (지표 5개 x 구분 5개 = 25개 표)", expanded=False):
-                for _m_label, _num_col, _den_col, _is_ratio, _is_pct in _wk4_cat_metric_defs:
-                    st.markdown(f"##### {_m_label}")
-                    for _bpu_label, _bpu_list in FORECAST_BPU_ROWS.items():
-                        _base_bpu = (
-                            _wk4_cat_base_all if _bpu_list is None
-                            else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_bpu_list)]
-                        )
-                        _order = _cat_order_by_bpu.get(_bpu_label, [])
-                        if not _order:
-                            continue
-                        # 거래액 기준으로 확정한 카테고리 목록(_order)을 그대로 넘긴다 —
-                        # 이 지표에서 값이 0/None이어도 행 자체는 그대로 유지되고 '-'로
-                        # 표시되므로, 모든 지표 표가 항상 같은 카테고리 집합·순서를 갖는다.
-                        _rows = _compute_cat_rows(_base_bpu, _num_col, _den_col, _is_ratio, _is_pct, _order)
-                        st.markdown(f"**{_bpu_label} {_m_label}**")
+            for _m_label, _num_col, _den_col, _is_ratio, _is_pct in _wk4_cat_metric_defs:
+                for _bpu_label, _bpu_list in FORECAST_BPU_ROWS.items():
+                    _base_bpu = (
+                        _wk4_cat_base_all if _bpu_list is None
+                        else _wk4_cat_base_all[_wk4_cat_base_all["BPU"].isin(_bpu_list)]
+                    )
+                    _order = _cat_order_by_bpu.get(_bpu_label, [])
+                    if not _order:
+                        continue
+                    # 거래액 기준으로 확정한 카테고리 목록(_order)을 그대로 넘긴다 —
+                    # 이 지표에서 값이 0/None이어도 행 자체는 그대로 유지되고 '-'로
+                    # 표시되므로, 모든 지표 표가 항상 같은 카테고리 집합·순서를 갖는다.
+                    _rows = _compute_cat_rows(_base_bpu, _num_col, _den_col, _is_ratio, _is_pct, _order)
 
-                        # TOTAL 행 — 카테고리 전체 합산. 이미 위 BPU별 표에서 정확히 이 조합
-                        # (지표=_m_label, 구분=_bpu_label)을 계산해둔 _wk4_all_rows를 그대로
-                        # 재사용한다 — 새로 계산하면 반올림 등으로 미세하게 어긋날 수 있는데,
-                        # 재사용하면 위 표와 100% 같은 숫자가 보장된다.
-                        _total_match = next(
-                            (r for r in _wk4_all_rows if r["지표"] == _m_label and r["구분"] == _bpu_label), None
-                        )
+                    # TOTAL 행 — 카테고리 전체 합산. 이미 위 BPU별 표에서 정확히 이 조합
+                    # (지표=_m_label, 구분=_bpu_label)을 계산해둔 _wk4_all_rows를 그대로
+                    # 재사용한다 — 새로 계산하면 반올림 등으로 미세하게 어긋날 수 있는데,
+                    # 재사용하면 위 표와 100% 같은 숫자가 보장된다.
+                    _total_match = next(
+                        (r for r in _wk4_all_rows if r["지표"] == _m_label and r["구분"] == _bpu_label), None
+                    )
+
+                    if _m_label == _wk4_cat_sel_metric and _bpu_label == _wk4_cat_sel_bpu:
+                        st.markdown(f"**{_bpu_label} {_m_label}**")
                         _total_row_html = ""
                         if _total_match:
                             _total_row_html = (
@@ -3561,70 +3610,70 @@ if side["page"].startswith("11."):
                             unsafe_allow_html=True,
                         )
 
-                        # 엑셀 시트(지표 x BPU 조합 하나당 섹션으로 누적)
-                        if _wk4_cat_excel_ws is None:
-                            _wk4_cat_excel_ws = _wk4_wb.create_sheet("카테고리별")
-                        _wk4_cat_excel_ws.append([f"{_bpu_label} · {_m_label}"])
-                        _hdr_row = ["카테고리"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
-                        _title_fill = _wk4_bpu_fill.get(_bpu_label)
+                    # 엑셀 시트(지표 x BPU 조합 하나당 섹션으로 누적) — 화면 표시 선택과 무관하게 항상 채운다
+                    if _wk4_cat_excel_ws is None:
+                        _wk4_cat_excel_ws = _wk4_wb.create_sheet("카테고리별")
+                    _wk4_cat_excel_ws.append([f"{_bpu_label} · {_m_label}"])
+                    _hdr_row = ["카테고리"] + _wk4_labels_xl + ["전주비", "전년비", _wk4_yoy_header_xl]
+                    _title_fill = _wk4_bpu_fill.get(_bpu_label)
+                    for _c in range(1, len(_hdr_row) + 1):
+                        _title_cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
+                        _title_cell.font = Font(bold=True)
+                        if _title_fill is not None:
+                            _title_cell.fill = _title_fill
+                    _wk4_cat_excel_ws.append(_hdr_row)
+                    for _c in range(1, len(_hdr_row) + 1):
+                        _cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
+                        _cell.fill = _wk4_header_fill
+                        _cell.font = Font(bold=True)
+                    if _total_match:
+                        _tot_vals = ["TOTAL"] + [
+                            None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
+                            for v in _total_match["값"]
+                        ]
+                        _tot_vals.append(None if _total_match["전주비"] is None else round(_total_match["전주비"] / 100, 4))
+                        _tot_vals.append(None if _total_match["전년비"] is None else round(_total_match["전년비"] / 100, 4))
+                        _tw = _total_match.get("작년값")
+                        _tot_vals.append(None if _tw is None or pd.isna(_tw) else (round(_tw / 100, 4) if _is_pct else round(_tw)))
+                        _wk4_cat_excel_ws.append(_tot_vals)
+                        _rr = _wk4_cat_excel_ws.max_row
                         for _c in range(1, len(_hdr_row) + 1):
-                            _title_cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
-                            _title_cell.font = Font(bold=True)
-                            if _title_fill is not None:
-                                _title_cell.fill = _title_fill
-                        _wk4_cat_excel_ws.append(_hdr_row)
-                        for _c in range(1, len(_hdr_row) + 1):
-                            _cell = _wk4_cat_excel_ws.cell(row=_wk4_cat_excel_ws.max_row, column=_c)
-                            _cell.fill = _wk4_header_fill
-                            _cell.font = Font(bold=True)
-                        if _total_match:
-                            _tot_vals = ["TOTAL"] + [
-                                None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
-                                for v in _total_match["값"]
-                            ]
-                            _tot_vals.append(None if _total_match["전주비"] is None else round(_total_match["전주비"] / 100, 4))
-                            _tot_vals.append(None if _total_match["전년비"] is None else round(_total_match["전년비"] / 100, 4))
-                            _tw = _total_match.get("작년값")
-                            _tot_vals.append(None if _tw is None or pd.isna(_tw) else (round(_tw / 100, 4) if _is_pct else round(_tw)))
-                            _wk4_cat_excel_ws.append(_tot_vals)
-                            _rr = _wk4_cat_excel_ws.max_row
-                            for _c in range(1, len(_hdr_row) + 1):
-                                _wk4_cat_excel_ws.cell(row=_rr, column=_c).font = Font(bold=True)
-                            if _is_pct:
-                                for _c in range(2, 2 + len(_wk4_labels)):
-                                    _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
-                                _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
-                            for _c, _val in [(len(_hdr_row) - 2, _total_match["전주비"]), (len(_hdr_row) - 1, _total_match["전년비"])]:
-                                _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
-                                _cell.number_format = '+0.0%;-0.0%'
-                                if _val is not None:
-                                    _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
-                        for r in _rows:
-                            _row_vals = [r["카테고리"]] + [
-                                None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
-                                for v in r["값"]
-                            ]
-                            _row_vals.append(None if r["전주비"] is None else round(r["전주비"] / 100, 4))
-                            _row_vals.append(None if r["전년비"] is None else round(r["전년비"] / 100, 4))
-                            _wv = r["작년값"]
-                            _row_vals.append(
-                                None if _wv is None or pd.isna(_wv) else (round(_wv / 100, 4) if _is_pct else round(_wv))
-                            )
-                            _wk4_cat_excel_ws.append(_row_vals)
-                            _rr = _wk4_cat_excel_ws.max_row
-                            if _is_pct:
-                                for _c in range(2, 2 + len(_wk4_labels)):
-                                    _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
-                                _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
-                            # (len(_hdr_row)-2, -1) = (전주비, 전년비) 컬럼. TOTAL 행(위)과 같은
-                            # 공식이어야 하는데 여기만 하나씩 밀려서(-1, 그대로) 마지막 컬럼인
-                            # '작년(동요일)'까지 증감률(%) 서식+색이 잘못 입혀지고 있었음.
-                            for _c, _val in [(len(_hdr_row) - 2, r["전주비"]), (len(_hdr_row) - 1, r["전년비"])]:
-                                _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
-                                _cell.number_format = '+0.0%;-0.0%'
-                                if _val is not None:
-                                    _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
-                        _wk4_cat_excel_ws.append([])  # 섹션 사이 빈 줄
+                            _wk4_cat_excel_ws.cell(row=_rr, column=_c).font = Font(bold=True)
+                        if _is_pct:
+                            for _c in range(2, 2 + len(_wk4_labels)):
+                                _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
+                            _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
+                        for _c, _val in [(len(_hdr_row) - 2, _total_match["전주비"]), (len(_hdr_row) - 1, _total_match["전년비"])]:
+                            _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
+                            _cell.number_format = '+0.0%;-0.0%'
+                            if _val is not None:
+                                _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
+                    for r in _rows:
+                        _row_vals = [r["카테고리"]] + [
+                            None if v is None or pd.isna(v) else (round(v / 100, 4) if _is_pct else round(v))
+                            for v in r["값"]
+                        ]
+                        _row_vals.append(None if r["전주비"] is None else round(r["전주비"] / 100, 4))
+                        _row_vals.append(None if r["전년비"] is None else round(r["전년비"] / 100, 4))
+                        _wv = r["작년값"]
+                        _row_vals.append(
+                            None if _wv is None or pd.isna(_wv) else (round(_wv / 100, 4) if _is_pct else round(_wv))
+                        )
+                        _wk4_cat_excel_ws.append(_row_vals)
+                        _rr = _wk4_cat_excel_ws.max_row
+                        if _is_pct:
+                            for _c in range(2, 2 + len(_wk4_labels)):
+                                _wk4_cat_excel_ws.cell(row=_rr, column=_c).number_format = "0.0%"
+                            _wk4_cat_excel_ws.cell(row=_rr, column=len(_hdr_row)).number_format = "0.0%"
+                        # (len(_hdr_row)-2, -1) = (전주비, 전년비) 컬럼. TOTAL 행(위)과 같은
+                        # 공식이어야 하는데 여기만 하나씩 밀려서(-1, 그대로) 마지막 컬럼인
+                        # '작년(동요일)'까지 증감률(%) 서식+색이 잘못 입혀지고 있었음.
+                        for _c, _val in [(len(_hdr_row) - 2, r["전주비"]), (len(_hdr_row) - 1, r["전년비"])]:
+                            _cell = _wk4_cat_excel_ws.cell(row=_rr, column=_c)
+                            _cell.number_format = '+0.0%;-0.0%'
+                            if _val is not None:
+                                _cell.font = _wk4_up_font if _val >= 0 else _wk4_down_font
+                    _wk4_cat_excel_ws.append([])  # 섹션 사이 빈 줄
             if _wk4_cat_excel_ws is not None:
                 for _c in range(1, 8):
                     _wk4_cat_excel_ws.column_dimensions[openpyxl.utils.get_column_letter(_c)].width = 13
