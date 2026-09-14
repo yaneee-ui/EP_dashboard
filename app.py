@@ -373,9 +373,9 @@ with _sticky:
         _is_cat_page = _page_num == "2"
         _ff_exclude = False  # 기본값 (아래에서 조건에 맞으면 덮어씀)
         if _is_cat_page:
-            fc1, fc2, fc3, fc4, fc5, _fc_spacer = st.columns([1, 1, 1, 1, 1, 5])
+            fc1, fc2, fc3, fc4, fc5, _fc_spacer = st.columns([1, 1, 1, 1, 3, 2])
         else:
-            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 1, 7])
+            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 3, 3])
 
         with fc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
@@ -416,29 +416,32 @@ with _sticky:
                 _pq1_label, _pq1_key, _pq1_args = _pq_cur_label, "period_quick_cur", ("period_filter", _pq_cur_val)
                 _pq2_label, _pq2_key, _pq2_args = _pq_prev_label, "period_quick_prev", ("period_filter", _pq_prev_val)
 
-        with _fc_spacer:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
-            _pq_col1, _pq_col2, _pq_col_rest = st.columns([1, 1, 6])
-            with _pq_col1:
-                st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
-            with _pq_col2:
-                st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
-
         # 1번 페이지(카테고리 필터가 없는 페이지)는 매체필터/기준시점과 같은 줄 fc3에 핏플랍 제외 배치
         # (2번 페이지는 카테고리/브랜드 뒤 fc5에 배치 — 두 페이지 다 '마지막 필터 바로 옆' 위치로 통일)
+        # 기준시점 단축 버튼(금주/전주 등)도 핏플랍 제외 바로 옆에 나란히 붙인다 — 예전엔 별도의
+        # 넓은 spacer 칼럼에 따로 그려서, 두 top-level 칼럼 사이 거터 때문에 핏플랍 제외 체크박스와
+        # 버튼 사이가 붕 떠 보였음. 같은 칼럼 안에서 nested columns로 붙이면 그 문제가 없다.
         if not _is_cat_page:
-            if (not df_category.empty) and (df_category["브랜드"] == "FF").any():
-                with fc3:
-                    st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
-                    _ff_exclude = st.checkbox(
-                        "핏플랍 제외",
-                        value=st.session_state.get("cat_ff_exclude", False), key="cat_ff_exclude",
-                        help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
-                             "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
-                             "2번 페이지의 체크박스와 같은 설정을 공유해요.",
-                    )
-            else:
-                _ff_exclude = False
+            with fc3:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+                _show_ff = (not df_category.empty) and (df_category["브랜드"] == "FF").any()
+                if _show_ff:
+                    _sub_ff, _sub_b1, _sub_b2 = st.columns([2, 1, 1])
+                    with _sub_ff:
+                        _ff_exclude = st.checkbox(
+                            "핏플랍 제외",
+                            value=st.session_state.get("cat_ff_exclude", False), key="cat_ff_exclude",
+                            help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
+                                 "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
+                                 "2번 페이지의 체크박스와 같은 설정을 공유해요.",
+                        )
+                else:
+                    _ff_exclude = False
+                    _sub_b1, _sub_b2, _sub_b_rest = st.columns([1, 1, 4])
+                with _sub_b1:
+                    st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
+                with _sub_b2:
+                    st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
 
         # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
         selected_cat, selected_brand = "전체", "전체"
@@ -473,18 +476,27 @@ with _sticky:
                 _brand_options_top = ["전체"] + sorted([b for b in _valid_brands_top if b != "전체"])
                 selected_brand = st.selectbox("브랜드", _brand_options_top, index=0, format_func=brand_label, label_visibility="collapsed", key="brand_select")
 
-            # 핏플랍(FF) 제외 — 브랜드 필터 옆에 배치, FF 브랜드 데이터가 실제로 있을 때만 노출
+            # 핏플랍(FF) 제외 — 브랜드 필터 옆에 배치, FF 브랜드 데이터가 실제로 있을 때만 노출.
+            # 기준시점 단축 버튼도 바로 옆에 나란히 붙인다(페이지1과 동일한 이유).
             with fc5:
-                if (df_category["브랜드"] == "FF").any():
-                    st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
-                    _ff_exclude = st.checkbox(
-                        "핏플랍 제외",
-                        value=False, key="cat_ff_exclude",
-                        help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
-                             "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
-                    )
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+                _show_ff = (df_category["브랜드"] == "FF").any()
+                if _show_ff:
+                    _sub_ff, _sub_b1, _sub_b2 = st.columns([2, 1, 1])
+                    with _sub_ff:
+                        _ff_exclude = st.checkbox(
+                            "핏플랍 제외",
+                            value=False, key="cat_ff_exclude",
+                            help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
+                                 "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
+                        )
                 else:
                     _ff_exclude = False
+                    _sub_b1, _sub_b2, _sub_b_rest = st.columns([1, 1, 4])
+                with _sub_b1:
+                    st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
+                with _sub_b2:
+                    st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
 
             # 세그먼트(고객 구분) — 카테고리 레벨(브랜드=전체)에서만 제공
             _has_segment = "회원구분" in df_category.columns
