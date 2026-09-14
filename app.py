@@ -425,23 +425,24 @@ with _sticky:
             with fc3:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
                 _show_ff = (not df_category.empty) and (df_category["브랜드"] == "FF").any()
-                if _show_ff:
-                    _sub_ff, _sub_b1, _sub_b2 = st.columns([1, 1, 1])
-                    with _sub_ff:
-                        _ff_exclude = st.checkbox(
-                            "핏플랍 제외",
-                            value=st.session_state.get("cat_ff_exclude", False), key="cat_ff_exclude",
-                            help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
-                                 "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
-                                 "2번 페이지의 체크박스와 같은 설정을 공유해요.",
-                        )
-                else:
-                    _ff_exclude = False
-                    _sub_b1, _sub_b2, _sub_b_rest = st.columns([1, 1, 4])
-                with _sub_b1:
-                    st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
-                with _sub_b2:
-                    st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
+                with st.container(key="ff_quick_row"):
+                    if _show_ff:
+                        _sub_ff, _sub_b1, _sub_b2 = st.columns([1, 1, 1])
+                        with _sub_ff:
+                            _ff_exclude = st.checkbox(
+                                "핏플랍 제외",
+                                value=st.session_state.get("cat_ff_exclude", False), key="cat_ff_exclude",
+                                help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 카테고리 원본(ep_category.csv)에서 "
+                                     "FF 실적을 찾아 EP실적(트래픽/거래액/구매객수)에서도 빼고 CR/객단가를 다시 계산해요. "
+                                     "2번 페이지의 체크박스와 같은 설정을 공유해요.",
+                            )
+                    else:
+                        _ff_exclude = False
+                        _sub_b1, _sub_b2 = st.columns([1, 1])
+                    with _sub_b1:
+                        st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
+                    with _sub_b2:
+                        st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
 
         # 카테고리 페이지일 때만 매체필터 옆에 카테고리/브랜드 필터 노출
         selected_cat, selected_brand = "전체", "전체"
@@ -481,22 +482,23 @@ with _sticky:
             with fc5:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
                 _show_ff = (df_category["브랜드"] == "FF").any()
-                if _show_ff:
-                    _sub_ff, _sub_b1, _sub_b2 = st.columns([1, 1, 1])
-                    with _sub_ff:
-                        _ff_exclude = st.checkbox(
-                            "핏플랍 제외",
-                            value=False, key="cat_ff_exclude",
-                            help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
-                                 "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
-                        )
-                else:
-                    _ff_exclude = False
-                    _sub_b1, _sub_b2, _sub_b_rest = st.columns([1, 1, 4])
-                with _sub_b1:
-                    st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
-                with _sub_b2:
-                    st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
+                with st.container(key="ff_quick_row"):
+                    if _show_ff:
+                        _sub_ff, _sub_b1, _sub_b2 = st.columns([1, 1, 1])
+                        with _sub_ff:
+                            _ff_exclude = st.checkbox(
+                                "핏플랍 제외",
+                                value=False, key="cat_ff_exclude",
+                                help="핏플랍은 2025년 10월에 종료된 브랜드예요. 켜면 슈즈 카테고리·전체 집계에서 "
+                                     "FF 실적을 빼고 CR/객단가까지 다시 계산해서 보여줘요 (트래픽/구매객수도 같이 빠짐).",
+                            )
+                    else:
+                        _ff_exclude = False
+                        _sub_b1, _sub_b2 = st.columns([1, 1])
+                    with _sub_b1:
+                        st.button(_pq1_label, key=_pq1_key, on_click=_reset_date_range, args=_pq1_args)
+                    with _sub_b2:
+                        st.button(_pq2_label, key=_pq2_key, on_click=_reset_date_range, args=_pq2_args)
 
             # 세그먼트(고객 구분) — 카테고리 레벨(브랜드=전체)에서만 제공
             _has_segment = "회원구분" in df_category.columns

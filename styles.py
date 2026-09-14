@@ -105,5 +105,19 @@ div[data-testid="stMain"] div[data-testid="stDateInput"],
 div[data-testid="stMain"] div[data-testid="stMultiSelect"] {
     max-width: 240px !important;
 }
+
+/* 핏플랍 제외 체크박스 + 기준시점 단축 버튼(전일/전전일 등) 묶음 —
+   st.columns 비율 칼럼은 폭이 내용보다 넓으면 그만큼 빈 여백이 남는 문제가
+   있어서, 이 묶음만 각 칼럼을 내용 크기에 맞춰 줄이고(flex: 0 0 auto) 칼럼
+   사이 간격도 좁혀서 서로 바짝 붙어 보이게 한다. 체크박스 라벨(핏플랍 제외 + ?
+   툴팁)이 잘리지 않도록 min-width는 0으로만 풀어주고 폭 자체는 제한하지 않음. */
+.st-key-ff_quick_row div[data-testid="stHorizontalBlock"] {
+    gap: 0.4rem !important;
+}
+.st-key-ff_quick_row div[data-testid="stColumn"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
 </style>
 """
