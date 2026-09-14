@@ -373,9 +373,9 @@ with _sticky:
         _is_cat_page = _page_num == "2"
         _ff_exclude = False  # 기본값 (아래에서 조건에 맞으면 덮어씀)
         if _is_cat_page:
-            fc1, fc2, fc3, fc4, fc5, _fc_spacer = st.columns([1, 1, 1, 1, 3, 2])
+            fc1, fc2, fc3, fc4, fc5, _fc_spacer = st.columns([1, 1, 1, 1, 2, 3])
         else:
-            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 3, 3])
+            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 2, 4])
 
         with fc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체 필터</div>", unsafe_allow_html=True)
@@ -426,7 +426,7 @@ with _sticky:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
                 _show_ff = (not df_category.empty) and (df_category["브랜드"] == "FF").any()
                 if _show_ff:
-                    _sub_ff, _sub_b1, _sub_b2 = st.columns([2, 1, 1])
+                    _sub_ff, _sub_b1, _sub_b2 = st.columns([1, 1, 1])
                     with _sub_ff:
                         _ff_exclude = st.checkbox(
                             "핏플랍 제외",
@@ -482,7 +482,7 @@ with _sticky:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
                 _show_ff = (df_category["브랜드"] == "FF").any()
                 if _show_ff:
-                    _sub_ff, _sub_b1, _sub_b2 = st.columns([2, 1, 1])
+                    _sub_ff, _sub_b1, _sub_b2 = st.columns([1, 1, 1])
                     with _sub_ff:
                         _ff_exclude = st.checkbox(
                             "핏플랍 제외",
@@ -1925,6 +1925,7 @@ if side["page"].startswith("2."):
                 _f_pur, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="구매객수")
                 _cat_funnel_segments.append((_fseg, _f_tr, _f_pur))
             render_conversion_funnel_row(_cat_funnel_segments)
+            st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
             # 위 퍼널은 '선택한 카테고리' 하나만 보여주는데, 여기서는 전체 카테고리를 놓고
             # 어디가 가장 효율적인지(트래픽 대비 구매전환이 높은지) 비교한다. 비율 지표

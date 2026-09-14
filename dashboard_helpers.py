@@ -1162,9 +1162,9 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
             _worst_abs = min(_all_cats_flat, key=lambda r: r["절대변화"])
             _best_abs = max(_all_cats_flat, key=lambda r: r["절대변화"])
             _abs_body = (
+                f"{_emphasize('비율은 작아 보여도 실제 매출 임팩트는 이쪽이 더 클 수 있어요.')}<br>"
                 f"절대액 기준 가장 큰 감소: <b>{_worst_abs['BPU']} · {_worst_abs['카테고리']}</b> "
                 f"{_worst_abs['절대변화']:,.0f} ({_fmt_delta(_worst_abs['전년비'])})<br>"
-                f"{_emphasize('비율은 작아 보여도 실제 매출 임팩트는 이쪽이 더 클 수 있어요.')}<br>"
                 f"가장 큰 증가: <b>{_best_abs['BPU']} · {_best_abs['카테고리']}</b> +{_best_abs['절대변화']:,.0f}"
             )
             sections.append({"title": "④-2 절대 매출액 기준으로는 어디 영향이 가장 큰가?", "body": _abs_body})
@@ -1224,9 +1224,9 @@ def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
             _worst_abs = min(_with_abs, key=lambda r: r["절대변화"])
             _best_abs = max(_with_abs, key=lambda r: r["절대변화"])
             _abs_body = (
+                f"{_emphasize('비율은 작아 보여도 실제 매출 임팩트는 이쪽이 더 클 수 있어요.')}<br>"
                 f"가장 큰 감소: <b>{_worst_abs['카테고리']}</b> {_worst_abs['절대변화']:,.0f} "
                 f"({_fmt_delta(_worst_abs['yoy'])})<br>"
-                f"{_emphasize('비율은 작아 보여도 실제 매출 임팩트는 이쪽이 더 클 수 있어요.')}<br>"
                 f"가장 큰 증가: <b>{_best_abs['카테고리']}</b> "
                 f"+{_best_abs['절대변화']:,.0f} ({_fmt_delta(_best_abs['yoy'])})"
             )
@@ -1448,7 +1448,7 @@ def render_insight_panel(sections, key_prefix=""):
             f"<div style='margin-bottom:14px;font-size:0.82rem;color:#374151;line-height:1.7;'>"
             f"<span style='color:#2563eb;font-weight:700;margin-right:4px;'>•</span>"
             f"<span style='font-weight:600;color:#1e3a8a;'>{_insight_bullet_title(s['title'])}</span>"
-            f"<span style='color:#9ca3af;'>: </span>{s['body']}"
+            f"<br>{s['body']}"
             f"</div>"
             for s in sections
         )
@@ -1482,6 +1482,11 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
     _bar_pad = "7px 10px" if compact else "10px 14px"
     _final_pct_size = "1.05rem" if compact else "1.3rem"
     _indent = "34px" if compact else "58px"
+    # 구매 막대는 전환율이 낮으면 폭이 최소치(6%)까지 좁아지는데, 그 안에 숫자를
+    # white-space:nowrap + overflow:hidden으로 넣다 보니 세 자리 숫자도 "7"처럼
+    # 잘려 보이는 문제가 있었음 — 막대가 아무리 좁아져도 숫자가 잘리지 않도록
+    # 최소 픽셀 폭을 같이 지정한다(퍼센트 폭보다 min-width가 크면 그게 이김).
+    _min_bar_w = "56px" if compact else "70px"
     _final_sub = "" if compact else "<span style='color:#9ca3af;font-size:0.8rem;'>트래픽 대비 구매 비율</span>"
 
     st.markdown(
@@ -1509,8 +1514,8 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
         f"display:flex;align-items:center;justify-content:center;font-size:{_icon_font};'>🛒</div>"
         f"<div style='font-weight:600;width:{_label_w};flex:0 0 {_label_w};font-size:0.85rem;'>구매</div>"
         "<div style='flex:1;background:#f1f5f9;border-radius:8px;min-width:0;'>"
-        f"<div style='width:{_bar_w2:.1f}%;background:#ef4444;color:#fff;font-weight:700;padding:{_bar_pad};"
-        f"border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;'>{purchase_val:,.0f}</div></div>"
+        f"<div style='width:{_bar_w2:.1f}%;min-width:{_min_bar_w};background:#ef4444;color:#fff;font-weight:700;padding:{_bar_pad};"
+        f"border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box;'>{purchase_val:,.0f}</div></div>"
         f"<div style='width:{_pct_w};flex:0 0 {_pct_w};text-align:right;font-size:0.78rem;color:#6b7280;'>"
         f"통과율 <span style='color:#ef4444;font-weight:700;'>{cr:.2f}%</span></div>"
         "</div>"
