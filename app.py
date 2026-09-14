@@ -1511,6 +1511,16 @@ if side["page"].startswith("1."):
     else:
         df_ep_combo = filter_by_combo(df_ep, bpu, match_status, lowest_status)
 
+    # 순결제비중(%) = 순결제거래액 / 총결제거래액 — 취소·반품 반영 전(총결제) 대비 반영 후(순결제)
+    # 비율. 카테고리별로는 총결제 데이터가 없어서(원본에 그 구분이 없음) BPU 단위인 이
+    # EP채널 섹션에서만 제공한다. aggregate_ep()가 BPU 합산 시 순결제/총결제를 이미
+    # 올바르게 합산해두므로, 합산된 값 기준으로 다시 나누기만 하면 됨(비율 재평균 아님).
+    if not df_ep_combo.empty and {"평균 EP 거래액(순결제)", "평균 EP 거래액(총결제)"}.issubset(df_ep_combo.columns):
+        df_ep_combo = df_ep_combo.copy()
+        df_ep_combo["순결제비중(%)"] = (
+            df_ep_combo["평균 EP 거래액(순결제)"] / df_ep_combo["평균 EP 거래액(총결제)"] * 100
+        ).where(df_ep_combo["평균 EP 거래액(총결제)"] > 0, 0)
+
     if df_ep_combo.empty:
         st.warning("선택한 조합에 데이터가 없습니다.")
     else:
@@ -1521,31 +1531,49 @@ if side["page"].startswith("1."):
             ("평균 EP 전시 상품수", "전시상품수"),
             ("평균 원부매칭 상품수", "원부매칭상품수"),
             ("평균 최저가 상품수", "최저가상품수"),
+            ("평균 EP 거래액(순결제)", "거래액(순결제)"),
+            ("평균 EP 거래액(총결제)", "거래액(총결제)"),
+            ("순결제비중(%)", "순결제비중(%)"),
         ]
 
-        ep_cols = st.columns(len(EP_CHANNEL_METRICS))
-        for i, (metric_key, display_name) in enumerate(EP_CHANNEL_METRICS):
+        def _render_ep_kpi_card(metric_key, display_name):
+            series = resample_series(df_ep_combo, metric_key, unit).dropna()
+            series = series[series.index <= selected_period_date]
+            _ep_raw = df_ep_combo.set_index(COL_DATE)[metric_key].sort_index()
+            _ep_raw = _ep_raw[_ep_raw.index <= raw_cutoff_date(selected_period_date, unit)]
+            stats = compute_kpi_deltas(series, unit, raw_daily=_ep_raw)
+            if not stats:
+                return
+            _is_pct = "%" in metric_key or metric_key == "신규가입율"
+            val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
+            cfg = UNIT_CONFIG[unit]
+            st.markdown(
+                f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
+                f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
+                f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                f"<div style='font-size:0.78rem;margin-top:6px;'>"
+                f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
+                f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), _is_pct)}<br/>"
+                f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}"
+                f"</div></div>",
+                unsafe_allow_html=True,
+            )
+
+        # 카드가 8개로 늘어나 한 줄에 다 넣으면 너무 좁아져서, 기존 5개(원부매칭/최저가
+        # 관련)와 새로 추가한 3개(순결제/총결제/순결제비중)를 두 줄로 나눠 보여준다.
+        _EP_KPI_ROW1 = EP_CHANNEL_METRICS[:5]
+        _EP_KPI_ROW2 = EP_CHANNEL_METRICS[5:]
+        ep_cols = st.columns(len(_EP_KPI_ROW1))
+        for i, (metric_key, display_name) in enumerate(_EP_KPI_ROW1):
             with ep_cols[i]:
-                series = resample_series(df_ep_combo, metric_key, unit).dropna()
-                series = series[series.index <= selected_period_date]
-                _ep_raw = df_ep_combo.set_index(COL_DATE)[metric_key].sort_index()
-                _ep_raw = _ep_raw[_ep_raw.index <= raw_cutoff_date(selected_period_date, unit)]
-                stats = compute_kpi_deltas(series, unit, raw_daily=_ep_raw)
-                if stats:
-                    _is_pct = "%" in metric_key or metric_key == "신규가입율"
-                    val_str = f"{stats['current']:.1f}%" if _is_pct else f"{stats['current']:,.0f}"
-                    cfg = UNIT_CONFIG[unit]
-                    st.markdown(
-                        f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
-                        f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                        f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
-                        f"<div style='font-size:0.78rem;margin-top:6px;'>"
-                        f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
-                        f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), _is_pct)}<br/>"
-                        f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}"
-                        f"</div></div>",
-                        unsafe_allow_html=True,
-                    )
+                _render_ep_kpi_card(metric_key, display_name)
+        if _EP_KPI_ROW2:
+            st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
+            st.caption("💰 순결제 vs 총결제 (취소·반품 반영 전/후)")
+            ep_cols2 = st.columns(len(_EP_KPI_ROW1))
+            for i, (metric_key, display_name) in enumerate(_EP_KPI_ROW2):
+                with ep_cols2[i]:
+                    _render_ep_kpi_card(metric_key, display_name)
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
