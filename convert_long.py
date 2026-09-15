@@ -94,9 +94,11 @@ for r in range(4, len(df)):
         rows.append(row)
 
 out_df = pd.DataFrame(rows).sort_values(["BPU", "원부매칭여부", "최저가여부", "날짜"]).reset_index(drop=True)
+out_df["날짜"] = pd.to_datetime(out_df["날짜"])
 
-archive_df = out_df[out_df["날짜"] <= ARCHIVE_CUTOFF]
-current_df = out_df[out_df["날짜"] > ARCHIVE_CUTOFF]
+_archive_cutoff_ts = pd.Timestamp(ARCHIVE_CUTOFF)
+archive_df = out_df[out_df["날짜"] <= _archive_cutoff_ts]
+current_df = out_df[out_df["날짜"] > _archive_cutoff_ts]
 
 if os.path.exists(OUT_ARCHIVE):
     print(f"'{OUT_ARCHIVE}' 이미 있어서 다시 만들지 않았어요 (마감 실적은 안 바뀌니까). "
@@ -104,6 +106,19 @@ if os.path.exists(OUT_ARCHIVE):
 else:
     archive_df.to_csv(OUT_ARCHIVE, index=False, encoding="utf-8-sig")
     print(f"마감분 저장: {OUT_ARCHIVE}, shape={archive_df.shape}, ~{ARCHIVE_CUTOFF}까지")
+
+if os.path.exists(OUT_CURRENT) and not current_df.empty:
+    # 원본(Data.xlsx)이 매번 연초~오늘 전체를 담고 있다고 가정했었는데, 최근엔
+    # '이번 주만 정정해서 다시 올림' 같은 부분 기간짜리 파일도 오기 시작했다.
+    # 그냥 덮어쓰면 이 파일에 없는 과거 날짜가 통째로 사라지므로, 기존 현재분을
+    # 읽어서 이번에 새로 들어온 날짜 범위만 새 값으로 바꿔치기(그 외 날짜는 보존)한다.
+    existing_current = pd.read_csv(OUT_CURRENT, parse_dates=["날짜"])
+    new_min, new_max = pd.Timestamp(current_df["날짜"].min()), pd.Timestamp(current_df["날짜"].max())
+    kept = existing_current[(existing_current["날짜"] < new_min) | (existing_current["날짜"] > new_max)]
+    current_df = pd.concat([kept, current_df], ignore_index=True)
+    current_df = current_df.sort_values(["BPU", "원부매칭여부", "최저가여부", "날짜"]).reset_index(drop=True)
+    print(f"기존 현재분과 병합: {new_min.date()}~{new_max.date()} 구간만 새 값으로 교체, "
+          f"그 외 {len(kept)}행은 보존")
 
 current_df.to_csv(OUT_CURRENT, index=False, encoding="utf-8-sig")
 print(f"현재분 저장: {OUT_CURRENT}, shape={current_df.shape}")
