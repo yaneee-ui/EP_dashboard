@@ -294,10 +294,13 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
 def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_category, cat_segment, ff_exclude):
     """주간보고용 엑셀(bytes) 생성.
     - 시트1 'BPU별': compute_bpu_comparison_rows() 그대로 사용 → 1번 페이지 비교표와 100% 동일 로직/숫자
-    - 시트2 '카테고리별(거래액)': compute_category_yoy_rows() 그대로 사용(BPU=e-영업1~4 각각)
-      → 2번 페이지 '카테고리별 요약'표와 동일한 세그먼트 필터·핏플랍 제외 규칙 적용
+    - 시트2~6 '카테고리별(거래액/트래픽/구매객수/CR/객단가)': compute_category_yoy_rows() 그대로
+      사용(BPU=e-영업1~4 각각) → 2번 페이지 '카테고리별 요약'표와 동일한 세그먼트 필터·핏플랍
+      제외 규칙 적용. CR/객단가는 비율 지표라 단순평균 대신 분자/분모(구매객수/트래픽,
+      거래액/구매객수)의 current·yoy_value를 직접 나눠서 계산한다.
     별도로 값을 재계산하지 않고 두 페이지가 쓰는 함수를 그대로 호출하므로, 화면에 보이는 표와
     엑셀 숫자가 어긋날 일이 없다.
+    반환값: (엑셀 bytes, BPU별 DataFrame, {"거래액":df, "트래픽":df, "구매객수":df, "CR":df, "객단가":df}).
 
     (예전엔 여기서 df_traffic/df_category 중 더 짧은 쪽 마지막 날짜로 기준시점을 강제로
     맞추는 로직이 있었는데, 그건 "혹시 두 파일 마지막 날짜가 다를 수도 있다"는 가정 하의
@@ -357,52 +360,91 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         })
     left_df = pd.DataFrame(left_rows)
 
-    # --- 시트2: 카테고리별 (거래액, e-영업1~4 각각) — 2번 페이지와 동일 함수 ---
-    # 여기서 정해지는 카테고리 순서(거래액 내림차순)를 '고정 순서'로 저장해뒀다가,
-    # 트래픽 시트에도 그대로 적용한다 — 원래는 트래픽 시트가 자기 자신의 트래픽값
-    # 기준으로 따로 정렬돼서, 같은 카테고리라도 두 시트에서 행 순서가 달라지는
-    # 문제가 있었음(거래액 1위 카테고리가 트래픽 시트에선 3위 자리에 있는 식).
-    right_rows = []
-    _cat_order_by_bpu = {}
-    for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        _rev_rows = compute_category_yoy_rows(df_category, bv, cat_segment, ff_exclude, unit, selected_period_date)
-        _cat_order_by_bpu[bv] = [r["카테고리"] for r in _rev_rows]
-        for r in _rev_rows:
-            right_rows.append({
-                "BPU": bv, "카테고리": r["카테고리"],
-                col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
-                col_cur: round(r["current"]),
-                "전년비(%)": round(r["yoy_delta"], 1) if r.get("yoy_delta") is not None else None,
-            })
-    right_df = pd.DataFrame(right_rows)
+    # --- 시트2~4: 카테고리별 (거래액/트래픽/구매객수, e-영업1~4 각각) — 2번 페이지와
+    # 동일 함수 재사용. 거래액 시트에서 정해지는 카테고리 순서(내림차순)를 '고정 순서'로
+    # 삼아 나머지 시트에도 그대로 적용한다 — 각 시트가 자기 자신의 값 기준으로 따로
+    # 정렬되면, 같은 카테고리라도 시트마다 행 순서가 달라지는 문제가 있었음.
+    def _build_cat_metric_df(metric_col, order=None):
+        rows, order_out = [], {}
+        for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+            _m_rows = compute_category_yoy_rows(
+                df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=metric_col
+            )
+            if order is None:
+                order_out[bv] = [r["카테고리"] for r in _m_rows]
+                _ordered = _m_rows
+            else:
+                _by_cat = {r["카테고리"]: r for r in _m_rows}
+                _bv_order = order.get(bv, [])
+                _ordered = [_by_cat[c] for c in _bv_order if c in _by_cat] + [
+                    r for r in _m_rows if r["카테고리"] not in _bv_order
+                ]
+            for r in _ordered:
+                rows.append({
+                    "BPU": bv, "카테고리": r["카테고리"],
+                    col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
+                    col_cur: round(r["current"]),
+                    "전년비(%)": round(r["yoy_delta"], 1) if r.get("yoy_delta") is not None else None,
+                })
+        return pd.DataFrame(rows), order_out
 
-    # --- 시트3: 카테고리별 (트래픽, e-영업1~4 각각) — 시트2와 동일 로직, 지표만 트래픽 ---
-    # 위에서 고정한 거래액 순서(_cat_order_by_bpu)를 그대로 따라가고, 거래액 쪽엔 없는데
-    # 트래픽 쪽에만 있는 카테고리(거래는 없지만 방문은 있는 경우)만 뒤에 이어붙인다.
-    right_rows_traffic = []
-    for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        _traffic_rows = compute_category_yoy_rows(
-            df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col="트래픽"
-        )
-        _by_cat = {r["카테고리"]: r for r in _traffic_rows}
-        _order = _cat_order_by_bpu.get(bv, [])
-        _ordered = [_by_cat[c] for c in _order if c in _by_cat] + [
-            r for r in _traffic_rows if r["카테고리"] not in _order
-        ]
-        for r in _ordered:
-            right_rows_traffic.append({
-                "BPU": bv, "카테고리": r["카테고리"],
-                col_prev: round(r["yoy_value"]) if r.get("yoy_value") is not None else None,
-                col_cur: round(r["current"]),
-                "전년비(%)": round(r["yoy_delta"], 1) if r.get("yoy_delta") is not None else None,
-            })
-    right_df_traffic = pd.DataFrame(right_rows_traffic)
+    right_df, _cat_order_by_bpu = _build_cat_metric_df("거래액")
+    right_df_traffic, _ = _build_cat_metric_df("트래픽", order=_cat_order_by_bpu)
+    right_df_cnt, _ = _build_cat_metric_df("구매객수", order=_cat_order_by_bpu)
+
+    # --- 시트5~6: 카테고리별 (CR/객단가) — 비율 지표라 단순평균 금지 원칙에 따라,
+    # 이미 계산해둔 분자/분모(구매객수/트래픽, 거래액/구매객수)의 current·yoy_value를
+    # 직접 나눠서 구한다(1번 페이지 BPU별 객단가와 동일한 방식).
+    def _build_cat_ratio_df(num_col, den_col, order, scale=1.0):
+        rows = []
+        for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+            _num_by_cat = {
+                r["카테고리"]: r for r in compute_category_yoy_rows(
+                    df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=num_col
+                )
+            }
+            _den_by_cat = {
+                r["카테고리"]: r for r in compute_category_yoy_rows(
+                    df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=den_col
+                )
+            }
+            _bv_order = order.get(bv, [])
+            _cats = _bv_order + [c for c in _num_by_cat if c not in _bv_order]
+            for cat_name in _cats:
+                _n, _d = _num_by_cat.get(cat_name), _den_by_cat.get(cat_name)
+                if _n is None or _d is None:
+                    continue
+                _cur = (_n["current"] / _d["current"] * scale) if _d["current"] else None
+                _yoy = (_n.get("yoy_value") / _d["yoy_value"] * scale) if _d.get("yoy_value") else None
+                _delta = pct_delta_safe(_cur, _yoy) if (_cur is not None and _yoy) else None
+                _cur_store = (_cur / 100) if (scale == 100.0 and _cur is not None) else _cur
+                _yoy_store = (_yoy / 100) if (scale == 100.0 and _yoy is not None) else _yoy
+                rows.append({
+                    "BPU": bv, "카테고리": cat_name,
+                    col_prev: round(_yoy_store, 4) if (scale == 100.0 and _yoy_store is not None)
+                              else (round(_yoy_store) if _yoy_store is not None else None),
+                    col_cur: round(_cur_store, 4) if (scale == 100.0 and _cur_store is not None)
+                             else (round(_cur_store) if _cur_store is not None else None),
+                    "전년비(%)": round(_delta, 1) if _delta is not None else None,
+                })
+        return pd.DataFrame(rows)
+
+    right_df_cr = _build_cat_ratio_df("구매객수", "트래픽", _cat_order_by_bpu, scale=100.0)
+    right_df_aov = _build_cat_ratio_df("거래액", "구매객수", _cat_order_by_bpu, scale=1.0)
+
+    _cat_sheets = {
+        "거래액": ("카테고리별(거래액)", right_df),
+        "트래픽": ("카테고리별(트래픽)", right_df_traffic),
+        "구매객수": ("카테고리별(구매객수)", right_df_cnt),
+        "CR": ("카테고리별(CR)", right_df_cr),
+        "객단가": ("카테고리별(객단가)", right_df_aov),
+    }
 
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         left_df.to_excel(writer, index=False, sheet_name="BPU별")
-        right_df.to_excel(writer, index=False, sheet_name="카테고리별(거래액)")
-        right_df_traffic.to_excel(writer, index=False, sheet_name="카테고리별(트래픽)")
+        for _sheet_name, _df in _cat_sheets.values():
+            _df.to_excel(writer, index=False, sheet_name=_sheet_name)
 
         # CR(구매전환율) 행의 값 셀에 엑셀 퍼센트 서식을 입혀서, 저장해둔 소수(0.048)가
         # 화면엔 "4.8%"로 보이게 한다.
@@ -416,11 +458,22 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
                 for _cl in _pct_col_letters:
                     _ws_bpu[f"{_cl}{_ridx}"].number_format = "0.0%"
 
+        # 카테고리별(CR) 시트는 모든 행이 비율이라, 값 컬럼 전체에 퍼센트 서식을 입힌다.
+        _ws_cr = writer.sheets["카테고리별(CR)"]
+        _cr_pct_col_letters = [
+            _ws_cr.cell(row=1, column=ci + 1).column_letter
+            for ci, cname in enumerate(right_df_cr.columns) if cname in (col_prev, col_cur)
+        ]
+        for _ridx in range(2, len(right_df_cr) + 2):
+            for _cl in _cr_pct_col_letters:
+                _ws_cr[f"{_cl}{_ridx}"].number_format = "0.0%"
+
         # 전년비(%) 컬럼: 증가=초록, 감소=[빨강]△(마이너스 기호 대신). 저장된 값은 이미
         # "-11.0"처럼 퍼센트 숫자라(소수 아님) 서식에서 %를 그냥 곱하면(0.0%) 100배 더
         # 커져버리니, 리터럴 문자 "%"를 따옴표로 감싸서 곱하기 없이 그대로 붙인다.
         _YOY_DELTA_FMT = '[Green]0.0"%";[Red]"△"0.0"%"'
-        for _sheet_name, _df in [("BPU별", left_df), ("카테고리별(거래액)", right_df), ("카테고리별(트래픽)", right_df_traffic)]:
+        _all_sheets = [("BPU별", left_df)] + [(s, d) for s, d in _cat_sheets.values()]
+        for _sheet_name, _df in _all_sheets:
             _ws = writer.sheets[_sheet_name]
             if "전년비(%)" not in _df.columns:
                 continue
@@ -433,7 +486,9 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
             for _col in _ws.columns:
                 _w = max((len(str(c.value)) for c in _col if c.value is not None), default=8)
                 _ws.column_dimensions[_col[0].column_letter].width = min(_w + 3, 40)
-    return buf.getvalue(), left_df, right_df, right_df_traffic
+
+    cat_dfs = {name: df for name, (_, df) in _cat_sheets.items()}
+    return buf.getvalue(), left_df, cat_dfs
 
 
 def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_cur_month_num):

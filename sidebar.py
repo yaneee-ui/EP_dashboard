@@ -47,9 +47,16 @@ def render_sidebar():
 
     # 그룹(실적요약/종합요약 · 누적데이터 · 주차별 실적 · 쿠폰/마감예상/주간보고) 사이에
     # 구분선을 넣는다 — 4번째·6번째·9번째 옵션 위에 border-top을 그어서 표현.
+    # radiogroup이 align-items:flex-start라 각 label이 자기 글자 폭(예: 112px)만큼만
+    # 차지해서, border-top이 사이드바 전체 폭을 못 채우고 짧게 잘려 거의 안 보였음
+    # (이래서 "구분선이 없어졌다"는 리포트가 있었음) — width:100%로 라벨을 옆으로
+    # 꽉 채워서 border가 사이드바 폭 전체에 걸쳐 보이게 한다.
     st.markdown(
         """
         <style>
+        .st-key-main_menu_radio div[role="radiogroup"] > label {
+            width: 100%;
+        }
         .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(4),
         .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(6),
         .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(9) {

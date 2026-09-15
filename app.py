@@ -3317,7 +3317,7 @@ if side["page"].startswith("11."):
             )
 
         try:
-            _wk_xlsx, _pv_left, _pv_right, _pv_right_traffic = build_weekly_report_excel(
+            _wk_xlsx, _pv_left, _pv_cat_dfs = build_weekly_report_excel(
                 _wk_unit, _wk_ref, df_traffic, df_category, _wk_cat_segment, _wk_ff_exclude
             )
 
@@ -3409,6 +3409,23 @@ if side["page"].startswith("11."):
                     f"<tbody>{''.join(_rows_html)}</tbody></table></div>"
                 )
 
+            # 카테고리별 미리보기는 이제 거래액/트래픽/구매객수/CR/객단가 5개 지표를 다
+            # 계산해두므로(엑셀엔 항상 5개 시트 다 들어감), 화면엔 2칸만 두고 각각
+            # 드롭다운으로 원하는 지표를 골라 보게 한다(기본값은 예전과 동일하게
+            # 거래액/트래픽이라 기존 화면 그대로 보임).
+            _cat_metric_options = ["거래액", "트래픽", "구매객수", "CR", "객단가"]
+
+            def _render_cat_preview(metric_name):
+                _df = _pv_cat_dfs[metric_name].copy()
+                if metric_name == "CR" and not _df.empty:
+                    # CR 시트는 엑셀 퍼센트 서식을 위해 소수(0.048)로 저장돼 있어서,
+                    # 화면 미리보기에서만 "4.8%" 문자열로 바꿔 보여준다.
+                    _val_cols = [c for c in _df.columns if c not in ("BPU", "카테고리", "전년비(%)")]
+                    for _c in _val_cols:
+                        _df[_c] = _df[_c].astype(object)
+                        _df[_c] = _df[_c].apply(lambda v: f"{v*100:.1f}%" if pd.notna(v) else v)
+                return _render_wk_preview_table(_df)
+
             _pc1, _pc2, _pc3 = st.columns(3)
             with _pc1:
                 st.markdown("**BPU별**")
@@ -3429,11 +3446,19 @@ if side["page"].startswith("11."):
                         )
                 st.markdown(_render_wk_preview_table(_pv_left_disp), unsafe_allow_html=True)
             with _pc2:
-                st.markdown("**카테고리별 (거래액)**")
-                st.markdown(_render_wk_preview_table(_pv_right), unsafe_allow_html=True)
+                _pc2_metric = st.selectbox(
+                    "카테고리별 지표", _cat_metric_options, index=0,
+                    key="wk_cat_preview_metric_1", label_visibility="collapsed",
+                )
+                st.markdown(f"**카테고리별 ({_pc2_metric})**")
+                st.markdown(_render_cat_preview(_pc2_metric), unsafe_allow_html=True)
             with _pc3:
-                st.markdown("**카테고리별 (트래픽)**")
-                st.markdown(_render_wk_preview_table(_pv_right_traffic), unsafe_allow_html=True)
+                _pc3_metric = st.selectbox(
+                    "카테고리별 지표", _cat_metric_options, index=1,
+                    key="wk_cat_preview_metric_2", label_visibility="collapsed",
+                )
+                st.markdown(f"**카테고리별 ({_pc3_metric})**")
+                st.markdown(_render_cat_preview(_pc3_metric), unsafe_allow_html=True)
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
