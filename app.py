@@ -1312,7 +1312,25 @@ if side["page"].startswith("1."):
                         f"(전년 비교선 없음 — {_tr_py_year}년 데이터만 표시)</span></div>",
                         unsafe_allow_html=True,
                     )
-                    render_line_chart(pd.DataFrame({tr_metric: _tr_py_series}), height=300, unit=unit)
+                    # 지금 조회 중인 시점(selected_period_date)이 이 과거 연도로 치면 언제였는지
+                    # 짚어준다 — "작년 이맘때 흐름"을 보는 목적 자체가 '지금 시점'을 기준으로
+                    # 과거를 돌아보는 거라, 그 기준점이 이 단독 차트 어디쯤인지 안 보이면
+                    # 흐름만 보고 지금이 어디인지 감을 못 잡는 문제가 있었음.
+                    _tr_ref_date = None
+                    _tr_ref_label = None
+                    if selected_period_date is not None:
+                        _tr_target = pd.Timestamp(selected_period_date) - pd.DateOffset(years=latest_year - _tr_py_year)
+                        _tr_pos = _tr_py_series.index.get_indexer([_tr_target], method="nearest")[0]
+                        _tr_ref_date = _tr_py_series.index[_tr_pos]
+                        _tr_ref_word = {"일별": "동일", "주별": "동주", "월별": "동월", "월마감": "동월"}.get(unit, "동시점")
+                        _tr_ref_label = (
+                            f"{make_period_label(_tr_ref_date, unit)} — {_tr_py_year}년 {_tr_ref_word} "
+                            f"(올해 {period_label} 기준)"
+                        )
+                    render_line_chart(
+                        pd.DataFrame({tr_metric: _tr_py_series}), height=300, unit=unit,
+                        ref_date=_tr_ref_date, ref_label=_tr_ref_label,
+                    )
                     st.markdown(
                         f"<div class='chart-caption'>{_tr_py_year}년: "
                         f"{_tr_py_series.index.min().strftime('%Y-%m-%d')} - {_tr_py_series.index.max().strftime('%Y-%m-%d')}</div>",
@@ -2091,7 +2109,23 @@ if side["page"].startswith("2."):
                             f"(전년 비교선 없음 — {_cat_py_year}년 데이터만 표시)</span></div>",
                             unsafe_allow_html=True,
                         )
-                        render_line_chart(pd.DataFrame({cat_metric: _cat_py_series}), height=300, unit=unit)
+                        # 페이지1과 동일한 이유로, 지금 조회 시점이 이 과거 연도의 언제에
+                        # 해당하는지 마커로 짚어준다.
+                        _cat_ref_date = None
+                        _cat_ref_label = None
+                        if selected_period_date is not None:
+                            _cat_target = pd.Timestamp(selected_period_date) - pd.DateOffset(years=latest_year_cat - _cat_py_year)
+                            _cat_pos = _cat_py_series.index.get_indexer([_cat_target], method="nearest")[0]
+                            _cat_ref_date = _cat_py_series.index[_cat_pos]
+                            _cat_ref_word = {"일별": "동일", "주별": "동주", "월별": "동월", "월마감": "동월"}.get(unit, "동시점")
+                            _cat_ref_label = (
+                                f"{make_period_label(_cat_ref_date, unit)} — {_cat_py_year}년 {_cat_ref_word} "
+                                f"(올해 {period_label} 기준)"
+                            )
+                        render_line_chart(
+                            pd.DataFrame({cat_metric: _cat_py_series}), height=300, unit=unit,
+                            ref_date=_cat_ref_date, ref_label=_cat_ref_label,
+                        )
                         st.markdown(
                             f"<div class='chart-caption'>{_cat_py_year}년: "
                             f"{_cat_py_series.index.min().strftime('%Y-%m-%d')} - {_cat_py_series.index.max().strftime('%Y-%m-%d')}</div>",

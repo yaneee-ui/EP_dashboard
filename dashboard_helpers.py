@@ -718,7 +718,7 @@ DASHBOARD_EVENTS = [
 ]
 
 
-def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None):
+def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
     Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)
@@ -727,7 +727,11 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     올해 날짜 위치에 겹쳐 그려지지만(비교하기 좋으라고) 실제 값은 작년 것이므로, 이걸 주면
     '(전년)'이 포함된 계열의 툴팁 날짜만 실제 작년 날짜로 보여준다(안 주면 x축 날짜 그대로).
     일별(비월별) 조회일 땐, DASHBOARD_EVENTS 중 화면에 보이는 날짜 범위에 해당하는 이벤트를
-    빨간 점선 세로줄 + 라벨로 같이 표시한다."""
+    빨간 점선 세로줄 + 라벨로 같이 표시한다.
+    ref_date/ref_label: '지난 연도 흐름 보기'처럼 전년 비교선 없이 그 해 데이터만 단독으로
+    그릴 때, 지금 조회 중인 시점이 이 과거 연도 흐름에서 어디쯤(동주/동월)인지 주황 다이아몬드
+    마커로 짚어준다(ref_date=chart_df 안에 실제로 있는 날짜, ref_label=마커 옆 설명 문구).
+    없으면(None) 마커를 그리지 않는다."""
     import altair as alt
 
     if chart_df is None or chart_df.empty:
@@ -864,12 +868,40 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
             )
             chart = alt.layer(chart, _ev_marker).resolve_scale(x="shared", y="shared")
 
+    _ref_matched = False
+    if ref_date is not None:
+        _ref_ts = pd.Timestamp(ref_date)
+        _ref_main = long_df[long_df["구분"] == cols[0]]
+        if _is_monthly:
+            _ref_match = _ref_main[_ref_main["날짜"].dt.to_period("M") == _ref_ts.to_period("M")]
+        else:
+            _ref_match = _ref_main[_ref_main["날짜"] == _ref_ts.normalize()]
+        if not _ref_match.empty:
+            _ref_matched = True
+            _ref_df = _ref_match.iloc[[0]].copy()
+            _ref_df["_ref_label"] = ref_label or "현재 조회 시점"
+            _ref_marker = alt.Chart(_ref_df).mark_point(
+                shape="diamond", size=200, color="#f59e0b", filled=True, opacity=1,
+                stroke="#b45309", strokeWidth=2,
+            ).encode(
+                x=x_enc,
+                y=alt.Y("값:Q"),
+                tooltip=[
+                    alt.Tooltip("_tooltip_date:T", title="날짜", format=_date_fmt),
+                    alt.Tooltip("_ref_label:N", title="표시"),
+                    alt.Tooltip("값:Q", title="값", format=",.0f"),
+                ],
+            )
+            chart = alt.layer(chart, _ref_marker).resolve_scale(x="shared", y="shared")
+
     # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
     st.altair_chart(chart, use_container_width=True)
 
     if _event_rows:
         _ev_caption = "  ·  ".join(f"📌 {r['_date_label']} {r['이벤트']}" for r in _event_rows)
         st.caption(_ev_caption)
+    if _ref_matched:
+        st.caption(f"🔶 {ref_label or '현재 조회 시점'}")
 
 
 def render_category_compare_chart(df_wide, height=320, unit="일별", metric_label="거래액"):
@@ -1358,11 +1390,15 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
     _mc_doc = f"""
 <html><head><style>
   body {{ margin:0; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; }}
-  .summary-table {{ width:100%; border-collapse:collapse; font-size:0.72rem; background:#fff;
-    border:1px solid #eaecef; border-radius:8px; overflow:hidden; table-layout:auto; }}
+  /* width:100%였을 때는 표가 컨테이너 폭에 강제로 눌려서(table-layout:auto라도) 달이
+     많아지면(연말로 갈수록) 오른쪽 열(특히 강조 표시된 이번 달 열)이 뭉개져 잘려 보였음 —
+     감싼 div의 overflow-x:auto가 실제로 작동하려면 표 자체는 내용 폭만큼 자연스럽게
+     커지게 둬야 한다(min-width:100%로 좁을 땐 그래도 컨테이너를 꽉 채움). */
+  .summary-table {{ min-width:100%; width:max-content; border-collapse:collapse; font-size:0.72rem;
+    background:#fff; border:1px solid #eaecef; border-radius:8px; overflow:hidden; table-layout:auto; }}
   .summary-table thead th {{ background:#f7f8fa; color:#6b7280; font-weight:600; text-align:left;
-    padding:4px 5px; border-bottom:1px solid #eaecef; font-size:0.66rem; }}
-  .summary-table tbody td {{ padding:4px 5px; border-bottom:1px solid #f1f2f4; color:#111827; }}
+    padding:4px 5px; border-bottom:1px solid #eaecef; font-size:0.66rem; white-space:nowrap; }}
+  .summary-table tbody td {{ padding:4px 5px; border-bottom:1px solid #f1f2f4; color:#111827; white-space:nowrap; }}
   .summary-table tbody tr:last-child td {{ border-bottom:none; }}
   .summary-table td.m {{ font-weight:500; }}
   .delta.up {{ color:#16a34a; font-weight:600; }}
