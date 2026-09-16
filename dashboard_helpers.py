@@ -762,8 +762,11 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
             continue
         rows.append({"카테고리": cat_name, **stats})
 
+    # 거래액 내림차순으로 정렬했었는데, 그러면 주간보고 시트가 기간마다 순위 바뀜에
+    # 따라 카테고리 행 순서가 계속 들썩여서 기간별 비교가 불편하다는 피드백이 있었음
+    # — 이름순 고정으로 바꿔서 같은 카테고리는 항상 같은 자리에 나오게 함.
     _head = [r for r in rows if r["카테고리"] == "전체"]
-    _rest = sorted([r for r in rows if r["카테고리"] != "전체"], key=lambda r: r["current"], reverse=True)
+    _rest = sorted([r for r in rows if r["카테고리"] != "전체"], key=lambda r: r["카테고리"])
     return _head + _rest
 
 
