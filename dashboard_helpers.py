@@ -1390,9 +1390,15 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
     _mc_last_day_label = f"~{_mc_abs_last.month}/{_mc_abs_last.day}"
     # 당월 강조는 배경색 대신 테두리로 — 좌우는 얇게(2px), 위/아래는 굵게(4px)해서
     # 컬럼 전체(헤더 2줄 + 데이터 행 전부)를 감싼다.
-    _MC_CUR_HL = "border-left:2px solid #f59e0b;border-right:2px solid #f59e0b;"
-    _MC_CUR_HL_TOP = _MC_CUR_HL + "border-top:4px solid #f59e0b;"
-    _MC_CUR_HL_BOTTOM = _MC_CUR_HL + "border-bottom:4px solid #f59e0b;"
+    # border-left/right(진짜 border)로 했더니 border-collapse 테이블이라 인접 셀의
+    # 얇은 회색 border와 합쳐지는 과정에서 좌우 선이 브라우저마다 다르게(또는 아예 안)
+    # 그려지는 문제가 있었음(표 한가운데 있는 강조 열도 잘려 보임 — 스크롤 경계 문제가
+    # 아니었음). box-shadow(inset)는 셀 자기 박스 안쪽에 독립적으로 그려져서 인접 셀
+    # border와 절대 합쳐지지 않으니 이 문제 자체가 없다.
+    _MC_HL_COLOR = "#f59e0b"
+    _MC_CUR_HL = f"box-shadow:inset 2px 0 0 {_MC_HL_COLOR}, inset -2px 0 0 {_MC_HL_COLOR};"
+    _MC_CUR_HL_TOP = f"box-shadow:inset 2px 0 0 {_MC_HL_COLOR}, inset -2px 0 0 {_MC_HL_COLOR}, inset 0 4px 0 {_MC_HL_COLOR};"
+    _MC_CUR_HL_BOTTOM = f"box-shadow:inset 2px 0 0 {_MC_HL_COLOR}, inset -2px 0 0 {_MC_HL_COLOR}, inset 0 -4px 0 {_MC_HL_COLOR};"
 
     _, _mc_matched_dates = _cur_month_yoy_value_matched("거래액", None, False)
     if _mc_matched_dates:
