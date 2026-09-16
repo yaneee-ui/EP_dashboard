@@ -1755,10 +1755,7 @@ if side["page"].startswith("2."):
                     "prev": stats["prev_delta"], "avg": stats["avg_delta"], "yoy": stats["yoy_delta"],
                     "prev_v": stats.get("prev_value"), "avg_v": stats.get("avg_value"), "yoy_v": stats.get("yoy_value"),
                 })
-        # 거래액 내림차순으로 정렬했었는데, 그러면 매 기간(주/달)마다 순위가 바뀌면서
-        # 카테고리 행 순서가 계속 들썩여서 기간별로 비교해서 보기 불편하다는 피드백이
-        # 있었음 — 이름순 고정으로 바꿔서 같은 카테고리는 항상 같은 자리에 나오게 함.
-        _cat_summary_rows.sort(key=lambda r: r["카테고리"])
+        _cat_summary_rows.sort(key=lambda r: r["거래액"], reverse=True)
 
         cat_combo = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == selected_brand)]
         if (bpu == "Total" or bpu in BPU_GROUPS) and not cat_combo.empty:
@@ -2364,12 +2361,8 @@ if side["page"].startswith("2."):
         _cat_compare_options_all = sorted(
             c for c in df_category["카테고리"].dropna().unique() if c != "전체"
         )
-        # 기본 선택은 '거래액 상위 2개'가 맞으므로, _cat_summary_rows 자체는 이제
-        # 이름순 고정이라(위 표 순서 안정화 목적) 여기서 따로 거래액 기준으로 다시
-        # 정렬해서 상위 2개를 뽑는다.
         _cat_compare_default = [
-            r["카테고리"] for r in sorted(_cat_summary_rows, key=lambda r: r["거래액"], reverse=True)[:2]
-            if r["카테고리"] in _cat_compare_options_all
+            r["카테고리"] for r in _cat_summary_rows[:2] if r["카테고리"] in _cat_compare_options_all
         ]
         # 비교할 카테고리 / 매체 필터를 나란히 배치
         _cmp_col_cat, _cmp_col_bpu = st.columns([3, 1])
