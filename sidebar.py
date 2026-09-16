@@ -28,12 +28,6 @@ def render_sidebar():
 
     # --- 메뉴 (페이지 선택) ---
     st.sidebar.markdown("**메뉴**")
-    _menu_options = [
-        "1. 실적 요약", "2. 카테고리 실적 요약", "3. 종합 요약",
-        "4. 누적 데이터", "5. 누적 데이터 (카테고리)",
-        "6. 전체 실적 (주차별)", "7. 회원 실적 (주차별)", "8. 신규 실적 (주차별)",
-        "9. 쿠폰 비용 분석", "10. 마감 예상 실적", "11. 주간보고용", "12. 행사 기간 비교",
-    ]
     _menu_emoji = {
         "1": "📊", "2": "🗂️", "3": "🧭",
         "4": "📋", "5": "🏷️",
@@ -46,35 +40,46 @@ def render_sidebar():
         return f"{_menu_emoji.get(_num, '•')} {_label}"
 
     # 그룹(실적요약/종합요약 · 누적데이터 · 주차별 실적 · 쿠폰/마감예상/주간보고) 사이에
-    # 구분선을 넣는다 — 4번째·6번째·9번째 옵션 위에 border-top을 그어서 표현.
-    # radiogroup이 align-items:flex-start라 각 label이 자기 글자 폭(예: 112px)만큼만
-    # 차지해서, border-top이 사이드바 전체 폭을 못 채우고 짧게 잘려 거의 안 보였음
-    # (이래서 "구분선이 없어졌다"는 리포트가 있었음) — width:100%로 라벨을 옆으로
-    # 꽉 채워서 border가 사이드바 폭 전체에 걸쳐 보이게 한다.
-    st.markdown(
-        """
-        <style>
-        .st-key-main_menu_radio div[role="radiogroup"] > label {
-            width: 100%;
-        }
-        .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(4),
-        .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(6),
-        .st-key-main_menu_radio div[role="radiogroup"] > label:nth-of-type(9) {
-            border-top: 1px solid #e5e7eb;
-            margin-top: 6px !important;
-            padding-top: 6px !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
+    # 구분선을 넣는다. 예전엔 라디오 옵션 12개를 한 위젯에 다 넣고 CSS
+    # border-top(nth-of-type)으로 구분선을 흉내냈는데, 이게 Streamlit의 내부 DOM
+    # 구조(라디오 그룹이 align-items:flex-start라 각 label이 글자 폭만큼만 차지)에
+    # 기대는 방식이라 버전에 따라(로컬 1.63 vs Streamlit Cloud 1.64) 렌더링이
+    # 달라져서 계속 안 보이는 문제가 있었음. 대신 그룹별로 라디오를 4개 따로 만들고
+    # 그 사이에 진짜 st.sidebar.divider()(항상 확실히 보이는 네이티브 컴포넌트)를
+    # 넣는 방식으로 바꿨다 — 선택 상태는 session_state로 그룹 간에 동기화한다
+    # (한 그룹에서 고르면 다른 그룹들의 선택은 자동으로 풀어서, 항상 딱 하나만
+    # '선택됨'으로 보이게 함).
+    _menu_groups = [
+        ["1. 실적 요약", "2. 카테고리 실적 요약", "3. 종합 요약"],
+        ["4. 누적 데이터", "5. 누적 데이터 (카테고리)"],
+        ["6. 전체 실적 (주차별)", "7. 회원 실적 (주차별)", "8. 신규 실적 (주차별)"],
+        ["9. 쿠폰 비용 분석", "10. 마감 예상 실적", "11. 주간보고용", "12. 행사 기간 비교"],
+    ]
+    _default_page = _menu_groups[0][0]
+    if "menu_page" not in st.session_state:
+        st.session_state["menu_page"] = _default_page
 
-    page = st.sidebar.radio(
-        "메뉴", _menu_options,
-        format_func=_menu_display,
-        label_visibility="collapsed",
-        key="main_menu_radio",
-    )
+    def _on_menu_group_change(group_idx):
+        _picked = st.session_state.get(f"menu_group_{group_idx}")
+        if _picked is not None:
+            st.session_state["menu_page"] = _picked
+            for j in range(len(_menu_groups)):
+                if j != group_idx:
+                    st.session_state[f"menu_group_{j}"] = None
+
+    for _gi, _group in enumerate(_menu_groups):
+        _cur_page = st.session_state["menu_page"]
+        _idx = _group.index(_cur_page) if _cur_page in _group else None
+        st.sidebar.radio(
+            f"메뉴 {_gi}", _group, index=_idx,
+            format_func=_menu_display, label_visibility="collapsed",
+            key=f"menu_group_{_gi}",
+            on_change=_on_menu_group_change, args=(_gi,),
+        )
+        if _gi < len(_menu_groups) - 1:
+            st.sidebar.divider()
+
+    page = st.session_state["menu_page"]
 
     st.sidebar.divider()
 
