@@ -2299,12 +2299,19 @@ if side["page"].startswith("2."):
         # 카테고리 선택 필터와 무관하게 전체 카테고리를 대상으로 함 (개요용 표라서).
         # _cat_summary_rows는 위(cat_bpu_df 확정 직후)에서 이미 계산해둔 걸 그대로 씀
         # (인사이트 카드 자동요약에서도 같은 값을 써서 숫자가 어긋나지 않게 하기 위함).
-        st.markdown(f"**카테고리별 요약**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu} · 거래액 기준 · {unit}</span>", unsafe_allow_html=True)
+        st.markdown("**카테고리별 요약**", unsafe_allow_html=True)
+        _cat_view_col1, _cat_view_col2 = st.columns([2, 3])
+        with _cat_view_col1:
+            _cat_view_mode = st.radio(
+                "보기 방식", ["단일 매체", "정상·이월·입점 나란히"],
+                horizontal=True, key="cat_summary_view_mode", label_visibility="collapsed",
+            )
 
-        if not _cat_summary_rows:
-            st.info("거래액이 있는 카테고리가 없습니다.")
-        else:
-            if True:
+        if _cat_view_mode == "단일 매체":
+            st.caption(f"{bpu} · 거래액 기준 · {unit}")
+            if not _cat_summary_rows:
+                st.info("거래액이 있는 카테고리가 없습니다.")
+            else:
                 _cat_cfg = UNIT_CONFIG[unit]
                 _cat_summary_body = "".join(
                     f"<tr><td class='m'>{r['카테고리']}</td>"
@@ -2324,6 +2331,103 @@ if side["page"].startswith("2."):
                     unsafe_allow_html=True,
                 )
                 st.caption(f"ℹ️ 기준: {period_label} · 거래액이 있는 카테고리만 표시돼요.")
+        else:
+            # 매체 필터와 무관하게 정상(e-영업1)/이월(e-영업2)/입점(e-영업3+4) 세 그룹을
+            # 항상 나란히 보여준다 — "오늘 정상 카테고리별 실적이 이월/입점이랑 비교해서
+            # 어떤지 한 화면에서 보고 싶다"는 요청으로 추가함. compute_category_yoy_rows가
+            # 단일 BPU만 받으므로, 입점(e3+e4)은 그 두 BPU만 추려서 BPU 라벨을 임시로
+            # 하나로 합친 뒤 넘기는 방식으로 그룹 합산을 재사용한다.
+            _cat_group_metric = st.radio(
+                "지표", ["거래액", "트래픽", "구매객수", "CR", "객단가"],
+                index=0, horizontal=True, key="cat_summary_group_metric",
+            )
+            _CAT_GROUPS = {"정상": ["e-영업1"], "이월": ["e-영업2"], "입점": ["e-영업3", "e-영업4"]}
+
+            def _cat_rows_for_group(bpus, metric_col):
+                if len(bpus) == 1:
+                    return compute_category_yoy_rows(
+                        df_category, bpus[0], cat_segment, _ff_exclude, unit, selected_period_date, metric_col=metric_col
+                    )
+                # 입점(e3+e4)처럼 BPU 2개를 합칠 땐, 그냥 BPU 라벨만 하나로 바꿔치기하면
+                # 같은 (날짜,카테고리,브랜드,회원구분) 조합에 행이 2개(e3분, e4분) 남아서
+                # compute_category_yoy_rows 내부의 resample(...).mean()이 둘을 '평균'해
+                # 버려 합계가 반토막 나는 버그가 있었음 — 먼저 트래픽/거래액/구매객수를
+                # 실제로 합산하고, CR/객단가는 그 합산값으로 다시 계산(비율 단순평균 금지
+                # 원칙)한 뒤에 넘긴다.
+                _sub = df_category[df_category["BPU"].isin(bpus)]
+                _sub = _sub.groupby(["날짜", "카테고리", "브랜드", "회원구분"], as_index=False)[
+                    ["트래픽", "거래액", "구매객수"]
+                ].sum()
+                _sub["CR"] = (_sub["구매객수"] / _sub["트래픽"] * 100).where(_sub["트래픽"] > 0, 0)
+                _sub["객단가"] = (_sub["거래액"] / _sub["구매객수"]).where(_sub["구매객수"] > 0, 0)
+                _sub["BPU"] = "GROUP"
+                return compute_category_yoy_rows(
+                    _sub, "GROUP", cat_segment, _ff_exclude, unit, selected_period_date, metric_col=metric_col
+                )
+
+            def _cat_rows_for_group_ratio(bpus, num_col, den_col, scale):
+                _num = {r["카테고리"]: r for r in _cat_rows_for_group(bpus, num_col)}
+                _den = {r["카테고리"]: r for r in _cat_rows_for_group(bpus, den_col)}
+
+                def _div(nv, dv):
+                    return (nv / dv * scale) if (nv is not None and dv not in (None, 0) and pd.notna(dv)) else None
+
+                out = []
+                for cat_name, n in _num.items():
+                    d = _den.get(cat_name)
+                    if d is None:
+                        continue
+                    cur = _div(n["current"], d["current"])
+                    if cur is None:
+                        continue
+                    prev_v = _div(n.get("prev_value"), d.get("prev_value"))
+                    yoy_v = _div(n.get("yoy_value"), d.get("yoy_value"))
+                    out.append({
+                        "카테고리": cat_name, "current": cur,
+                        "prev_label": n["prev_label"], "prev_value": prev_v,
+                        "prev_delta": pct_delta_safe(cur, prev_v) if prev_v else None,
+                        "yoy_label": n["yoy_label"], "yoy_value": yoy_v,
+                        "yoy_delta": pct_delta_safe(cur, yoy_v) if yoy_v else None,
+                    })
+                _head = [r for r in out if r["카테고리"] == "전체"]
+                _rest = sorted([r for r in out if r["카테고리"] != "전체"], key=lambda r: r["current"], reverse=True)
+                return _head + _rest
+
+            if _cat_group_metric == "CR":
+                _group_rows_fn = lambda bpus: _cat_rows_for_group_ratio(bpus, "구매객수", "트래픽", 100.0)
+            elif _cat_group_metric == "객단가":
+                _group_rows_fn = lambda bpus: _cat_rows_for_group_ratio(bpus, "거래액", "구매객수", 1.0)
+            else:
+                _group_rows_fn = lambda bpus: _cat_rows_for_group(bpus, _cat_group_metric)
+
+            _is_pct_group = _cat_group_metric == "CR"
+            _group_cols = st.columns(3)
+            for _gcol, (_gname, _gbpus) in zip(_group_cols, _CAT_GROUPS.items()):
+                with _gcol:
+                    st.markdown(f"**{_gname}**", unsafe_allow_html=True)
+                    _grows = _group_rows_fn(_gbpus)
+                    if not _grows:
+                        st.caption("데이터 없음")
+                        continue
+                    _gcfg = UNIT_CONFIG[unit]
+                    _rows_html = []
+                    for r in _grows:
+                        _val_str = f"{r['current']:.1f}%" if _is_pct_group else f"{r['current']:,.0f}"
+                        _rows_html.append(
+                            f"<tr><td class='m'>{r['카테고리']}</td>"
+                            f"<td class='v' style='text-align:right;'>{_val_str}</td>"
+                            f"<td style='text-align:right;'>{format_delta_html(r.get('prev_delta'))}</td>"
+                            f"<td style='text-align:right;'>{format_delta_html(r.get('yoy_delta'))}</td></tr>"
+                        )
+                    st.markdown(
+                        "<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>"
+                        f"<th>카테고리</th><th style='text-align:right;'>{_cat_group_metric}</th>"
+                        f"<th style='text-align:right;'>{_gcfg['prev_label']}</th>"
+                        f"<th style='text-align:right;'>{_gcfg['yoy_label']}</th>"
+                        "</tr></thead><tbody>" + "".join(_rows_html) + "</tbody></table></div>",
+                        unsafe_allow_html=True,
+                    )
+            st.caption(f"ℹ️ 기준: {period_label} · 매체 필터와 무관하게 정상/이월/입점 3그룹을 고정으로 보여줘요.")
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
