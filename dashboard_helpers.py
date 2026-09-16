@@ -1467,7 +1467,11 @@ def render_monthly_comparison_table(base_df, title, caption_extra=""):
   .mc-row.sel {{ background:#eff6ff; }}
   .mc-row.sel td.m {{ color:#2563eb; font-weight:700; }}
 </style></head><body>
-  <div style="overflow-x:auto;"><table class="summary-table">
+  <!-- 오른쪽에 padding을 살짝 줘서, 이번 달 강조 열의 굵은(2px) 오른쪽 테두리가
+       overflow-x:auto 컨테이너의 스크롤 가능 폭 계산에서 아슬아슬하게 잘리는 문제를
+       방지한다(border-collapse 테이블은 가장 바깥 굵은 border가 폭 계산에 안 잡히는
+       경우가 있음 — 여유 공간을 둬서 항상 다 보이게). -->
+  <div style="overflow-x:auto;padding-right:6px;"><table class="summary-table">
     <thead>
       <tr><th rowspan="2" style="white-space:nowrap;">구분</th><th colspan="{_mc_cur_month}" style="text-align:center;background:#eef2ff;white-space:nowrap;">26년</th>
       <th colspan="{_mc_cur_month}" style="text-align:center;background:#fef3c7;white-space:nowrap;">전년비</th>
