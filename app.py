@@ -2416,8 +2416,8 @@ if side["page"].startswith("2."):
                         _rows_html.append(
                             f"<tr><td class='m'>{r['카테고리']}</td>"
                             f"<td class='v' style='text-align:right;'>{_val_str}</td>"
-                            f"<td style='text-align:right;'>{format_delta_html(r.get('prev_delta'))}</td>"
-                            f"<td style='text-align:right;'>{format_delta_html(r.get('yoy_delta'))}</td></tr>"
+                            f"<td style='text-align:right;'>{format_delta_html(r.get('prev_delta'))}{_ref_str(r.get('prev_value'), _is_pct_group)}</td>"
+                            f"<td style='text-align:right;'>{format_delta_html(r.get('yoy_delta'))}{_ref_str(r.get('yoy_value'), _is_pct_group)}</td></tr>"
                         )
                     st.markdown(
                         "<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>"
