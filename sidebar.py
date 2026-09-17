@@ -7,13 +7,18 @@ def render_sidebar():
     st.sidebar.divider()
 
     # --- 조회 단위 (콤팩트 한 줄) ---
+    # 참고: data-testid='stSidebar'가 붙는 실제 태그는 <div>가 아니라 <section>이라서,
+    # 예전에 "div[data-testid='stSidebar'] ..." 형태로 쓴 선택자는 전부 매치가 안 되고
+    # 있었음(조용히 no-op) — 태그명을 아예 빼고 속성만으로 지정해서 향후 태그가 바뀌어도
+    # 안전하게 함.
     st.sidebar.markdown(
         "<style>"
-        "div[data-testid='stSidebar'] .stRadio > div {gap: 0.15rem; flex-wrap: nowrap;}"
-        "div[data-testid='stSidebar'] .stRadio label {"
+        "[data-testid='stSidebar'] .stRadio > div {gap: 0.15rem;}"
+        "[data-testid='stSidebar'] .stRadio label {"
         "  font-size: 0.72rem; padding: 0.15rem 0.35rem; white-space: nowrap;"
         "}"
-        "div[data-testid='stSidebar'] .stRadio label p {font-size: 0.72rem;}"
+        "[data-testid='stSidebar'] .stRadio label p {font-size: 0.72rem;}"
+        "[data-testid='stSidebar'] hr {margin: 8px 0;}"
         "</style>",
         unsafe_allow_html=True,
     )
