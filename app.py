@@ -3063,7 +3063,7 @@ if side["page"].startswith("9."):
                     _rate_prev_delta = (_cur_rate - _prev_rate) if (_prev_rate is not None and pd.notna(_prev_rate) and pd.notna(_cur_rate)) else None
                     _rate_yoy_delta = (_cur_rate - _yoy_rate) if (_has_yoy and _yoy_rate is not None and pd.notna(_yoy_rate) and pd.notna(_cur_rate)) else None
                     _yoy_line3 = (
-                        f"전년동기비 {format_delta_html(_rate_yoy_delta) if _rate_yoy_delta is not None else '-'}%p{_ref_str(_yoy_rate, True)}<br/>"
+                        f"전년동기비 {format_delta_html(_rate_yoy_delta) if _rate_yoy_delta is not None else '-'}p{_ref_str(_yoy_rate, True)}<br/>"
                         if _has_yoy else ""
                     )
                     st.markdown(
@@ -3071,7 +3071,7 @@ if side["page"].startswith("9."):
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>비용률 (쿠폰할인/거래액)</div>"
                         f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_rate:.2f}%</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
-                        f"{_prev_label} {format_delta_html(_rate_prev_delta) if _rate_prev_delta is not None else '-'}%p{_ref_str(_prev_rate, True)}<br/>"
+                        f"{_prev_label} {format_delta_html(_rate_prev_delta) if _rate_prev_delta is not None else '-'}p{_ref_str(_prev_rate, True)}<br/>"
                         f"{_yoy_line3}"
                         f"</div></div>", unsafe_allow_html=True,
                     )
