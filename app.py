@@ -4729,7 +4729,7 @@ if side["page"].startswith("10."):
                     unsafe_allow_html=True,
                 )
                 st.markdown(render_next_month_target_table(_nm_result, _nm_next_month), unsafe_allow_html=True)
-                st.caption(f"ℹ️ 주차별 배분은 {_nm_ref_year}년 {_nm_next_month}월의 주차별 실적 비중을 목표 총액에 그대로 적용한 값이에요 (단위: 백만원).")
+                st.caption(f"ℹ️ 아래 표는 목표 %와 무관하게 {_nm_ref_year}년 {_nm_next_month}월 실제 주차별 실적이에요(단위: 백만원) — TOTAL이 위 '{_nm_ref_year}년 {_nm_next_month}월 마감' 금액과 항상 일치해요.")
                 _nm_excel_bytes = build_next_month_target_excel(_nm_result, _nm_ref_year, _nm_next_month, _nm_next_year)
                 st.download_button(
                     "⬇️ 엑셀 다운로드",

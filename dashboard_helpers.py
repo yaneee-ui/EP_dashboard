@@ -1381,11 +1381,13 @@ def generate_forecast_report_insight(df_traffic, df_category, df_coupon_daily, f
 
 
 def compute_next_month_target(df_traffic, df_category, ref_year, next_month, target_pct):
-    """담달 목표를 '전년비 목표 %' 하나로 정하면, 전년 동월 실제 마감·핏플랍 제외 성장률·
-    주차별 배분까지 한번에 계산한다. 주차별 배분은 작년 같은 달의 주차별 비중을 그대로
-    목표 총액에 적용한다(주차마다 성수기 굴곡이 있어서 균등배분보다 실제 패턴을 따르는
-    게 더 현실적인 주차별 목표가 됨). target_pct=0이면 목표=작년 실적 그대로가 되므로,
-    별도 분기 없이 항상 이 함수 하나로 '참고표(0%)'와 '목표표(N%)'를 둘 다 표현한다.
+    """담달 목표를 '전년비 목표 %' 하나로 정하면, 전년 동월 실제 마감·핏플랍 제외 성장률을
+    계산한다. 주차별 표(weeks)는 목표 %로 스케일하지 않고 항상 작년 같은 달의 실제
+    주차별 실적 그대로 반환한다 — 처음에 이 표를 요청받았을 때 '작년 실적 기준'이라고
+    명확히 정해졌고, 목표 %로 스케일한 값을 넣으면 위쪽 요약 줄의 '작년 마감' 숫자와
+    아래 표의 TOTAL이 서로 달라져서 헷갈린다는 피드백이 있었음(실제로 발생함) — 그래서
+    표는 항상 target_pct와 무관하게 작년 실적 그대로 두고, 목표 총액은 요약 줄에서만
+    별도 숫자로 보여준다.
 
     주차 경계는 대시보드 다른 곳의 week_of_month(연간 연속 월~일 그리드)와 다르게, 이
     표는 '그 달 1일부터 시작해서 일요일 단위로 자르고 말일까지 전부 담는' 달력월 전용
@@ -1419,7 +1421,7 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     if prev_actual <= 0:
         return None
     target_gmv = prev_actual * (1 + target_pct / 100)
-    weeks = [(wn, v / prev_actual * target_gmv, c, start, end) for wn, v, c, start, end in weeks_raw]
+    weeks = [(wn, v, c, start, end) for wn, v, c, start, end in weeks_raw]
 
     ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
     if not df_category.empty and "브랜드" in df_category.columns:
