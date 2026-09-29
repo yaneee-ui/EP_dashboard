@@ -2185,7 +2185,7 @@ if side["page"].startswith("2."):
         _official_cat_total = compute_official_total(_official_all_df, unit, selected_period_date)
 
         render_revenue_ranking(_share_df, "카테고리", unit, selected_period_date, "카테고리별 거래액 비중", f"{bpu} 기준",
-                               donut=True, official_total=_official_cat_total,
+                               donut=True, official_total=_official_cat_total, donut_top_n=None,
                                ai_key="cat_share", ai_context=f"카테고리별 거래액 비중 · {bpu} · {cat_segment} · {unit} · 기준 {period_label}" + (" · 핏플랍제외" if _ff_exclude else ""))
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
@@ -2256,7 +2256,7 @@ if side["page"].startswith("2."):
         _official_cat_total_traffic = compute_official_total(_official_all_df_traffic, unit, selected_period_date, metric_col="트래픽")
 
         render_revenue_ranking(_share_df_traffic, "카테고리", unit, selected_period_date, "카테고리별 트래픽 비중", f"{bpu} 기준",
-                               donut=True, official_total=_official_cat_total_traffic,
+                               donut=True, official_total=_official_cat_total_traffic, donut_top_n=None,
                                metric_col="트래픽", metric_label="트래픽",
                                bar_color_cur="#ea580c", bar_color_prev="#fdba74",
                                donut_colors=["#ea580c", "#f97316", "#fb923c", "#fdba74", "#fed7aa",

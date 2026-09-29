@@ -1883,7 +1883,7 @@ def compute_official_total(df_scope, unit, selected_period_date, metric_col="거
     return stats["current"], stats.get("yoy_value")
 
 
-def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None, metric_col="거래액", metric_label="거래액", bar_color_cur="#2563eb", bar_color_prev="#7dd3fc", donut_colors=None):
+def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title, subtitle, label_map=None, hide_zero=False, ai_key=None, ai_context=None, donut=False, official_total=None, metric_col="거래액", metric_label="거래액", bar_color_cur="#2563eb", bar_color_prev="#7dd3fc", donut_colors=None, donut_top_n=10):
     """
     official_total: (현재값, 작년값) 튜플이 주어지면, 도넛 중앙의 '총 {지표}'를
     개별 항목 합산이 아니라 이 값으로 표시한다. (카테고리/브랜드가 여러 개 겹치는 거래는
@@ -2025,7 +2025,10 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
         )
     # --- 도넛 차트 모드: 구성비를 한눈에 + 전년비 상세는 접이식 ---
     if donut:
-        _top_n = 10
+        # donut_top_n=None이면 '기타'로 묶지 않고 전부 개별 조각으로 보여줌 (카테고리처럼
+        # 항목 수가 적어서 다 보여줘도 되는 경우 — 브랜드처럼 항목이 많을 땐 기존대로
+        # top_n으로 자르고 나머지를 '기타'로 묶어야 도넛이 안 지저분해짐).
+        _top_n = donut_top_n if donut_top_n is not None else len(share_df)
         _dn_pos = share_df[share_df["값"] > 0].copy()
         _dn_neg = share_df[share_df["값"] < 0].copy()
         _labels, _values, _deltas = [], [], []
