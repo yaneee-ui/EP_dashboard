@@ -1306,23 +1306,25 @@ def generate_forecast_report_insight(df_traffic, df_category, df_coupon_daily, f
     def _fmt_pct(v):
         return format_delta_html(v) if v is not None else "-"
 
-    # --- ① 전년 동기간비 (이번 달 지금까지의 실제값 vs 작년 같은 날짜 구간) ---
+    # --- ① 전년 동기간비 (이번 달 지금까지의 실제값 vs 작년 동요일 — 대시보드 전체에서
+    # 쓰는 364일 고정 오프셋 매칭 규칙과 통일. 달력상 같은 날짜(예: 9/1~9/28)로 맞추면
+    # 요일 구성이 달라져서 숫자가 어긋난다는 피드백으로 동요일 매칭으로 바꿈) ---
     _abs_last = df_traffic["날짜"].max()
     _cm_start = pd.Timestamp(forecast_year, cm, 1)
-    _py_start = pd.Timestamp(py, cm, 1)
-    _py_end = _py_start + (min(_abs_last, (_cm_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)) - _cm_start)
+    _cur_dates = pd.date_range(_cm_start, _abs_last)
+    _py_dates = _cur_dates - pd.Timedelta(days=364)
 
-    def _actual_sum(rng_start, rng_end, col):
+    def _actual_sum(dates, col):
         s = df_traffic[
             (df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")
-            & (df_traffic["날짜"] >= rng_start) & (df_traffic["날짜"] <= rng_end)
+            & (df_traffic["날짜"].isin(dates))
         ]
         return s[col].sum()
 
-    _gmv_cur = _actual_sum(_cm_start, _abs_last, "거래액")
-    _gmv_py = _actual_sum(_py_start, _py_end, "거래액")
-    _trf_cur = _actual_sum(_cm_start, _abs_last, "트래픽")
-    _trf_py = _actual_sum(_py_start, _py_end, "트래픽")
+    _gmv_cur = _actual_sum(_cur_dates, "거래액")
+    _gmv_py = _actual_sum(_py_dates, "거래액")
+    _trf_cur = _actual_sum(_cur_dates, "트래픽")
+    _trf_py = _actual_sum(_py_dates, "트래픽")
     _pt_cur = (_gmv_cur / _trf_cur) if _trf_cur else None
     _pt_py = (_gmv_py / _trf_py) if _trf_py else None
 
