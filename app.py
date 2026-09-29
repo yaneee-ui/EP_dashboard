@@ -3470,7 +3470,7 @@ if side["page"].startswith("11."):
             # int/float가 섞여 있어서(CR 행만 이미 문자열) 포맷 함수가 조용히 무시되거나
             # (그래서 화면엔 '1499.000000'처럼 원본 실수가 그대로 나옴), 컬럼을 2개 이상
             # format()으로 걸면 아예 그 컬럼들이 통째로 사라지는 것까지 확인함. 그래서
-            # 순수 HTML 표로 직접 그린다 — 이 페이지의 '최근 4주 일평균' 표와 동일한 방식.
+            # 순수 HTML 표로 직접 그린다 — 이 페이지의 '최근 5주 일평균' 표와 동일한 방식.
             _WK_LABEL_COLS = {"지표", "구분", "BPU", "카테고리"}
 
             def _fmt_wk_num(v):
@@ -3567,12 +3567,12 @@ if side["page"].startswith("11."):
         except Exception as _e:
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
-        # --- 최근 4주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
+        # --- 최근 5주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
         st.markdown("---")
-        st.markdown("**최근 4주 일평균**")
+        st.markdown("**최근 5주 일평균**")
         _wk4_abs_last = df_traffic["날짜"].max()
         _wk4_ref_monday = _wk4_abs_last - pd.Timedelta(days=_wk4_abs_last.weekday())
-        _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(3, -1, -1)]  # 오래된 주 -> 최신 주 순
+        _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(4, -1, -1)]  # 오래된 주 -> 최신 주 순
         _wk4_labels = [f"{effective_month_of_week(d).month}월 {week_of_month(d)}주차" for d in _wk4_starts]
 
         _wk4_metric_defs = [
@@ -3717,7 +3717,7 @@ if side["page"].startswith("11."):
         import openpyxl
         _wk4_wb = openpyxl.Workbook()
         _wk4_ws = _wk4_wb.active
-        _wk4_ws.title = "최근4주"
+        _wk4_ws.title = "최근5주"
         _wk4_header_fill = PatternFill("solid", fgColor="D9D9D9")
         _wk4_section_font = Font(bold=True)
         _wk4_up_font = Font(color="16A34A")
@@ -3772,12 +3772,12 @@ if side["page"].startswith("11."):
             _wk4_ws.column_dimensions[openpyxl.utils.get_column_letter(_c)].width = 13
         _wk4_ws.freeze_panes = "B2"
 
-        # --- 카테고리별 최근 4주 일평균 — BPU(Total/자사/정상/이월/입점) x 지표(거래액/
+        # --- 카테고리별 최근 5주 일평균 — BPU(Total/자사/정상/이월/입점) x 지표(거래액/
         # 트래픽/구매객수)로 세분화. 5x3=15개 조합이라 페이지가 너무 길어지지 않게
         # expander로 감싼다(기본 접힘). 부분주 보정 등 계산 원칙은 위 BPU별 표와 동일. ---
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown("**카테고리별 최근 4주 일평균 (BPU·지표별 세분화)**")
+        st.markdown("**카테고리별 최근 5주 일평균 (BPU·지표별 세분화)**")
 
         _wk4_cat_metric_defs = [
             ("거래액", "거래액", None, False, False),
@@ -3802,18 +3802,18 @@ if side["page"].startswith("11."):
 
         def _compute_cat_rows(base_df, num_col, den_col, is_ratio, is_pct, category_list):
             """base_df에서 category_list에 있는 카테고리 전부(값이 없으면 None)에 대해
-            4주 흐름을 계산한다. category_list를 고정해서 넘기기 때문에, 어떤 지표를
-            계산하든 항상 같은 카테고리 집합·순서가 나온다(지표마다 카테고리가 들쭉날쭉하게
-            빠지는 문제 방지 — 예: 거래액엔 있는데 트래픽엔 0이라 안 보이던 카테고리)."""
+            _wk4_starts 주 수만큼 흐름을 계산한다. category_list를 고정해서 넘기기 때문에,
+            어떤 지표를 계산하든 항상 같은 카테고리 집합·순서가 나온다(지표마다 카테고리가
+            들쭉날쭉하게 빠지는 문제 방지 — 예: 거래액엔 있는데 트래픽엔 0이라 안 보이던 카테고리)."""
             if base_df.empty or num_col not in base_df.columns or (den_col and den_col not in base_df.columns):
-                return [{"카테고리": c, "값": [None] * 4, "전주비": None, "전년비": None, "작년값": None} for c in category_list]
+                return [{"카테고리": c, "값": [None] * len(_wk4_starts), "전주비": None, "전년비": None, "작년값": None} for c in category_list]
             _cols = [num_col] + ([den_col] if den_col else [])
             daily = base_df.groupby(["날짜", "카테고리"], as_index=False)[_cols].sum()
             rows = []
             for _cat_name in category_list:
                 _g = daily[daily["카테고리"] == _cat_name]
                 if _g.empty:
-                    rows.append({"카테고리": _cat_name, "값": [None] * 4, "전주비": None, "전년비": None, "작년값": None})
+                    rows.append({"카테고리": _cat_name, "값": [None] * len(_wk4_starts), "전주비": None, "전년비": None, "작년값": None})
                     continue
                 _s_num = _g.set_index("날짜")[num_col].sort_index()
                 _s_den = _g.set_index("날짜")[den_col].sort_index() if den_col else None
@@ -4005,9 +4005,9 @@ if side["page"].startswith("11."):
         _wk4_buf = io.BytesIO()
         _wk4_wb.save(_wk4_buf)
         st.download_button(
-            "⬇️ 엑셀 다운로드 (최근 4주 일평균)",
+            "⬇️ 엑셀 다운로드 (최근 5주 일평균)",
             data=_wk4_buf.getvalue(),
-            file_name=f"최근4주일평균_{_wk4_abs_last.strftime('%Y%m%d')}.xlsx",
+            file_name=f"최근5주일평균_{_wk4_abs_last.strftime('%Y%m%d')}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
