@@ -1363,19 +1363,17 @@ def generate_forecast_report_insight(df_traffic, df_category, df_coupon_daily, f
             f"전년비 {_fmt_pct(pct_delta_safe(_forecast_ex_ff, _py_actual_ex_ff))})"
         )
 
-    # --- ③ 전달 마감 비용률 (쿠폰할인/거래액, 이미 지나간 달이라 실제값 그대로) ---
+    # --- ③ 이번 달(N월) 마감 비용률 — 쿠폰할인도 거래액과 같은 일할계산 방식으로
+    # 마감예상 처리해서, 진행 중인 달이어도 나머지 라인들과 동일한 N월 기준으로 맞춘다. ---
     _line3 = ""
-    _pm = cm - 1
-    if _pm >= 1 and df_coupon_daily is not None and not df_coupon_daily.empty:
+    if df_coupon_daily is not None and not df_coupon_daily.empty:
         _cost_cur, _ = compute_monthly_forecast_series(df_coupon_daily, "쿠폰할인", None, forecast_year, None)
         _cost_py, _ = compute_monthly_forecast_series(df_coupon_daily, "쿠폰할인", None, py, None)
-        _gmv_pm_cur = _fc_nums[_pm - 1]
-        _gmv_pm_py = _py_nums[_pm - 1]
-        _rate_cur = (_cost_cur[_pm - 1] / _gmv_pm_cur * 100) if _gmv_pm_cur else None
-        _rate_py = (_cost_py[_pm - 1] / _gmv_pm_py * 100) if _gmv_pm_py else None
+        _rate_cur = (_cost_cur[cm - 1] / _forecast_gmv * 100) if _forecast_gmv else None
+        _rate_py = (_cost_py[cm - 1] / _py_actual_gmv * 100) if _py_actual_gmv else None
         if _rate_cur is not None:
             _rate_py_str = f"{_rate_py:.1f}%" if _rate_py is not None else "-"
-            _line3 = f"<br>- {_pm}월 예상 마감 비용률 {_rate_cur:.1f}% (전년 {_rate_py_str})"
+            _line3 = f"<br>- {cm}월 예상 마감 비용률 {_rate_cur:.1f}% (전년 {_rate_py_str})"
 
     return [{"title": f"{cm}월 실적 리포트", "body": f"{_line1}<br>{_line2}{_line3}"}]
 
