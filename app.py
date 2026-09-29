@@ -38,7 +38,7 @@ from dashboard_helpers import (
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
-    _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights,
+    _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -4627,17 +4627,14 @@ if side["page"].startswith("10."):
             )
             st.dataframe(_fc_yoy_styled, use_container_width=True, height=400)
 
-            # 규칙 기반 자동 인사이트 — 거래액/Total 행을 재사용해서 forecast_stats로 전달.
+            # 규칙 기반 자동 인사이트 — 실제 수기 리포트 양식(전년 동기간비/마감예상/
+            # 핏플랍 제외/전달 비용률)에 맞춘 전용 함수. 숫자는 이 페이지의 다른 표들과
+            # 같은 원본(df_traffic/df_category/df_coupon_daily)에서 새로 계산해서 항상 일치.
             try:
-                _fc_total_gmv = next(
-                    (r for r in _fc_yoy_rows if r["지표"] == "거래액" and r["구분"] == "Total"), None
+                _fc_rb = generate_forecast_report_insight(
+                    df_traffic, df_category, df_coupon_daily, forecast_year, _fc_cur_month_num,
                 )
-                if _fc_total_gmv and _fc_total_gmv.get("전년비") is not None:
-                    _fc_rb = generate_rule_based_insights(
-                        [], {},
-                        forecast_stats={"yoy": _fc_total_gmv["전년비"], "month": f"{_fc_cur_month_num}월"},
-                    )
-                    render_insight_panel(_fc_rb)
+                render_insight_panel(_fc_rb)
             except Exception:
                 pass
 

@@ -1288,6 +1288,98 @@ def generate_rule_based_insights(bpu_rows, bpu_cfg, category_movers=None, coupon
     return sections
 
 
+def generate_forecast_report_insight(df_traffic, df_category, df_coupon_daily, forecast_year, fc_cur_month_num):
+    """10번 페이지(마감 예상 실적) 전용 리포트형 자동 인사이트. 사용자가 실제로 쓰는
+    수기 리포트 양식(▶ N월 실적: 전년 동기간비 .../- N월 마감 실적(예상): .../- 전달
+    비용률...)에 맞춰 한 섹션으로 조립한다. 숫자는 전부 이 함수 안에서 새로 계산하고
+    (기존 자동요약 문구를 재사용하지 않음), 화면의 다른 표들과 같은 원본 df를 그대로 써서
+    항상 숫자가 일치하게 한다."""
+    if not fc_cur_month_num:
+        return []
+    cm, py = fc_cur_month_num, forecast_year - 1
+
+    def _fmt_eok(v):
+        if v is None or pd.isna(v):
+            return "-"
+        return f"{v / 1e8:,.1f}억"
+
+    def _fmt_pct(v):
+        return format_delta_html(v) if v is not None else "-"
+
+    # --- ① 전년 동기간비 (이번 달 지금까지의 실제값 vs 작년 같은 날짜 구간) ---
+    _abs_last = df_traffic["날짜"].max()
+    _cm_start = pd.Timestamp(forecast_year, cm, 1)
+    _py_start = pd.Timestamp(py, cm, 1)
+    _py_end = _py_start + (min(_abs_last, (_cm_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)) - _cm_start)
+
+    def _actual_sum(rng_start, rng_end, col):
+        s = df_traffic[
+            (df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")
+            & (df_traffic["날짜"] >= rng_start) & (df_traffic["날짜"] <= rng_end)
+        ]
+        return s[col].sum()
+
+    _gmv_cur = _actual_sum(_cm_start, _abs_last, "거래액")
+    _gmv_py = _actual_sum(_py_start, _py_end, "거래액")
+    _trf_cur = _actual_sum(_cm_start, _abs_last, "트래픽")
+    _trf_py = _actual_sum(_py_start, _py_end, "트래픽")
+    _pt_cur = (_gmv_cur / _trf_cur) if _trf_cur else None
+    _pt_py = (_gmv_py / _trf_py) if _trf_py else None
+
+    _line1 = (
+        f"<b>▶ {cm}월 실적 :</b> 전년 동기간비 거래액 {_fmt_pct(pct_delta_safe(_gmv_cur, _gmv_py))}, "
+        f"트래픽 {_fmt_pct(pct_delta_safe(_trf_cur, _trf_py))}, "
+        f"트래픽당 거래액 {_fmt_pct(pct_delta_safe(_pt_cur, _pt_py))}"
+    )
+
+    # --- ② N월 마감 실적(예상) vs 전년 마감(실제) + 핏플랍 제외 버전 ---
+    _fc_nums, _ = compute_monthly_forecast_series(df_traffic, "거래액", None, forecast_year, None)
+    _py_nums, _ = compute_monthly_forecast_series(df_traffic, "거래액", None, py, None)
+    _forecast_gmv = _fc_nums[cm - 1]
+    _py_actual_gmv = _py_nums[cm - 1]
+    _line2 = (
+        f"- {cm}월 마감 실적 (예상): {_fmt_eok(_forecast_gmv)} "
+        f"(전년비 {_fmt_pct(pct_delta_safe(_forecast_gmv, _py_actual_gmv))}) "
+        f"*전년 마감 {_fmt_eok(_py_actual_gmv)}"
+    )
+
+    if not df_category.empty and "브랜드" in df_category.columns:
+        def _ff_month_sum(year):
+            s = df_category[
+                (df_category["브랜드"] == FF_BRAND_CODE) & (df_category["카테고리"] != "전체")
+                & (df_category["회원구분"] == "전체")
+                & (df_category["날짜"] >= pd.Timestamp(year, cm, 1))
+                & (df_category["날짜"] <= (pd.Timestamp(year, cm, 1) + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1))
+            ]
+            return s["거래액"].sum()
+
+        _ff_cur = _ff_month_sum(forecast_year)
+        _ff_py = _ff_month_sum(py)
+        _forecast_ex_ff = _forecast_gmv - _ff_cur
+        _py_actual_ex_ff = _py_actual_gmv - _ff_py
+        _line2 += (
+            f"<br>&nbsp;&nbsp;/ 핏플랍 거래액 {_fmt_eok(_ff_py)} "
+            f"(핏플랍 제외 시, {_fmt_eok(_forecast_ex_ff)}, "
+            f"전년비 {_fmt_pct(pct_delta_safe(_forecast_ex_ff, _py_actual_ex_ff))})"
+        )
+
+    # --- ③ 전달 마감 비용률 (쿠폰할인/거래액, 이미 지나간 달이라 실제값 그대로) ---
+    _line3 = ""
+    _pm = cm - 1
+    if _pm >= 1 and df_coupon_daily is not None and not df_coupon_daily.empty:
+        _cost_cur, _ = compute_monthly_forecast_series(df_coupon_daily, "쿠폰할인", None, forecast_year, None)
+        _cost_py, _ = compute_monthly_forecast_series(df_coupon_daily, "쿠폰할인", None, py, None)
+        _gmv_pm_cur = _fc_nums[_pm - 1]
+        _gmv_pm_py = _py_nums[_pm - 1]
+        _rate_cur = (_cost_cur[_pm - 1] / _gmv_pm_cur * 100) if _gmv_pm_cur else None
+        _rate_py = (_cost_py[_pm - 1] / _gmv_pm_py * 100) if _gmv_pm_py else None
+        if _rate_cur is not None:
+            _rate_py_str = f"{_rate_py:.1f}%" if _rate_py is not None else "-"
+            _line3 = f"<br>- {_pm}월 예상 마감 비용률 {_rate_cur:.1f}% (전년 {_rate_py_str})"
+
+    return [{"title": f"{cm}월 실적 리포트", "body": f"{_line1}<br>{_line2}{_line3}"}]
+
+
 def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
     """2번(카테고리 실적 요약) 페이지 전용 규칙 기반 인사이트. cat_payload는 KPI 카드용
     {"name","value","prev_delta","yoy_delta"} 리스트, cat_movers는 카테고리별
