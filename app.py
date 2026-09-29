@@ -2658,10 +2658,13 @@ if side["page"].startswith("4."):
 
     ep_table_rows = {}
     if not _cum_ep.empty:
-        # 전시상품수/원부매칭상품수/최저가상품수는 집계 모드(일평균/누적)에 따라 평균 또는 합계
+        # 전시상품수/원부매칭상품수/최저가상품수는 그 시점의 스냅샷 성격 지표라 CR/객단가·
+        # 원부매칭율/최저가율과 마찬가지로 집계 모드(일평균/누적)와 무관하게 항상 평균으로
+        # 계산한다 — '누적'으로 더해버리면 기간이 길어질수록 실제 전시상품수와 무관하게
+        # 값이 계속 커지는 의미 없는 숫자가 됨.
         for base_metric in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
             s = _cum_ep.set_index(COL_DATE)[base_metric].sort_index()
-            series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).agg(_agg_func)
+            series = s.resample(UNIT_CONFIG[cum_unit]["rule"]).mean()
             if cum_unit == "주별":
                 series.index = series.index - pd.Timedelta(days=6)
             elif cum_unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
@@ -2696,8 +2699,8 @@ if side["page"].startswith("4."):
             ("트래픽", "UV", False), ("거래액", "거래액(순결제)", False), ("구매객수", "구매객수", False),
             ("CR", "구매전환율(%)", True), ("객단가", "객단가", False),
             ("원부매칭율(%)", "원부매칭율(%)", True), ("최저가율(%)", "최저가율(%)", True),
-            ("평균 EP 전시 상품수", "전시상품수", False), ("평균 원부매칭 상품수", "원부매칭상품수", False),
-            ("평균 최저가 상품수", "최저가상품수", False),
+            ("평균 EP 전시 상품수", "전시상품수 (평균)", False), ("평균 원부매칭 상품수", "원부매칭상품수 (평균)", False),
+            ("평균 최저가 상품수", "최저가상품수 (평균)", False),
         ]
         header_html = "<th>구분</th>" + "".join(f"<th>{label}</th>" for _, label, _ in COLS)
         body_rows = []
@@ -2743,8 +2746,10 @@ if side["page"].startswith("4."):
             (_tot_vals["거래액"] / _tot_vals["구매객수"])
             if _tot_vals["구매객수"] else None
         )
+        # 스냅샷 지표라 합계 행도 평균으로 — 원부매칭율/최저가율 계산은 두 값 다 같은
+        # 기간의 평균이라 비율(분자평균/분모평균)이 합계 기반(분자합/분모합)과 동일함.
         for _m in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
-            _tot_vals[_m] = _tot_ep_range[_m].sum() if not _tot_ep_range.empty else None
+            _tot_vals[_m] = _tot_ep_range[_m].mean() if not _tot_ep_range.empty else None
         _tot_vals["원부매칭율(%)"] = (
             (_tot_vals["평균 원부매칭 상품수"] / _tot_vals["평균 EP 전시 상품수"] * 100)
             if _tot_vals["평균 EP 전시 상품수"] else None
@@ -4682,9 +4687,9 @@ if side["page"].startswith("10."):
         # 기준으로 먼저 좁혀야 df_traffic과 같은 방식(BPU만 보는)으로 다룰 수 있다.
         _ep_total_scope = df_ep[(df_ep[COL_MATCH] == "Total") & (df_ep[COL_LOWEST] == "Total")]
         if not _ep_total_scope.empty:
-            st.markdown("#### 전시상품수")
+            st.markdown("#### 전시상품수 (평균)")
             _ep_scope_renamed = _ep_total_scope.rename(columns={COL_DATE: "날짜", COL_BPU: "BPU"})
-            _tbl_disp = build_forecast_table(_ep_scope_renamed, "전시상품수", "평균 EP 전시 상품수", None, forecast_year)
+            _tbl_disp = build_forecast_table(_ep_scope_renamed, "전시상품수 (평균)", "평균 EP 전시 상품수", None, forecast_year, agg="avg")
             st.dataframe(_style_forecast_table(_tbl_disp), use_container_width=True)
             st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         else:

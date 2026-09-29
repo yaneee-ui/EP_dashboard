@@ -1049,11 +1049,17 @@ def render_category_compare_chart(df_wide, height=320, unit="일별", metric_lab
 FORECAST_BPU_ROWS = {"Total": None, "자사": BPU_GROUPS["자사"], "정상": ["e-영업1"], "이월": ["e-영업2"], "입점": BPU_GROUPS["입점"]}
 
 
-def compute_monthly_forecast_series(df, num_col, den_col, year, bpu_list, segment="전체"):
+def compute_monthly_forecast_series(df, num_col, den_col, year, bpu_list, segment="전체", agg="sum"):
     """1~12월 각각의 (분자합계, 분모합계)를 계산한다. 진행 중인(마지막) 달은 일할계산으로
     마감예상 처리 — 지금까지의 합계를 경과일수로 나눠 이번 달 전체 일수만큼 곱해서 추정.
     완성된(지나간) 달은 그대로 실제 합계, 아직 시작 안 한 달은 (0, 0).
-    den_col이 None이면 절대값 지표(거래액/트래픽 등)라 분모 계산은 건너뛴다."""
+    den_col이 None이면 절대값 지표(거래액/트래픽 등)라 분모 계산은 건너뛴다.
+
+    agg="avg"면 합산 대신 그 달의 일평균을 쓰고, 일할계산(월말까지 확대)도 하지 않는다 —
+    전시상품수처럼 '그 시점의 스냅샷' 성격의 지표는 날짜가 늘어난다고 값이 비례해서
+    커지는 게 아니라서, 합산하거나 일할계산으로 부풀리면 의미 없는 숫자가 된다(예:
+    30일 평균이 아니라 30일치를 다 더해버리면 실제 전시상품수의 30배가 찍힘). 지금까지의
+    평균이 이미 최선의 추정치라 확대 없이 그대로 쓴다."""
     if bpu_list is None:
         # "Total"을 뜻하는 bpu_list=None인 경우: 데이터에 BPU="Total" 행이 실제로 있으면
         # 그걸 쓰고(df_traffic처럼), 없으면(쿠폰 데이터처럼 Total 집계행 자체가 없는 소스)
@@ -1082,25 +1088,33 @@ def compute_monthly_forecast_series(df, num_col, den_col, year, bpu_list, segmen
             dens.append(0.0 if den_col else None)
             continue
         days_in_month = m_end.day
-        num_sum = month_data[num_col].sum()
-        den_sum = month_data[den_col].sum() if den_col else None
-        _is_partial = m_end > _abs_last  # 이번 달 마지막날이 아직 안 지났으면 진행 중
-        if _is_partial:
-            num_sum = num_sum / days_elapsed * days_in_month
-            if den_sum is not None:
-                den_sum = den_sum / days_elapsed * days_in_month
+        if agg == "avg":
+            num_sum = month_data[num_col].mean()
+            den_sum = month_data[den_col].mean() if den_col else None
+        else:
+            num_sum = month_data[num_col].sum()
+            den_sum = month_data[den_col].sum() if den_col else None
+            _is_partial = m_end > _abs_last  # 이번 달 마지막날이 아직 안 지났으면 진행 중
+            if _is_partial:
+                num_sum = num_sum / days_elapsed * days_in_month
+                if den_sum is not None:
+                    den_sum = den_sum / days_elapsed * days_in_month
         nums.append(num_sum)
         dens.append(den_sum)
     return nums, dens
 
 
-def build_forecast_table(df_traffic, metric_label, num_col, den_col, year, segment="전체", is_ratio=False, ratio_scale=1.0):
+def build_forecast_table(df_traffic, metric_label, num_col, den_col, year, segment="전체", is_ratio=False, ratio_scale=1.0, agg="sum"):
     """지표 하나(예: 거래액)에 대해 Total/자사/정상/이월/입점 5개 행 x 1~12월+합계 컬럼의
     DataFrame을 만든다. is_ratio=True면 분자/분모를 각각 예상한 뒤 나눠서 비율을 재계산한다
-    (비율 지표는 절대 단순평균 금지 원칙 — 예상 CR = 예상 구매객수/예상 트래픽 이런 식으로)."""
+    (비율 지표는 절대 단순평균 금지 원칙 — 예상 CR = 예상 구매객수/예상 트래픽 이런 식으로).
+    agg="avg"면(전시상품수 등 스냅샷 지표) 월별 칸도 평균으로 계산하고(compute_monthly_
+    forecast_series 참고), '합계' 칸도 월별 평균끼리 단순 평균하지 않고 연초~현재까지
+    실제 존재하는 모든 날짜를 다시 한 번 평균낸다 — 월마다 날짜 수가 달라서 월평균의
+    평균을 내면 짧은 달이 과대/과소 반영되기 때문."""
     rows = []
     for row_name, bpu_list in FORECAST_BPU_ROWS.items():
-        nums, dens = compute_monthly_forecast_series(df_traffic, num_col, den_col, year, bpu_list, segment)
+        nums, dens = compute_monthly_forecast_series(df_traffic, num_col, den_col, year, bpu_list, segment, agg=agg)
         if is_ratio:
             vals = [
                 (n / d * ratio_scale) if (d and d != 0) else (0.0 if n == 0 else None)
@@ -1115,6 +1129,16 @@ def build_forecast_table(df_traffic, metric_label, num_col, den_col, year, segme
             _tot_num = sum(nums)
             _tot_den = sum(d for d in dens if d)
             row["합계"] = (_tot_num / _tot_den * ratio_scale) if _tot_den else 0.0
+        elif agg == "avg":
+            if bpu_list is None:
+                _sub_all = df_traffic[df_traffic["BPU"] == "Total"] if "Total" in df_traffic["BPU"].unique().tolist() \
+                    else df_traffic[df_traffic["BPU"].isin(["e-영업1", "e-영업2", "e-영업3", "e-영업4"])]
+            else:
+                _sub_all = df_traffic[df_traffic["BPU"].isin(bpu_list)]
+            if "회원구분" in _sub_all.columns and segment in _sub_all["회원구분"].unique().tolist():
+                _sub_all = _sub_all[_sub_all["회원구분"] == segment]
+            _year_data = _sub_all[_sub_all["날짜"].dt.year == year]
+            row["합계"] = _year_data[num_col].mean() if not _year_data.empty else None
         else:
             row["합계"] = sum(nums)
         rows.append(row)
