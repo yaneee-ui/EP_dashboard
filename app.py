@@ -39,7 +39,7 @@ from dashboard_helpers import (
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
-    render_next_month_target_prep_table,
+    compute_next_month_target, render_next_month_target_table,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -4614,14 +4614,24 @@ if side["page"].startswith("10."):
                     })
             _fc_yoy_df = pd.DataFrame(_fc_yoy_rows)
 
+            # 거래액/트래픽/구매객수/객단가는 정수(원/건)라 소수점이 붙으면 어색한데
+            # (예: "3,735,352,832.0"), 구매전환율(CR)만 %라서 소수점 1자리가 필요함 —
+            # 지표별로 다른 포맷을 쓴다.
             def _fmt_yoy_val(v):
+                return "-" if v is None or pd.isna(v) or v == 0 else f"{v:,.0f}"
+
+            def _fmt_yoy_val_pct(v):
                 return "-" if v is None or pd.isna(v) or v == 0 else f"{v:,.1f}"
 
             def _fmt_yoy_pct(v):
                 return format_delta_text(v) if v is not None else "-"
 
+            _fc_cr_mask = _fc_yoy_df["지표"] == "구매전환율(CR)"
             _fc_yoy_styled = _fc_yoy_df.style.format(
                 {"마감예상": _fmt_yoy_val, "작년실적": _fmt_yoy_val, "전년비": _fmt_yoy_pct}
+            ).format(
+                {"마감예상": _fmt_yoy_val_pct, "작년실적": _fmt_yoy_val_pct},
+                subset=pd.IndexSlice[_fc_cr_mask, ["마감예상", "작년실적"]],
             ).map(
                 lambda v: ("color:#16a34a;" if v >= 0 else "color:#dc2626;") if isinstance(v, (int, float)) and pd.notna(v) else "",
                 subset=["전년비"],
@@ -4680,9 +4690,10 @@ if side["page"].startswith("10."):
         else:
             st.info("EP채널 데이터가 없어서 전시상품수는 건너뛰었어요 (사이드바에서 ep_data_long.csv를 업로드하면 나와요).")
 
-        # --- 담달 목표 수립 (참고용) ---
-        # 목표 숫자·캠페인 계획은 사람이 정하는 영역이라 자동으로 채우지 않고, 그 판단에
-        # 참고할 '작년 같은 달이 주차별로 어떻게 흘러갔는지' 표만 우선 제공한다.
+        # --- 담달 목표 수립 ---
+        # 목표 '전년비 %'만 입력받으면, 작년 같은 달 실적에 그 %를 적용해 목표 총액·
+        # 핏플랍 제외 성장률·주차별 배분(작년 주차별 비중 적용)까지 전부 자동 계산한다.
+        # 캠페인 계획 문구는 여전히 사람이 정하는 영역이라 자동 생성하지 않음.
         if _fc_cur_month_num is not None:
             st.markdown("---")
             _nm_next_month = _fc_cur_month_num + 1
@@ -4692,12 +4703,35 @@ if side["page"].startswith("10."):
                 _nm_next_year += 1
             _nm_ref_year = _nm_next_year - 1
             st.markdown(f"### 🎯 {_nm_next_year % 100}년 {_nm_next_month}월 목표 수립")
-            _nm_table = render_next_month_target_prep_table(df_traffic, _nm_ref_year, _nm_next_month)
-            if _nm_table:
-                st.caption(f"참고: {_nm_ref_year}년 {_nm_next_month}월 주차별 실적 (단위: 백만원)")
-                st.markdown(_nm_table, unsafe_allow_html=True)
+            _nm_pct = st.number_input(
+                "목표 전년비(%)", value=0.0, step=0.5, format="%.1f",
+                key=f"nm_target_pct_{_nm_next_year}_{_nm_next_month}",
+                help="작년 같은 달 실적 대비 몇 % 성장을 목표로 할지 입력하면 목표 총액과 주차별 배분이 자동 계산돼요.",
+            )
+            _nm_result = compute_next_month_target(df_traffic, df_category, _nm_ref_year, _nm_next_month, _nm_pct)
+            if _nm_result:
+                _nm_lines = (
+                    f"- {_nm_ref_year}년 {_nm_next_month}월 마감 {_nm_result['prev_actual'] / 1e8:.1f}억"
+                    + (
+                        f" / 핏플랍 거래액 : {_nm_result['ff_prev'] / 1e8:.1f}억 "
+                        f"(핏플랍 제외 시, {_nm_result['prev_ex_ff'] / 1e8:.1f}억)"
+                        if _nm_result["ff_prev"] else ""
+                    )
+                    + f"<br>- {_nm_next_year}년 {_nm_next_month}월 목표 {_nm_result['target_gmv'] / 1e8:.1f}억 "
+                    f"(전년비 {format_delta_html(_nm_result['yoy_pct'])})"
+                    + (
+                        f" / 핏플랍 제외 시, 전년비 {format_delta_html(_nm_result['ex_ff_yoy_pct'])}"
+                        if _nm_result["ff_prev"] else ""
+                    )
+                )
+                st.markdown(
+                    f"<div style='font-size:0.85rem;color:#374151;line-height:1.8;margin-bottom:10px;'>{_nm_lines}</div>",
+                    unsafe_allow_html=True,
+                )
+                st.markdown(render_next_month_target_table(_nm_result, _nm_next_month), unsafe_allow_html=True)
+                st.caption(f"ℹ️ 주차별 배분은 {_nm_ref_year}년 {_nm_next_month}월의 주차별 실적 비중을 목표 총액에 그대로 적용한 값이에요 (단위: 백만원).")
             else:
-                st.info(f"{_nm_ref_year}년 {_nm_next_month}월 데이터가 없어서 참고표를 건너뛰었어요.")
+                st.info(f"{_nm_ref_year}년 {_nm_next_month}월 데이터가 없어서 목표를 계산할 수 없어요.")
 
 
 # ============================================================

@@ -1380,12 +1380,14 @@ def generate_forecast_report_insight(df_traffic, df_category, df_coupon_daily, f
     return [{"title": f"{cm}월 실적 리포트", "body": f"{_line1}<br>{_line2}{_line3}"}]
 
 
-def render_next_month_target_prep_table(df_traffic, ref_year, ref_month):
-    """담달 목표 수립용 참고표. 아직 안 지난 달의 목표를 정할 때 작년 같은 달이 주차별로
-    어떻게 흘러갔는지(페이스) 참고할 수 있게 주차별 거래액/일평균을 보여준다. 목표 숫자와
-    캠페인 계획 자체는 사람이 정하는 영역이라 자동 생성하지 않고, 그 판단에 쓸 실적
-    구조(몇 주차까지 있는지, 주차별 페이스)만 계산해서 준다. 주차 경계는 대시보드 전체가
-    쓰는 규칙(week_of_month/effective_month_of_week, 월~일 기준)과 동일하게 맞춘다."""
+def compute_next_month_target(df_traffic, df_category, ref_year, next_month, target_pct):
+    """담달 목표를 '전년비 목표 %' 하나로 정하면, 전년 동월 실제 마감·핏플랍 제외 성장률·
+    주차별 배분까지 한번에 계산한다. 주차별 배분은 작년 같은 달의 주차별 비중을 그대로
+    목표 총액에 적용한다(주차마다 성수기 굴곡이 있어서 균등배분보다 실제 패턴을 따르는
+    게 더 현실적인 주차별 목표가 됨). target_pct=0이면 목표=작년 실적 그대로가 되므로,
+    별도 분기 없이 항상 이 함수 하나로 '참고표(0%)'와 '목표표(N%)'를 둘 다 표현한다.
+    주차 경계는 대시보드 전체가 쓰는 규칙(week_of_month/effective_month_of_week, 월~일
+    기준)과 동일하게 맞춘다. 데이터가 없으면 None."""
     s = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
     if s.empty:
         return None
@@ -1395,22 +1397,53 @@ def render_next_month_target_prep_table(df_traffic, ref_year, ref_month):
     weekly_cnt = s.resample("W-SUN").count()
     weekly_cnt.index = weekly_cnt.index - pd.Timedelta(days=6)
 
-    weeks = []
+    weeks_raw = []
     for mon in weekly_sum.index:
         eff = effective_month_of_week(mon)
-        if eff.year == ref_year and eff.month == ref_month:
-            weeks.append((week_of_month(mon), weekly_sum[mon], weekly_cnt[mon]))
-    if not weeks:
+        if eff.year == ref_year and eff.month == next_month:
+            weeks_raw.append((week_of_month(mon), weekly_sum[mon], weekly_cnt[mon]))
+    if not weeks_raw:
         return None
-    weeks.sort(key=lambda x: x[0])
+    weeks_raw.sort(key=lambda x: x[0])
 
-    total_sum = sum(w[1] for w in weeks)
-    total_cnt = sum(w[2] for w in weeks)
+    prev_actual = sum(w[1] for w in weeks_raw)
+    if prev_actual <= 0:
+        return None
+    target_gmv = prev_actual * (1 + target_pct / 100)
+    weeks = [(wn, v / prev_actual * target_gmv, c) for wn, v, c in weeks_raw]
 
-    def _eok_m(v):  # 백만원 단위(예시 표와 동일 스케일)
+    ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
+    if not df_category.empty and "브랜드" in df_category.columns:
+        m_start = pd.Timestamp(ref_year, next_month, 1)
+        m_end = (m_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+        ff_sub = df_category[
+            (df_category["브랜드"] == FF_BRAND_CODE) & (df_category["카테고리"] != "전체")
+            & (df_category["회원구분"] == "전체")
+            & (df_category["날짜"] >= m_start) & (df_category["날짜"] <= m_end)
+        ]
+        ff_prev = ff_sub["거래액"].sum()
+        prev_ex_ff = prev_actual - ff_prev
+        # 담달(목표 대상)은 핏플랍 종료(2025-10) 이후라 매출 0으로 가정 — 목표 총액 그대로.
+        target_ex_ff = target_gmv
+        ex_ff_yoy_pct = pct_delta_safe(target_ex_ff, prev_ex_ff) if prev_ex_ff else None
+
+    return {
+        "prev_actual": prev_actual, "target_gmv": target_gmv, "yoy_pct": target_pct,
+        "ff_prev": ff_prev, "prev_ex_ff": prev_ex_ff, "target_ex_ff": target_ex_ff,
+        "ex_ff_yoy_pct": ex_ff_yoy_pct, "weeks": weeks,
+    }
+
+
+def render_next_month_target_table(result, next_month):
+    """compute_next_month_target() 결과의 주차별 배분을 표(거래액/일평균, 단위 백만원)로."""
+    weeks = result["weeks"]
+    total_sum = sum(v for _, v, _ in weeks)
+    total_cnt = sum(c for _, _, c in weeks)
+
+    def _eok_m(v):
         return f"{v / 1_000_000:,.0f}"
 
-    header_cells = "".join(f"<th style='text-align:right;'>{ref_month}월 {wn}주차</th>" for wn, _, _ in weeks)
+    header_cells = "".join(f"<th style='text-align:right;'>{next_month}월 {wn}주차</th>" for wn, _, _ in weeks)
     header_cells += "<th style='text-align:right;font-weight:700;'>TOTAL</th>"
     gmv_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v)}</td>" for _, v, _ in weeks)
     gmv_cells += f"<td style='text-align:right;font-weight:700;'>{_eok_m(total_sum)}</td>"
