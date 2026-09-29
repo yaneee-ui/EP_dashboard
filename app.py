@@ -39,7 +39,7 @@ from dashboard_helpers import (
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
-    compute_next_month_target, render_next_month_target_table,
+    compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -4621,7 +4621,7 @@ if side["page"].startswith("10."):
                 return "-" if v is None or pd.isna(v) or v == 0 else f"{v:,.0f}"
 
             def _fmt_yoy_val_pct(v):
-                return "-" if v is None or pd.isna(v) or v == 0 else f"{v:,.1f}"
+                return "-" if v is None or pd.isna(v) or v == 0 else f"{v:,.1f}%"
 
             def _fmt_yoy_pct(v):
                 return format_delta_text(v) if v is not None else "-"
@@ -4730,6 +4730,14 @@ if side["page"].startswith("10."):
                 )
                 st.markdown(render_next_month_target_table(_nm_result, _nm_next_month), unsafe_allow_html=True)
                 st.caption(f"ℹ️ 주차별 배분은 {_nm_ref_year}년 {_nm_next_month}월의 주차별 실적 비중을 목표 총액에 그대로 적용한 값이에요 (단위: 백만원).")
+                _nm_excel_bytes = build_next_month_target_excel(_nm_result, _nm_ref_year, _nm_next_month, _nm_next_year)
+                st.download_button(
+                    "⬇️ 엑셀 다운로드",
+                    data=_nm_excel_bytes,
+                    file_name=f"{_nm_next_year}년_{_nm_next_month}월_목표수립.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key=f"nm_target_excel_{_nm_next_year}_{_nm_next_month}",
+                )
             else:
                 st.info(f"{_nm_ref_year}년 {_nm_next_month}월 데이터가 없어서 목표를 계산할 수 없어요.")
 

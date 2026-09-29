@@ -1409,7 +1409,7 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
         days_until_sunday = 6 - cur.weekday()  # Mon=0 ... Sun=6
         chunk_end = min(cur + pd.Timedelta(days=days_until_sunday), month_end)
         chunk = s[(s.index >= cur) & (s.index <= chunk_end)]
-        weeks_raw.append((week_num, chunk.sum(), chunk.size))
+        weeks_raw.append((week_num, chunk.sum(), chunk.size, cur, chunk_end))
         cur = chunk_end + pd.Timedelta(days=1)
         week_num += 1
     if not weeks_raw:
@@ -1419,7 +1419,7 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     if prev_actual <= 0:
         return None
     target_gmv = prev_actual * (1 + target_pct / 100)
-    weeks = [(wn, v / prev_actual * target_gmv, c) for wn, v, c in weeks_raw]
+    weeks = [(wn, v / prev_actual * target_gmv, c, start, end) for wn, v, c, start, end in weeks_raw]
 
     ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
     if not df_category.empty and "브랜드" in df_category.columns:
@@ -1444,19 +1444,27 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
 
 
 def render_next_month_target_table(result, next_month):
-    """compute_next_month_target() 결과의 주차별 배분을 표(거래액/일평균, 단위 백만원)로."""
+    """compute_next_month_target() 결과의 주차별 배분을 표(거래액/일평균, 단위 백만원)로.
+    헤더에 그 주차의 실제 대상 일자 구간(예: 10/1~10/5)도 괄호로 같이 보여준다."""
     weeks = result["weeks"]
-    total_sum = sum(v for _, v, _ in weeks)
-    total_cnt = sum(c for _, _, c in weeks)
+    total_sum = sum(v for _, v, _, _, _ in weeks)
+    total_cnt = sum(c for _, _, c, _, _ in weeks)
 
     def _eok_m(v):
         return f"{v / 1_000_000:,.0f}"
 
-    header_cells = "".join(f"<th style='text-align:right;'>{next_month}월 {wn}주차</th>" for wn, _, _ in weeks)
+    def _date_range(start, end):
+        return f"{start.month}/{start.day}~{end.month}/{end.day}"
+
+    header_cells = "".join(
+        f"<th style='text-align:right;'>{next_month}월 {wn}주차<br>"
+        f"<span style='font-weight:400;color:#9ca3af;font-size:0.72rem;'>({_date_range(start, end)})</span></th>"
+        for wn, _, _, start, end in weeks
+    )
     header_cells += "<th style='text-align:right;font-weight:700;'>TOTAL</th>"
-    gmv_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v)}</td>" for _, v, _ in weeks)
+    gmv_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v)}</td>" for _, v, _, _, _ in weeks)
     gmv_cells += f"<td style='text-align:right;font-weight:700;'>{_eok_m(total_sum)}</td>"
-    avg_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v / c) if c else '-'}</td>" for _, v, c in weeks)
+    avg_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v / c) if c else '-'}</td>" for _, v, c, _, _ in weeks)
     avg_cells += f"<td style='text-align:right;font-weight:700;'>{_eok_m(total_sum / total_cnt) if total_cnt else '-'}</td>"
 
     return (
@@ -1466,6 +1474,75 @@ def render_next_month_target_table(result, next_month):
         f"<tr><td class='m'>일평균</td>{avg_cells}</tr>"
         "</tbody></table></div>"
     )
+
+
+def build_next_month_target_excel(result, ref_year, next_month, next_year):
+    """compute_next_month_target() 결과(요약 3줄 + 주차별 배분표)를 엑셀 bytes로."""
+    from openpyxl import Workbook
+    from openpyxl.styles import Font, PatternFill, Alignment
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = f"{next_year}년 {next_month}월 목표"
+    HEADER_FILL = PatternFill("solid", fgColor="D9D9D9")
+    TOTAL_FILL = PatternFill("solid", fgColor="EAEAEA")
+    BOLD = Font(bold=True)
+
+    ws.cell(row=1, column=1, value=f"{next_year}년 {next_month}월 목표 수립").font = Font(bold=True, size=13)
+
+    ff_note = ""
+    if result["ff_prev"]:
+        ff_note = f" / 핏플랍 거래액 : {result['ff_prev'] / 1e8:.1f}억 (핏플랍 제외 시, {result['prev_ex_ff'] / 1e8:.1f}억)"
+    ws.cell(row=2, column=1, value=f"- {ref_year}년 {next_month}월 마감 {result['prev_actual'] / 1e8:.1f}억{ff_note}")
+
+    ex_ff_note = ""
+    if result["ff_prev"]:
+        ex_ff_note = f" / 핏플랍 제외 시, 전년비 {result['ex_ff_yoy_pct']:+.1f}%" if result["ex_ff_yoy_pct"] is not None else " / 핏플랍 제외 시, 전년비 -"
+    ws.cell(
+        row=3, column=1,
+        value=f"- {next_year}년 {next_month}월 목표 {result['target_gmv'] / 1e8:.1f}억 (전년비 {result['yoy_pct']:+.1f}%){ex_ff_note}",
+    )
+
+    header_row = 5
+    ws.cell(row=header_row, column=1, value="구분").fill = HEADER_FILL
+    ws.cell(row=header_row, column=1).font = BOLD
+    weeks = result["weeks"]
+    for i, (wn, _, _, start, end) in enumerate(weeks, start=2):
+        c = ws.cell(row=header_row, column=i, value=f"{next_month}월 {wn}주차\n({start.month}/{start.day}~{end.month}/{end.day})")
+        c.fill = HEADER_FILL
+        c.font = BOLD
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    _total_col = len(weeks) + 2
+    c = ws.cell(row=header_row, column=_total_col, value="TOTAL")
+    c.fill = HEADER_FILL
+    c.font = BOLD
+    c.alignment = Alignment(horizontal="center")
+
+    total_sum = sum(v for _, v, _, _, _ in weeks)
+    total_cnt = sum(cnt for _, _, cnt, _, _ in weeks)
+    ws.cell(row=header_row + 1, column=1, value="거래액").font = BOLD
+    for i, (_, v, _, _, _) in enumerate(weeks, start=2):
+        ws.cell(row=header_row + 1, column=i, value=round(v)).number_format = "#,##0"
+    tc = ws.cell(row=header_row + 1, column=_total_col, value=round(total_sum))
+    tc.number_format = "#,##0"
+    tc.font, tc.fill = BOLD, TOTAL_FILL
+
+    ws.cell(row=header_row + 2, column=1, value="일평균").font = BOLD
+    for i, (_, v, cnt, _, _) in enumerate(weeks, start=2):
+        ws.cell(row=header_row + 2, column=i, value=round(v / cnt) if cnt else None).number_format = "#,##0"
+    tc2 = ws.cell(row=header_row + 2, column=_total_col, value=round(total_sum / total_cnt) if total_cnt else None)
+    tc2.number_format = "#,##0"
+    tc2.font, tc2.fill = BOLD, TOTAL_FILL
+
+    ws.column_dimensions["A"].width = 12
+    for i in range(2, _total_col + 1):
+        ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 14
+    ws.row_dimensions[header_row].height = 30
+    ws.freeze_panes = "B6"
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
 
 
 def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
