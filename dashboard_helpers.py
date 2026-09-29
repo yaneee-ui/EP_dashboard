@@ -1386,25 +1386,34 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     목표 총액에 적용한다(주차마다 성수기 굴곡이 있어서 균등배분보다 실제 패턴을 따르는
     게 더 현실적인 주차별 목표가 됨). target_pct=0이면 목표=작년 실적 그대로가 되므로,
     별도 분기 없이 항상 이 함수 하나로 '참고표(0%)'와 '목표표(N%)'를 둘 다 표현한다.
-    주차 경계는 대시보드 전체가 쓰는 규칙(week_of_month/effective_month_of_week, 월~일
-    기준)과 동일하게 맞춘다. 데이터가 없으면 None."""
+
+    주차 경계는 대시보드 다른 곳의 week_of_month(연간 연속 월~일 그리드)와 다르게, 이
+    표는 '그 달 1일부터 시작해서 일요일 단위로 자르고 말일까지 전부 담는' 달력월 전용
+    경계를 쓴다 — 목표 수립은 그 달 1일~말일 매출이 하나도 안 빠지고 옆 달로도 안 새는
+    게 중요해서(예: 연간 그리드로는 10월 1~5일이 9월 마지막 주로 빠지고, 10월 마지막
+    주는 11월 1~2일까지 걸쳐 들어가 버림), 이 표에서만 별도로 계산한다. 1주차는 1일부터
+    그 주 일요일까지(짧을 수 있음), 마지막 주차는 그 전 월요일부터 말일까지(역시 짧을
+    수 있음)로 자른다. 데이터가 없으면 None."""
     s = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
     if s.empty:
         return None
     s = s.set_index("날짜")["거래액"].sort_index()
-    weekly_sum = s.resample("W-SUN").sum()
-    weekly_sum.index = weekly_sum.index - pd.Timedelta(days=6)
-    weekly_cnt = s.resample("W-SUN").count()
-    weekly_cnt.index = weekly_cnt.index - pd.Timedelta(days=6)
+
+    month_start = pd.Timestamp(ref_year, next_month, 1)
+    month_end = (month_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
 
     weeks_raw = []
-    for mon in weekly_sum.index:
-        eff = effective_month_of_week(mon)
-        if eff.year == ref_year and eff.month == next_month:
-            weeks_raw.append((week_of_month(mon), weekly_sum[mon], weekly_cnt[mon]))
+    cur = month_start
+    week_num = 1
+    while cur <= month_end:
+        days_until_sunday = 6 - cur.weekday()  # Mon=0 ... Sun=6
+        chunk_end = min(cur + pd.Timedelta(days=days_until_sunday), month_end)
+        chunk = s[(s.index >= cur) & (s.index <= chunk_end)]
+        weeks_raw.append((week_num, chunk.sum(), chunk.size))
+        cur = chunk_end + pd.Timedelta(days=1)
+        week_num += 1
     if not weeks_raw:
         return None
-    weeks_raw.sort(key=lambda x: x[0])
 
     prev_actual = sum(w[1] for w in weeks_raw)
     if prev_actual <= 0:
