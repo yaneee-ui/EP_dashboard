@@ -1380,6 +1380,52 @@ def generate_forecast_report_insight(df_traffic, df_category, df_coupon_daily, f
     return [{"title": f"{cm}월 실적 리포트", "body": f"{_line1}<br>{_line2}{_line3}"}]
 
 
+def render_next_month_target_prep_table(df_traffic, ref_year, ref_month):
+    """담달 목표 수립용 참고표. 아직 안 지난 달의 목표를 정할 때 작년 같은 달이 주차별로
+    어떻게 흘러갔는지(페이스) 참고할 수 있게 주차별 거래액/일평균을 보여준다. 목표 숫자와
+    캠페인 계획 자체는 사람이 정하는 영역이라 자동 생성하지 않고, 그 판단에 쓸 실적
+    구조(몇 주차까지 있는지, 주차별 페이스)만 계산해서 준다. 주차 경계는 대시보드 전체가
+    쓰는 규칙(week_of_month/effective_month_of_week, 월~일 기준)과 동일하게 맞춘다."""
+    s = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")]
+    if s.empty:
+        return None
+    s = s.set_index("날짜")["거래액"].sort_index()
+    weekly_sum = s.resample("W-SUN").sum()
+    weekly_sum.index = weekly_sum.index - pd.Timedelta(days=6)
+    weekly_cnt = s.resample("W-SUN").count()
+    weekly_cnt.index = weekly_cnt.index - pd.Timedelta(days=6)
+
+    weeks = []
+    for mon in weekly_sum.index:
+        eff = effective_month_of_week(mon)
+        if eff.year == ref_year and eff.month == ref_month:
+            weeks.append((week_of_month(mon), weekly_sum[mon], weekly_cnt[mon]))
+    if not weeks:
+        return None
+    weeks.sort(key=lambda x: x[0])
+
+    total_sum = sum(w[1] for w in weeks)
+    total_cnt = sum(w[2] for w in weeks)
+
+    def _eok_m(v):  # 백만원 단위(예시 표와 동일 스케일)
+        return f"{v / 1_000_000:,.0f}"
+
+    header_cells = "".join(f"<th style='text-align:right;'>{ref_month}월 {wn}주차</th>" for wn, _, _ in weeks)
+    header_cells += "<th style='text-align:right;font-weight:700;'>TOTAL</th>"
+    gmv_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v)}</td>" for _, v, _ in weeks)
+    gmv_cells += f"<td style='text-align:right;font-weight:700;'>{_eok_m(total_sum)}</td>"
+    avg_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v / c) if c else '-'}</td>" for _, v, c in weeks)
+    avg_cells += f"<td style='text-align:right;font-weight:700;'>{_eok_m(total_sum / total_cnt) if total_cnt else '-'}</td>"
+
+    return (
+        "<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>"
+        f"<th>구분</th>{header_cells}</tr></thead><tbody>"
+        f"<tr><td class='m'>거래액</td>{gmv_cells}</tr>"
+        f"<tr><td class='m'>일평균</td>{avg_cells}</tr>"
+        "</tbody></table></div>"
+    )
+
+
 def generate_category_page_insights(cat_payload, cfg, cat_movers=None):
     """2번(카테고리 실적 요약) 페이지 전용 규칙 기반 인사이트. cat_payload는 KPI 카드용
     {"name","value","prev_delta","yoy_delta"} 리스트, cat_movers는 카테고리별

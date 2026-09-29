@@ -39,6 +39,7 @@ from dashboard_helpers import (
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
+    render_next_month_target_prep_table,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -4678,6 +4679,25 @@ if side["page"].startswith("10."):
             st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
         else:
             st.info("EP채널 데이터가 없어서 전시상품수는 건너뛰었어요 (사이드바에서 ep_data_long.csv를 업로드하면 나와요).")
+
+        # --- 담달 목표 수립 (참고용) ---
+        # 목표 숫자·캠페인 계획은 사람이 정하는 영역이라 자동으로 채우지 않고, 그 판단에
+        # 참고할 '작년 같은 달이 주차별로 어떻게 흘러갔는지' 표만 우선 제공한다.
+        if _fc_cur_month_num is not None:
+            st.markdown("---")
+            _nm_next_month = _fc_cur_month_num + 1
+            _nm_next_year = forecast_year
+            if _nm_next_month > 12:
+                _nm_next_month = 1
+                _nm_next_year += 1
+            _nm_ref_year = _nm_next_year - 1
+            st.markdown(f"### 🎯 {_nm_next_year % 100}년 {_nm_next_month}월 목표 수립")
+            _nm_table = render_next_month_target_prep_table(df_traffic, _nm_ref_year, _nm_next_month)
+            if _nm_table:
+                st.caption(f"참고: {_nm_ref_year}년 {_nm_next_month}월 주차별 실적 (단위: 백만원)")
+                st.markdown(_nm_table, unsafe_allow_html=True)
+            else:
+                st.info(f"{_nm_ref_year}년 {_nm_next_month}월 데이터가 없어서 참고표를 건너뛰었어요.")
 
 
 # ============================================================
