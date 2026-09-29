@@ -521,17 +521,18 @@ def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_c
         columns={COL_DATE: "날짜", COL_BPU: "BPU"}
     )
     _sections = [
-        ("거래액", df_traffic, "거래액", None, False, False),
-        ("비용", df_coupon_daily, "쿠폰할인", None, False, False),
-        ("트래픽", df_traffic, "트래픽", None, False, False),
-        ("구매객수", df_traffic, "구매객수", None, False, False),
-        ("객단가", df_traffic, "거래액", "구매객수", True, False),
-        ("구매전환율(CR)", df_traffic, "구매객수", "트래픽", True, True),
-        ("전시상품수", _ep_scope, "평균 EP 전시 상품수", None, False, False),
+        ("거래액", df_traffic, "거래액", None, False, False, "sum"),
+        ("비용", df_coupon_daily, "쿠폰할인", None, False, False, "sum"),
+        ("트래픽", df_traffic, "트래픽", None, False, False, "sum"),
+        ("구매객수", df_traffic, "구매객수", None, False, False, "sum"),
+        ("객단가", df_traffic, "거래액", "구매객수", True, False, "sum"),
+        ("구매전환율(CR)", df_traffic, "구매객수", "트래픽", True, True, "sum"),
+        # 전시상품수는 스냅샷 지표라 화면 표(마감 예상 실적 페이지)와 동일하게 항상 평균으로.
+        ("전시상품수 (평균)", _ep_scope, "평균 EP 전시 상품수", None, False, False, "avg"),
     ]
 
     row_idx = 1
-    for label, src_df, num_col, den_col, is_ratio, is_pct in _sections:
+    for label, src_df, num_col, den_col, is_ratio, is_pct, agg in _sections:
         ws.cell(row=row_idx, column=1, value=label).font = SECTION_FONT
         row_idx += 1
         header = ["구분"] + [f"{m}월" for m in range(1, 13)] + ["합계"]
@@ -550,10 +551,10 @@ def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_c
             row_idx += 2
             continue
 
-        _cur_tbl = build_forecast_table(src_df, label, num_col, den_col, forecast_year, is_ratio=is_ratio, ratio_scale=100 if is_pct else 1.0)
+        _cur_tbl = build_forecast_table(src_df, label, num_col, den_col, forecast_year, is_ratio=is_ratio, ratio_scale=100 if is_pct else 1.0, agg=agg)
         _prev_tbl = None
         if fc_cur_month_num:
-            _prev_tbl = build_forecast_table(src_df, label, num_col, den_col, forecast_year - 1, is_ratio=is_ratio, ratio_scale=100 if is_pct else 1.0)
+            _prev_tbl = build_forecast_table(src_df, label, num_col, den_col, forecast_year - 1, is_ratio=is_ratio, ratio_scale=100 if is_pct else 1.0, agg=agg)
 
         for row_name in FORECAST_BPU_ROWS.keys():
             ws.cell(row=row_idx, column=1, value=row_name)
