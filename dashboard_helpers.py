@@ -379,6 +379,13 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
                 _ordered = [_by_cat[c] for c in _bv_order if c in _by_cat] + [
                     r for r in _m_rows if r["카테고리"] not in _bv_order
                 ]
+            # 전년(작년) 값이 없는 카테고리(신규 입점 등)는 전년비 비교 자체가 의미 없는데
+            # 알파벳 순서에 섞여 들어가면 눈에 띄어서 보기 불편하다는 피드백 — 같은 BPU
+            # 안에서 맨 아래로 뺀다. '전체' 합계 행(맨 위 고정)은 그대로 두고 나머지만 재배치.
+            _total_row = [r for r in _ordered if r["카테고리"] == "전체"]
+            _rest_rows = [r for r in _ordered if r["카테고리"] != "전체"]
+            _rest_rows = sorted(_rest_rows, key=lambda r: r.get("yoy_value") is None)
+            _ordered = _total_row + _rest_rows
             for r in _ordered:
                 rows.append({
                     "BPU": bv, "카테고리": r["카테고리"],
