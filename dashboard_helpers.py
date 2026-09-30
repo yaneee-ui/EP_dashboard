@@ -654,6 +654,8 @@ def compute_bpu_comparison_rows(df_traffic, unit="일별", selected_period_date=
         ("거래액", "회원", "회원거래액", False),
         ("트래픽", "신규", "신규UV", False),
         ("거래액", "신규", "신규거래액", False),
+        ("트래픽", "기존", "기존UV", False),
+        ("거래액", "기존", "기존거래액", False),
     ]
     SUMMABLE_METRICS = {"트래픽", "거래액", "구매객수"}
     cfg = UNIT_CONFIG[unit]
