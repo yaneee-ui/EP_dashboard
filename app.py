@@ -2192,23 +2192,22 @@ if side["page"].startswith("2."):
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # --- 브랜드별 거래액 랭킹 ---
-        # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만
-        # (브랜드 레벨 데이터는 세그먼트=전체만 존재하므로 cat_bpu_df_all_seg 사용)
+        # 카테고리='전체'면 전체 브랜드 랭킹, 특정 카테고리 선택시 그 카테고리 안의 브랜드만.
+        # 예전엔 "브랜드 레벨 데이터는 세그먼트=전체만 존재한다"는 가정으로 cat_bpu_df_all_seg
+        # (세그먼트 필터 적용 전 원본)를 썼는데, 실제로는 브랜드 레벨에도 회원/비회원/신규/
+        # 기존 데이터가 다 있어서(카테고리 도넛과 똑같이) 상단 라디오가 이 표에만 안 먹히는
+        # 문제가 있었음 — cat_bpu_df(이미 cat_segment로 필터링됨)로 바꿔서 통일.
         if selected_cat == "전체":
-            _brand_share_df = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == "전체") & (cat_bpu_df_all_seg["브랜드"] != "전체")]
+            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] != "전체")]
             _brand_subtitle = f"{bpu} · 전체 카테고리 기준"
         else:
-            _brand_share_df = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] != "전체")]
+            _brand_share_df = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] != "전체")]
             _brand_subtitle = f"{bpu} · {selected_cat} 카테고리 기준"
-        if _has_segment:
-            _brand_share_df = _brand_share_df[_brand_share_df["회원구분"] == "전체"]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _brand_share_df = _brand_share_df.groupby(["날짜", "브랜드"], as_index=False)["거래액"].sum()
 
         # 진짜 전체값(선택한 카테고리 범위 기준, 브랜드=전체) — 브랜드 합산이 아니라 이걸로 중앙에 표시
-        _official_brand_scope_df = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] == "전체")]
-        if _has_segment:
-            _official_brand_scope_df = _official_brand_scope_df[_official_brand_scope_df["회원구분"] == "전체"]
+        _official_brand_scope_df = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == "전체")]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _official_brand_scope_df = _official_brand_scope_df.groupby("날짜", as_index=False)["거래액"].sum()
         _official_brand_total = compute_official_total(_official_brand_scope_df, unit, selected_period_date)
@@ -2266,19 +2265,16 @@ if side["page"].startswith("2."):
 
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
-        # --- 브랜드별 트래픽 랭킹 (거래액 랭킹과 동일 로직, 지표만 트래픽) ---
+        # --- 브랜드별 트래픽 랭킹 (거래액 랭킹과 동일 로직, 지표만 트래픽 — 세그먼트도
+        # 위 거래액 랭킹과 같은 이유로 cat_bpu_df 사용) ---
         if selected_cat == "전체":
-            _brand_share_df_traffic = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == "전체") & (cat_bpu_df_all_seg["브랜드"] != "전체")]
+            _brand_share_df_traffic = cat_bpu_df[(cat_bpu_df["카테고리"] == "전체") & (cat_bpu_df["브랜드"] != "전체")]
         else:
-            _brand_share_df_traffic = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] != "전체")]
-        if _has_segment:
-            _brand_share_df_traffic = _brand_share_df_traffic[_brand_share_df_traffic["회원구분"] == "전체"]
+            _brand_share_df_traffic = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] != "전체")]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _brand_share_df_traffic = _brand_share_df_traffic.groupby(["날짜", "브랜드"], as_index=False)["트래픽"].sum()
 
-        _official_brand_scope_df_traffic = cat_bpu_df_all_seg[(cat_bpu_df_all_seg["카테고리"] == selected_cat) & (cat_bpu_df_all_seg["브랜드"] == "전체")]
-        if _has_segment:
-            _official_brand_scope_df_traffic = _official_brand_scope_df_traffic[_official_brand_scope_df_traffic["회원구분"] == "전체"]
+        _official_brand_scope_df_traffic = cat_bpu_df[(cat_bpu_df["카테고리"] == selected_cat) & (cat_bpu_df["브랜드"] == "전체")]
         if bpu == "Total" or bpu in BPU_GROUPS:
             _official_brand_scope_df_traffic = _official_brand_scope_df_traffic.groupby("날짜", as_index=False)["트래픽"].sum()
         _official_brand_total_traffic = compute_official_total(_official_brand_scope_df_traffic, unit, selected_period_date, metric_col="트래픽")
