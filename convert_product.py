@@ -1,5 +1,9 @@
 """ep_product.csv (사내 원본, 상품코드별 거래액 raw)를 대시보드가 쓰는
-표준 컬럼(날짜/BPU/카테고리/브랜드/상품코드/상품명/거래액/구매건수)으로 변환.
+표준 컬럼(날짜/BPU/카테고리/브랜드/상품코드/상품명/신규여부/거래액/구매건수)으로 변환.
+
+신규여부(Y/N, 원본 컬럼명 "당년신규여부")는 2026-10-02부터 원본에 추가된 필드 —
+카테고리/브랜드 레벨의 회원구분(신규/기존)과 같은 개념을 상품(SKU) 레벨에서도 구분할
+수 있게 해준다. 회원/비회원 구분은 상품 데이터에 없으므로 신규/기존 둘만 가능.
 
 원본은 두 형식을 다 지원한다 (ep_product_raw.xlsx가 있으면 그걸 우선 쓰고, 없으면
 ep_product_raw.csv를 예전 형식으로 읽는다):
@@ -53,6 +57,7 @@ df = df.rename(columns={
     "영업상품카테고리명": "카테고리",
     "SAP대표브랜드코드": "브랜드",
     "주문수량": "구매건수",
+    "당년신규여부": "신규여부",
 })
 
 df = df[df["BPU"].isin(KEEP_BPU)].copy()
@@ -67,8 +72,10 @@ df["거래액"] = pd.to_numeric(
 df["구매건수"] = pd.to_numeric(
     df["구매건수"].astype(str).str.replace(",", "", regex=False), errors="coerce"
 ).round().astype("int64")
+if "신규여부" not in df.columns:
+    df["신규여부"] = pd.NA
 
-out_df = df[["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "거래액", "구매건수"]]
+out_df = df[["날짜", "BPU", "카테고리", "브랜드", "상품코드", "상품명", "신규여부", "거래액", "구매건수"]]
 out_df = out_df.sort_values("날짜").reset_index(drop=True)
 
 cutoff = pd.Timestamp(ARCHIVE_CUTOFF)

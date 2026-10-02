@@ -2236,11 +2236,25 @@ if side["page"].startswith("2."):
             if selected_cat != "전체":
                 _prod_df = _prod_df[_prod_df["카테고리"] == selected_cat]
 
+            # 상품(SKU) 데이터는 신규여부(Y/N)만 있고 회원/비회원 구분은 없음 —
+            # 신규/기존 선택 시에만 상단 라디오(cat_segment)를 따라가고, 회원/비회원은
+            # 걸러줄 방법이 없어서 전체 상품을 보여주되 안내 문구로 한계를 밝힌다.
+            _prod_seg_note = None
+            if cat_segment == "신규":
+                _prod_df = _prod_df[_prod_df["신규여부"] == "Y"]
+            elif cat_segment == "기존":
+                _prod_df = _prod_df[_prod_df["신규여부"] == "N"]
+            elif cat_segment in ("회원", "비회원"):
+                _prod_seg_note = f"ℹ️ 상품 데이터는 회원/비회원 구분이 없어서 '{cat_segment}' 대신 전체 기준으로 표시했어요 (신규/기존 선택 시에는 구분 가능)."
+
             _prod_title = "카테고리별 상위 상품 (거래액)" if selected_cat == "전체" else f"{selected_cat} 상위 상품 (거래액)"
+            _prod_subtitle = _brand_subtitle if cat_segment == "전체" else f"{_brand_subtitle} · {cat_segment}"
             render_top_products(
-                _prod_df, unit, selected_period_date, _prod_title, _brand_subtitle,
+                _prod_df, unit, selected_period_date, _prod_title, _prod_subtitle,
                 brand_label=brand_label,
             )
+            if _prod_seg_note:
+                st.caption(_prod_seg_note)
 
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
