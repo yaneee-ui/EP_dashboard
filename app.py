@@ -11,7 +11,7 @@ import io
 
 from data_loader import (
     load_data, load_traffic_data, load_category_data, load_product_data, load_brand_names,
-    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail,
+    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily,
 )
 from ai_insights import (
     render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
@@ -40,6 +40,7 @@ from dashboard_helpers import (
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
+    compute_total_monthly_trend, render_total_monthly_trend_html, build_total_monthly_trend_excel,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -69,6 +70,7 @@ df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
 df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
 df_product = load_product_data()  # 상품(SKU)별 거래액 데이터 (카테고리별 상위 상품 랭킹용)
+df_total_daily = load_total_daily()  # 전사 vs EP 일자별 트래픽/거래액 (월별 실적 추이용)
 df_coupon_daily = load_coupon_daily()  # 쿠폰명별 일자별 상세 할인 데이터 (BPU: e-영업1~4)
 df_coupon = build_coupon_monthly(df_coupon_daily)  # 월별 BPU 집계(Total/자사/입점/e-영업1~4) - daily에서 파생
 df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)  # 월별 쿠폰명별 상세 - daily에서 파생
@@ -4043,6 +4045,29 @@ if side["page"].startswith("11."):
                 render_insight_panel([{"title": "① 최근 주차 실적은?", "body": _wk4_body}])
         except Exception:
             pass
+
+        # ------------------------------------------------------------
+        # 월별 실적 추이 (전체 vs EP) — 전체실적 원본(1_전체실적.xlsx) 기반
+        # ------------------------------------------------------------
+        st.markdown("---")
+        st.markdown("#### 📈 월별 실적 추이 (전체 vs EP)")
+        if df_total_daily.empty:
+            st.info("전체실적 데이터(ep_total_daily.csv)가 없어요. 1_전체실적.xlsx를 올린 뒤 convert_total.py를 실행해주세요.")
+        else:
+            _tt = compute_total_monthly_trend(df_total_daily)
+            st.caption(
+                f"기준일 {_tt['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원(일평균) · 진행 중인 {_tt['cur_month']}월은 "
+                "올해 1일~기준일 vs 작년 동요일(364일 전) 동일 일수, 그 외 달은 달력 월 전체 · "
+                "트래픽당 거래액은 거래액 합계/트래픽 합계"
+            )
+            st.download_button(
+                "⬇️ 월별 실적 추이 엑셀 다운로드",
+                data=build_total_monthly_trend_excel(_tt),
+                file_name=f"월별실적추이_{_tt['ref'].strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="total_trend_dl",
+            )
+            render_total_monthly_trend_html(_tt)
 
 
 # ============================================================

@@ -2902,3 +2902,249 @@ def build_event_comparison_excel(result, label_a="작년", label_b="올해"):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ============================================================
+# 월별 실적 추이 (전체 vs EP) — 1_전체실적.xlsx 기반 (ep_total_daily.csv)
+# ============================================================
+def compute_total_monthly_trend(df_total):
+    """전사(전체) vs EP 월별 일평균 거래액/트래픽/트래픽당 거래액 + 전년비.
+
+    기준일 = 데이터 마지막 날짜. 진행 중인 달은 올해 1일~기준일, 작년은 같은 요일
+    기준(364일 전) 동일 일수로 비교한다 (그 외 달은 달력 월 전체). 트래픽당 거래액은
+    일평균의 비율이 아니라 합계/합계로 계산(비율 지표 단순평균 금지 원칙)."""
+    d = df_total.copy()
+    d["날짜"] = pd.to_datetime(d["날짜"])
+    ref = d["날짜"].max()
+    cur_y, cur_m = ref.year, ref.month
+    cur_days = pd.date_range(ref.replace(day=1), ref)
+    prev_days = pd.DatetimeIndex([x - pd.Timedelta(days=364) for x in cur_days])
+
+    def _agg(days):
+        sub = d[d["날짜"].isin(days)]
+        out = {}
+        for ch in ["전체", "EP"]:
+            s = sub[sub["채널"] == ch]
+            out[ch] = {"gmv": float(s["거래액"].sum()), "tr": float(s["트래픽"].sum()), "n": int(s["날짜"].nunique())}
+        return out if out["전체"]["n"] > 0 else None
+
+    def _fmt_rng(days):
+        return f"{days.min().month}/{days.min().day}~{days.max().month}/{days.max().day}"
+
+    years = {}
+    for y in (cur_y - 1, cur_y):
+        months = {}
+        for m in range(1, 13):
+            if y == cur_y and m > cur_m:
+                months[m] = None
+                continue
+            if m == cur_m and y == cur_y:
+                days, label = cur_days, _fmt_rng(cur_days)
+            elif m == cur_m and y == cur_y - 1:
+                days, label = prev_days, _fmt_rng(prev_days)
+            else:
+                days = pd.date_range(pd.Timestamp(y, m, 1), pd.Timestamp(y, m, 1) + pd.offsets.MonthEnd(0))
+                label = "마감" if (y < cur_y or m < cur_m) else ""
+            a = _agg(days)
+            if a:
+                a["label"] = label
+            months[m] = a
+        years[y] = months
+
+    def _metrics(a):
+        if not a:
+            return None
+        g, e, n = a["전체"], a["EP"], a["전체"]["n"]
+        return {
+            "gmv_all": g["gmv"] / n, "gmv_ep": e["gmv"] / n,
+            "tr_all": g["tr"] / n, "tr_ep": e["tr"] / n,
+            "gpt_all": g["gmv"] / g["tr"] if g["tr"] else None,
+            "gpt_ep": e["gmv"] / e["tr"] if e["tr"] else None,
+            "label": a["label"],
+        }
+
+    table = {y: {m: _metrics(a) for m, a in months.items()} for y, months in years.items()}
+    return {"ref": ref, "cur_year": cur_y, "cur_month": cur_m, "table": table}
+
+
+# (섹션, [(행 라벨, 값 키 or (분자,분모), 종류)]) — 화면/엑셀 공용 행 정의
+_TOTAL_TREND_BLOCKS = [
+    ("일평균\n거래액", [("전체", "gmv_all", "mm"), ("EP", "gmv_ep", "mm"), ("EP비중", ("gmv_ep", "gmv_all"), "pct")]),
+    ("일평균\n트래픽", [("전체", "tr_all", "int"), ("EP", "tr_ep", "int"), ("EP비중", ("tr_ep", "tr_all"), "pct")]),
+    ("트래픽당\n거래액", [("전체", "gpt_all", "int"), ("EP", "gpt_ep", "int")]),
+]
+
+
+def _trend_value(mt, key):
+    if mt is None:
+        return None
+    if isinstance(key, tuple):
+        a, b = mt.get(key[0]), mt.get(key[1])
+        return a / b if a is not None and b else None
+    return mt.get(key)
+
+
+def _trend_fmt(v, kind):
+    if v is None:
+        return ""
+    if kind == "mm":
+        return f"{v / 1e6:,.1f}"
+    if kind == "int":
+        return f"{v:,.0f}"
+    if kind == "pct":
+        return f"{v * 100:.0f}%"
+    return f"{v}"
+
+
+def _trend_yoy(cur, prev):
+    if cur is None or prev in (None, 0):
+        return None
+    return cur / prev - 1
+
+
+def render_total_monthly_trend_html(result):
+    """템플릿(월별 실적 추이) 양식 그대로 HTML 표 3개(작년/올해/전년비)로 렌더링."""
+    tbl, cur_m, cur_y = result["table"], result["cur_month"], result["cur_year"]
+    th = "padding:3px 5px;border:1px solid #cbd5e1;text-align:center;font-size:0.76rem;"
+    td = "padding:3px 5px;border:1px solid #cbd5e1;text-align:right;font-size:0.78rem;"
+
+    def _col_style(m, base):
+        return base + ("background:#eff6ff;border-left:2px solid #2563eb;border-right:2px solid #2563eb;" if m == cur_m else "")
+
+    def _head(y):
+        cells = "".join(
+            f"<th style='{_col_style(m, th)}background:#f8fafc;'>"
+            f"<div style='font-size:0.62rem;color:#dc2626;font-weight:400;min-height:0.9rem;'>"
+            f"{tbl[y][m]['label'] if tbl[y][m] else ''}</div>{m}월</th>"
+            for m in range(1, 13)
+        )
+        return f"<tr><th colspan='2' style='{th}background:#f8fafc;'>구분</th>{cells}</tr>"
+
+    def _rows(y, yoy):
+        rows = [_head(y)]
+        for sec, lines in _TOTAL_TREND_BLOCKS:
+            if yoy:
+                lines = [ln for ln in lines if ln[2] != "pct"]
+            for i, (lab, key, kind) in enumerate(lines):
+                tds = ""
+                for m in range(1, 13):
+                    cell_style = _col_style(m, td) + ("font-weight:700;" if lab == "EP" else "")
+                    if yoy:
+                        r = _trend_yoy(_trend_value(tbl[cur_y][m], key), _trend_value(tbl[cur_y - 1][m], key))
+                        if r is None:
+                            txt = ""
+                        elif r < 0:
+                            txt, cell_style = f"△{abs(r) * 100:.0f}%", cell_style + "color:#dc2626;"
+                        else:
+                            txt = f"{r * 100:.0f}%"
+                    else:
+                        txt = _trend_fmt(_trend_value(tbl[y][m], key), kind)
+                        if lab == "EP":
+                            cell_style += "background:#fde047;" if (m == cur_m and y == cur_y) else "background:#fef9c3;"
+                    tds += f"<td style='{cell_style}'>{txt}</td>"
+                first = (f"<td rowspan='{len(lines)}' style='{th}white-space:pre-line;background:#fefce8;font-weight:600;'>{sec}</td>"
+                         if i == 0 else "")
+                rows.append(f"<tr>{first}<td style='{th}background:#fefce8;'>{lab}</td>{tds}</tr>")
+        return "".join(rows)
+
+    def _table(title, body):
+        return (f"<div style='font-weight:700;margin:14px 0 4px;'>{title}</div>"
+                f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;'>{body}</table></div>")
+
+    html = (_table(f"{cur_y - 1}년", _rows(cur_y - 1, False))
+            + _table(f"{cur_y}년", _rows(cur_y, False))
+            + _table("전년비", _rows(cur_y, True)))
+    st.markdown(html, unsafe_allow_html=True)
+
+
+def build_total_monthly_trend_excel(result):
+    """월별 실적 추이를 템플릿과 같은 배치(작년/올해/전년비 3블록)로 엑셀 저장."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    tbl, cur_m, cur_y = result["table"], result["cur_month"], result["cur_year"]
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "월별 실적 추이"
+    thin = Side(style="thin", color="CBD5E1")
+    blue = Side(style="medium", color="2563EB")
+    f_head = PatternFill("solid", fgColor="F8FAFC")
+    f_lab = PatternFill("solid", fgColor="FEFCE8")
+    f_ep = PatternFill("solid", fgColor="FEF9C3")
+    f_cur_ep = PatternFill("solid", fgColor="FDE047")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
+
+    ws.cell(row=1, column=1, value="□ 월별 실적 추이").font = Font(bold=True, size=12)
+
+    def _border(col):
+        if col >= 3 and col - 2 == cur_m:
+            return Border(left=blue, right=blue, top=thin, bottom=thin)
+        return Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    def _header(y, row):
+        ws.cell(row=row, column=1, value=f"{y}년").font = Font(bold=True)
+        row += 1
+        ws.cell(row=row, column=1, value="구분")
+        ws.merge_cells(start_row=row, start_column=1, end_row=row, end_column=2)
+        for m in range(1, 13):
+            mt = tbl[y][m]
+            lab = mt["label"] if mt else ""
+            ws.cell(row=row, column=2 + m, value=(f"{lab}\n{m}월" if lab else f"{m}월"))
+        for col in range(1, 15):
+            c = ws.cell(row=row, column=col)
+            c.alignment, c.fill, c.border, c.font = center, f_head, _border(col), Font(bold=True)
+        ws.row_dimensions[row].height = 30
+        return row + 1
+
+    def _body(y, row, yoy=False):
+        for sec, lines in _TOTAL_TREND_BLOCKS:
+            if yoy:
+                lines = [ln for ln in lines if ln[2] != "pct"]
+            top = row
+            for lab, key, kind in lines:
+                ws.cell(row=row, column=2, value=lab)
+                for col in (1, 2):
+                    ws.cell(row=row, column=col).alignment = center
+                    ws.cell(row=row, column=col).fill = f_lab
+                    ws.cell(row=row, column=col).border = _border(col)
+                for m in range(1, 13):
+                    c = ws.cell(row=row, column=2 + m)
+                    c.alignment, c.border = right, _border(2 + m)
+                    bold, color = lab == "EP", None
+                    if yoy:
+                        r = _trend_yoy(_trend_value(tbl[cur_y][m], key), _trend_value(tbl[cur_y - 1][m], key))
+                        if r is not None:
+                            c.value = r
+                            c.number_format = '0%;"△"0%'
+                            color = "DC2626" if r < 0 else None
+                    else:
+                        v = _trend_value(tbl[y][m], key)
+                        if v is not None:
+                            c.value = v / 1e6 if kind == "mm" else v
+                            c.number_format = {"mm": "#,##0.0", "int": "#,##0", "pct": "0%"}[kind]
+                        if lab == "EP":
+                            c.fill = f_cur_ep if (m == cur_m and y == cur_y) else f_ep
+                    c.font = Font(bold=bold, color=color)
+                row += 1
+            ws.cell(row=top, column=1, value=sec).font = Font(bold=True)
+            if len(lines) > 1:
+                ws.merge_cells(start_row=top, start_column=1, end_row=row - 1, end_column=1)
+        return row
+
+    row = 3
+    for y in (cur_y - 1, cur_y):
+        row = _body(y, _header(y, row)) + 1
+    ws.cell(row=row, column=1, value="전년비").font = Font(bold=True)
+    row = _body(cur_y, _header(cur_y, row + 1), yoy=True)
+
+    ws.column_dimensions["A"].width = 10
+    ws.column_dimensions["B"].width = 9
+    for col in range(3, 15):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 11
+    ws.cell(row=row + 1, column=1,
+            value="※ 거래액 단위: 백만원(일평균) · 트래픽당 거래액 = 거래액 합계/트래픽 합계 · 진행 중인 달은 작년 동요일(364일 전) 동일 일수 기준").font = Font(color="6B7280", size=9)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

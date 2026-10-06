@@ -331,6 +331,21 @@ def build_coupon_monthly_detail(df_daily: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values(["연월", "쿠폰유형", "쿠폰할인"], ascending=[True, True, False]).reset_index(drop=True)
 
 
+TOTAL_DAILY_PATH = "ep_total_daily.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_total_daily() -> pd.DataFrame:
+    """전사(전체) vs EP 일자별 트래픽/거래액 (1_전체실적.xlsx -> convert_total.py).
+    컬럼: 날짜, 채널(전체/EP), 트래픽, 거래액. 없으면 빈 DataFrame."""
+    import os
+    if not os.path.exists(TOTAL_DAILY_PATH):
+        return pd.DataFrame(columns=["날짜", "채널", "트래픽", "거래액"])
+    df = pd.read_csv(TOTAL_DAILY_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    return df.sort_values(["날짜", "채널"]).reset_index(drop=True)
+
+
 COUPON_DAILY_PATH = "ep_coupon_daily.csv"
 
 
