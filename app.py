@@ -42,6 +42,7 @@ from dashboard_helpers import (
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
     compute_total_monthly_trend, render_total_monthly_trend_html, build_total_monthly_trend_excel,
     compute_daily_compare, render_daily_compare_html, build_daily_compare_excel,
+    compute_daily_category_compare, render_daily_category_compare_html, build_daily_category_compare_excel,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -4069,6 +4070,31 @@ if side["page"].startswith("11."):
                 key="daily_cmp_dl",
             )
             render_daily_compare_html(_dc)
+
+            if not df_category.empty:
+                st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
+                st.markdown("**카테고리별 (정상 / 이월 / 입점)**")
+                _dcc = compute_daily_category_compare(df_category, _wk_cat_segment, _wk_ff_exclude)
+                st.caption(
+                    f"기준일 {_dcc['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원 · 세그먼트: {_wk_cat_segment}"
+                    + (" · 핏플랍 제외" if _wk_ff_exclude else "")
+                    + " (2번 페이지 설정 그대로) · 두 날짜 모두 실적이 없는 카테고리는 숨겨요 · "
+                    "트래픽은 카테고리 원본 기준이라 위 표(EP실적 기준)와 소폭 다를 수 있어요"
+                )
+                st.download_button(
+                    "⬇️ 카테고리별 일자 비교 엑셀 다운로드",
+                    data=build_daily_category_compare_excel(_dcc),
+                    file_name=f"카테고리별일자비교_{_dcc['ref'].strftime('%Y%m%d')}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="daily_cat_cmp_dl",
+                )
+                _dcc_l, _dcc_r = st.columns(2)
+                with _dcc_l:
+                    st.markdown("**거래액 (백만)**")
+                    st.markdown(render_daily_category_compare_html(_dcc, "거래액"), unsafe_allow_html=True)
+                with _dcc_r:
+                    st.markdown("**트래픽**")
+                    st.markdown(render_daily_category_compare_html(_dcc, "트래픽"), unsafe_allow_html=True)
 
         # ------------------------------------------------------------
         # 월별 실적 추이 (전체 vs EP) — 전체실적 원본(1_전체실적.xlsx) 기반

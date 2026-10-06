@@ -3315,3 +3315,155 @@ def build_daily_compare_excel(result):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ============================================================
+# 카테고리별 일자별 비교 (정상/이월/입점 x 카테고리, 기준일 포함 최근 2일)
+# ============================================================
+_DAILY_CAT_GROUPS = {"정상": ["e-영업1"], "이월": ["e-영업2"], "입점": ["e-영업3", "e-영업4"]}
+
+
+def compute_daily_category_compare(df_category, segment="전체", ff_exclude=False, ref_date=None, n_days=2):
+    """정상(e-영업1)/이월(e-영업2)/입점(e-영업3+4) 그룹별 카테고리 거래액·트래픽의 최근 n_days일 값,
+    전일비, 전년동요일비(364일 전). 각 그룹 맨 위는 TOTAL(카테고리='전체' 행).
+    두 날짜 모두 값이 없거나 0인 카테고리는 숨긴다. 세그먼트/핏플랍 제외는 2번 페이지와 같은 규칙."""
+    d = df_category
+    if "회원구분" in d.columns:
+        d = d[d["회원구분"] == segment]
+    if ff_exclude:
+        d = exclude_ff_brand(d)
+    d = d[d["브랜드"] == "전체"]
+    ref = pd.Timestamp(ref_date) if ref_date is not None else d["날짜"].max()
+    dates = [ref - pd.Timedelta(days=i) for i in range(n_days - 1, -1, -1)]
+    yoy_date = ref - pd.Timedelta(days=364)
+    need = set(dates) | {yoy_date}
+
+    out = {}
+    for metric in ["거래액", "트래픽"]:
+        blocks = []
+        for grp, bpus in _DAILY_CAT_GROUPS.items():
+            sub = d[d["BPU"].isin(bpus) & d["날짜"].isin(need)]
+            piv = sub.groupby(["카테고리", "날짜"], observed=True)[metric].sum().unstack("날짜")
+            piv = piv.reindex(columns=sorted(need))
+
+            def _row(name):
+                if name not in piv.index:
+                    return None
+                r = piv.loc[name]
+                vals = [None if pd.isna(r.get(x)) else float(r.get(x)) for x in dates]
+                yoy = None if pd.isna(r.get(yoy_date)) else float(r.get(yoy_date))
+                cur, prev = vals[-1], (vals[-2] if len(vals) > 1 else None)
+                return {
+                    "카테고리": "TOTAL" if name == "전체" else name, "값": vals,
+                    "전일비": pct_delta_safe(cur, prev) if (cur is not None and prev) else None,
+                    "전년동요일비": pct_delta_safe(cur, yoy) if (cur is not None and yoy) else None,
+                }
+
+            rows = []
+            total = _row("전체")
+            if total:
+                rows.append(total)
+            for name in sorted(n for n in piv.index if n != "전체"):
+                r = _row(name)
+                if r and any(v for v in r["값"]):
+                    rows.append(r)
+            if rows:
+                blocks.append({"group": grp, "rows": rows})
+        out[metric] = blocks
+    return {"metrics": out, "dates": dates, "ref": ref, "yoy_date": yoy_date}
+
+
+def _daily_cat_fmt(v, metric):
+    if v is None or pd.isna(v):
+        return "-"
+    return f"{v / 1e6:,.1f}" if metric == "거래액" else f"{v:,.0f}"
+
+
+def _daily_cat_delta_html(v):
+    if v is None or pd.isna(v):
+        return "-"
+    if v < 0:
+        return f"<span style='color:#dc2626;font-weight:700;'>△{abs(v):,.0f}%</span>"
+    return f"<span style='color:#2563eb;font-weight:700;'>{v:,.0f}%</span>"
+
+
+def render_daily_category_compare_html(result, metric):
+    th = "padding:3px 8px;border:1px solid #cbd5e1;text-align:center;font-size:0.8rem;background:#f1f5f9;"
+    td = "padding:3px 8px;border:1px solid #e2e8f0;text-align:right;font-size:0.82rem;"
+    heads = "".join(f"<th style='{th}'>{x.month}월 {x.day:02d}일</th>" for x in result["dates"])
+    body = (f"<tr><th style='{th}'>구분</th><th style='{th}'>카테고리</th>{heads}"
+            f"<th style='{th}'>전일비</th><th style='{th}'>전년동요일비</th></tr>")
+    for blk in result["metrics"][metric]:
+        for i, r in enumerate(blk["rows"]):
+            first = (f"<td rowspan='{len(blk['rows'])}' style='{th}font-weight:700;background:#e5e7eb;'>{blk['group']}</td>"
+                     if i == 0 else "")
+            strong = "font-weight:700;background:#f3f4f6;" if r["카테고리"] == "TOTAL" else ""
+            vals = "".join(f"<td style='{td}{strong}'>{_daily_cat_fmt(v, metric)}</td>" for v in r["값"])
+            body += (f"<tr>{first}<td style='{th}{strong}'>{r['카테고리']}</td>{vals}"
+                     f"<td style='{td}{strong}'>{_daily_cat_delta_html(r['전일비'])}</td>"
+                     f"<td style='{td}{strong}'>{_daily_cat_delta_html(r['전년동요일비'])}</td></tr>")
+    return f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;'>{body}</table></div>"
+
+
+def build_daily_category_compare_excel(result):
+    """거래액(왼쪽)·트래픽(오른쪽)을 한 시트에 나란히 — 보고서 양식과 같은 배치."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "카테고리별 일자"
+    thin = Side(style="thin", color="CBD5E1")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    f_head = PatternFill("solid", fgColor="F1F5F9")
+    f_grp = PatternFill("solid", fgColor="E5E7EB")
+    center = Alignment(horizontal="center", vertical="center")
+    n = len(result["dates"])
+    width = 4 + n
+
+    for k, metric in enumerate(["거래액", "트래픽"]):
+        c0 = 1 + k * (width + 1)
+        ws.cell(row=1, column=c0, value=metric + (" (백만)" if metric == "거래액" else "")).font = Font(bold=True)
+        hdr = ["구분", "카테고리"] + [f"{x.month}월 {x.day:02d}일" for x in result["dates"]] + ["전일비", "전년동요일비"]
+        for j, h in enumerate(hdr):
+            cell = ws.cell(row=2, column=c0 + j, value=h)
+            cell.fill, cell.font, cell.alignment, cell.border = f_head, Font(bold=True), center, box
+        row = 3
+        for blk in result["metrics"][metric]:
+            top = row
+            for r in blk["rows"]:
+                is_total = r["카테고리"] == "TOTAL"
+                ws.cell(row=row, column=c0 + 1, value=r["카테고리"])
+                for j, v in enumerate(r["값"]):
+                    cell = ws.cell(row=row, column=c0 + 2 + j)
+                    if v is not None:
+                        cell.value = v / 1e6 if metric == "거래액" else v
+                        cell.number_format = "#,##0.0" if metric == "거래액" else "#,##0"
+                for j, key in enumerate(["전일비", "전년동요일비"]):
+                    cell = ws.cell(row=row, column=c0 + 2 + n + j)
+                    if r[key] is not None:
+                        cell.value = r[key] / 100
+                        cell.number_format = '#,##0%;"△"#,##0%'
+                        cell.font = Font(bold=True, color="DC2626" if r[key] < 0 else "2563EB")
+                for j in range(1, width):
+                    cell = ws.cell(row=row, column=c0 + j)
+                    cell.border = box
+                    if is_total:
+                        cell.fill = PatternFill("solid", fgColor="F3F4F6")
+                        if j < 2 + n:
+                            cell.font = Font(bold=True)
+                row += 1
+            gc = ws.cell(row=top, column=c0, value=blk["group"])
+            gc.font, gc.fill, gc.alignment = Font(bold=True), f_grp, center
+            ws.merge_cells(start_row=top, start_column=c0, end_row=row - 1, end_column=c0)
+            for rr in range(top, row):
+                ws.cell(row=rr, column=c0).border = box
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c0)].width = 8
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c0 + 1)].width = 11
+        for j in range(2, width):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(c0 + j)].width = 13
+    ws.column_dimensions[openpyxl.utils.get_column_letter(width + 1)].width = 4
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
