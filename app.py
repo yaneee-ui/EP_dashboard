@@ -41,6 +41,7 @@ from dashboard_helpers import (
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
     compute_total_monthly_trend, render_total_monthly_trend_html, build_total_monthly_trend_excel,
+    compute_daily_compare, render_daily_compare_html, build_daily_compare_excel,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
     render_conversion_funnel, render_conversion_funnel_row, compute_official_total,
     render_revenue_ranking, render_top_products,
@@ -4045,6 +4046,29 @@ if side["page"].startswith("11."):
                 render_insight_panel([{"title": "① 최근 주차 실적은?", "body": _wk4_body}])
         except Exception:
             pass
+
+        # ------------------------------------------------------------
+        # 일자별 비교 (기준일 포함 최근 2일) — Total/자사/정상/이월/입점
+        # ------------------------------------------------------------
+        st.markdown("---")
+        st.markdown("#### 📆 일자별 비교 (최근 2일)")
+        if df_traffic.empty:
+            st.info("EP실적 데이터가 없어요.")
+        else:
+            _dc = compute_daily_compare(df_traffic)
+            st.caption(
+                f"기준일 {_dc['ref'].strftime('%Y-%m-%d')} · 전일비 = 기준일 vs 전날 · "
+                f"전년동요일비 = vs {_dc['yoy_date'].strftime('%Y-%m-%d')}(364일 전) · "
+                "CR/객단가는 합계 기준 재계산 · 자사=e-영업1+2, 정상=e-영업1, 이월=e-영업2, 입점=e-영업3+4"
+            )
+            st.download_button(
+                "⬇️ 일자별 비교 엑셀 다운로드",
+                data=build_daily_compare_excel(_dc),
+                file_name=f"일자별비교_{_dc['ref'].strftime('%Y%m%d')}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="daily_cmp_dl",
+            )
+            render_daily_compare_html(_dc)
 
         # ------------------------------------------------------------
         # 월별 실적 추이 (전체 vs EP) — 전체실적 원본(1_전체실적.xlsx) 기반

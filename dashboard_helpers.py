@@ -3148,3 +3148,170 @@ def build_total_monthly_trend_excel(result):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ============================================================
+# 일자별 비교 (기준일 포함 최근 2일) — Total/자사/정상/이월/입점 x 지표 5개
+# ============================================================
+_DAILY_CMP_METRICS = [
+    # (표시 라벨, 분자 컬럼, 분모 컬럼, 종류)  종류: mm=백만원, int=정수, pct=%
+    ("거래액 (백만)", "거래액", None, "mm"),
+    ("트래픽", "트래픽", None, "int"),
+    ("구매객수", "구매객수", None, "int"),
+    ("CR", "구매객수", "트래픽", "pct"),
+    ("객단가", "거래액", "구매객수", "int"),
+]
+
+
+def compute_daily_compare(df_traffic, ref_date=None, n_days=2):
+    """기준일 포함 최근 n_days일의 값 + 전일비 + 전년동요일비(364일 전).
+
+    구분(Total/자사/정상/이월/입점)별로 날짜 단위 합산 후 비율 지표(CR/객단가)는
+    합계/합계로 계산한다. 전일비는 기준일 vs 바로 전날, 전년동요일비는 기준일 vs 364일 전."""
+    base = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
+    ref = pd.Timestamp(ref_date) if ref_date is not None else base["날짜"].max()
+    dates = [ref - pd.Timedelta(days=i) for i in range(n_days - 1, -1, -1)]
+    yoy_date = ref - pd.Timedelta(days=364)
+
+    def _day_values(bpu_list):
+        if bpu_list is None:
+            sub = base[base["BPU"] == "Total"]
+        else:
+            sub = base[base["BPU"].isin(bpu_list)]
+        return sub.groupby("날짜")[["거래액", "트래픽", "구매객수"]].sum()
+
+    rows = []
+    for label, num_col, den_col, kind in _DAILY_CMP_METRICS:
+        for grp, bpu_list in FORECAST_BPU_ROWS.items():
+            g = _day_values(bpu_list)
+
+            def _val(d):
+                if d not in g.index:
+                    return None
+                num = g.loc[d, num_col]
+                if den_col is None:
+                    return float(num)
+                den = g.loc[d, den_col]
+                if not den:
+                    return None
+                return float(num) / float(den) * (100 if kind == "pct" else 1)
+
+            vals = [_val(d) for d in dates]
+            cur, prev, yoy = vals[-1], (vals[-2] if len(vals) > 1 else None), _val(yoy_date)
+            rows.append({
+                "지표": label, "구분": grp, "kind": kind, "값": vals,
+                "전일비": pct_delta_safe(cur, prev) if (cur is not None and prev) else None,
+                "전년동요일비": pct_delta_safe(cur, yoy) if (cur is not None and yoy) else None,
+            })
+    return {"rows": rows, "dates": dates, "ref": ref, "yoy_date": yoy_date}
+
+
+def _daily_fmt(v, kind):
+    if v is None or pd.isna(v):
+        return "-"
+    if kind == "mm":
+        return f"{v / 1e6:,.1f}"
+    if kind == "pct":
+        return f"{v:.1f}%"
+    return f"{v:,.0f}"
+
+
+def _daily_delta_html(v):
+    if v is None or pd.isna(v):
+        return "-"
+    if v < 0:
+        return f"<span style='color:#dc2626;font-weight:700;'>△{abs(v):.0f}%</span>"
+    return f"<span style='color:#2563eb;font-weight:700;'>{v:.0f}%</span>"
+
+
+def render_daily_compare_html(result):
+    """보고서 양식(지표 묶음 x 구분 행, 날짜 열 + 전일비/전년동요일비) 그대로 HTML 렌더링."""
+    th = "padding:4px 10px;border:1px solid #cbd5e1;text-align:center;font-size:0.82rem;background:#f1f5f9;"
+    td = "padding:4px 10px;border:1px solid #e2e8f0;text-align:right;font-size:0.84rem;"
+    head_dates = "".join(f"<th style='{th}'>{d.month}월 {d.day:02d}일</th>" for d in result["dates"])
+    head = (f"<tr><th colspan='2' style='{th}'>구분</th>{head_dates}"
+            f"<th style='{th}'>전일비</th><th style='{th}'>전년동요일비</th></tr>")
+    body, by_metric = "", {}
+    for r in result["rows"]:
+        by_metric.setdefault(r["지표"], []).append(r)
+    for metric, rs in by_metric.items():
+        for i, r in enumerate(rs):
+            first = (f"<td rowspan='{len(rs)}' style='{th}font-weight:700;background:#e5e7eb;'>{metric}</td>" if i == 0 else "")
+            strong = "font-weight:700;" if r["구분"] in ("Total", "입점") else ""
+            vals = "".join(f"<td style='{td}{strong}'>{_daily_fmt(v, r['kind'])}</td>" for v in r["값"])
+            body += (f"<tr>{first}<td style='{th}{strong}'>{r['구분']}</td>{vals}"
+                     f"<td style='{td}'>{_daily_delta_html(r['전일비'])}</td>"
+                     f"<td style='{td}'>{_daily_delta_html(r['전년동요일비'])}</td></tr>")
+    st.markdown(f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;'>{head}{body}</table></div>",
+                unsafe_allow_html=True)
+
+
+def build_daily_compare_excel(result):
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "일자별"
+    thin = Side(style="thin", color="CBD5E1")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    f_head = PatternFill("solid", fgColor="F1F5F9")
+    f_metric = PatternFill("solid", fgColor="E5E7EB")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+
+    hdr = ["구분", ""] + [f"{d.month}월 {d.day:02d}일" for d in result["dates"]] + ["전일비", "전년동요일비"]
+    ws.append(hdr)
+    ws.merge_cells(start_row=1, start_column=1, end_row=1, end_column=2)
+    for c in range(1, len(hdr) + 1):
+        cell = ws.cell(row=1, column=c)
+        cell.fill, cell.font, cell.alignment, cell.border = f_head, Font(bold=True), center, box
+
+    by_metric = {}
+    for r in result["rows"]:
+        by_metric.setdefault(r["지표"], []).append(r)
+    row = 2
+    n_dates = len(result["dates"])
+    for metric, rs in by_metric.items():
+        top = row
+        for r in rs:
+            ws.cell(row=row, column=2, value=r["구분"])
+            for j, v in enumerate(r["값"]):
+                cell = ws.cell(row=row, column=3 + j)
+                if v is not None:
+                    if r["kind"] == "mm":
+                        cell.value, cell.number_format = v / 1e6, "#,##0.0"
+                    elif r["kind"] == "pct":
+                        cell.value, cell.number_format = v / 100, "0.0%"
+                    else:
+                        cell.value, cell.number_format = v, "#,##0"
+            for j, key in enumerate(["전일비", "전년동요일비"]):
+                cell = ws.cell(row=row, column=3 + n_dates + j)
+                if r[key] is not None:
+                    cell.value = r[key] / 100
+                    cell.number_format = '0%;"△"0%'
+                    cell.font = Font(bold=True, color="DC2626" if r[key] < 0 else "2563EB")
+            bold = r["구분"] in ("Total", "입점")
+            for c in range(2, len(hdr) + 1):
+                cell = ws.cell(row=row, column=c)
+                cell.border = box
+                if bold and c < 3 + n_dates:
+                    cell.font = Font(bold=True)
+            ws.cell(row=row, column=2).alignment = center
+            row += 1
+        ws.cell(row=top, column=1, value=metric).font = Font(bold=True)
+        ws.cell(row=top, column=1).fill = f_metric
+        ws.cell(row=top, column=1).alignment = center
+        ws.merge_cells(start_row=top, start_column=1, end_row=row - 1, end_column=1)
+        for rr in range(top, row):
+            ws.cell(row=rr, column=1).border = box
+
+    ws.column_dimensions["A"].width = 14
+    ws.column_dimensions["B"].width = 9
+    for c in range(3, len(hdr) + 1):
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c)].width = 14
+    ws.cell(row=row + 1, column=1,
+            value=f"※ 전일비 = {result['dates'][-1].strftime('%m/%d')} vs 전날 · 전년동요일비 = vs {result['yoy_date'].strftime('%Y-%m-%d')}(364일 전) · CR/객단가는 합계 기준 재계산").font = Font(color="6B7280", size=9)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
