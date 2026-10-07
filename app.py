@@ -4896,6 +4896,18 @@ if side["page"].startswith("12."):
         ed1, ed2 = st.columns(2)
         _tr_min_d = df_traffic["날짜"].min().date()
         _tr_max_d = df_traffic["날짜"].max().date()
+
+        # 진행 중인 행사(종료일이 아직 데이터 마지막 날보다 뒤)면 date_input의 기본값이
+        # max_value를 넘어 StreamlitValueAboveMaxError가 난다 — 데이터 범위 안으로 잘라서 넣는다.
+        def _clamp_range(_rng):
+            _s, _e = max(_rng[0], _tr_min_d), min(_rng[1], _tr_max_d)
+            return (min(_s, _e), _e)
+
+        _is_partial_b = _default_range_b[1] > _tr_max_d
+        _default_range_a = _clamp_range(_default_range_a)
+        _default_range_b = _clamp_range(_default_range_b)
+        if _is_partial_b:
+            st.caption(f"ℹ️ 이번 행사는 아직 진행 중이라 데이터가 있는 {_tr_max_d.strftime('%m/%d')}까지만 기본값으로 채웠어요.")
         with ed1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교 기간</div>", unsafe_allow_html=True)
             range_a_input = st.date_input(
