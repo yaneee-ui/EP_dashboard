@@ -2624,26 +2624,39 @@ def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
     for b in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
         r = _bpu_lookup.get(("거래액", b))
         if r and r["A"] is not None and r["B"] is not None:
-            _bar_rows.append({"BPU": b, "구분": label_a, "값": r["A"]})
-            _bar_rows.append({"BPU": b, "구분": label_b, "값": r["B"]})
+            _pct = r.get("전년비")
+            if _pct is None:
+                _lab, _lab_color = "", "#6b7280"
+            elif _pct < 0:
+                _lab, _lab_color = f"△{abs(_pct):.1f}%", "#dc2626"
+            else:
+                _lab, _lab_color = f"{_pct:+.1f}%", "#16a34a"
+            _bar_rows.append({"BPU": b, "구분": label_a, "값": r["A"], "라벨": "", "라벨색": "#6b7280"})
+            _bar_rows.append({"BPU": b, "구분": label_b, "값": r["B"], "라벨": _lab, "라벨색": _lab_color})
     if _bar_rows:
         _bar_df = pd.DataFrame(_bar_rows)
-        _chart = (
-            alt.Chart(_bar_df)
-            .mark_bar()
-            .encode(
-                x=alt.X("BPU:N", title=None, axis=alt.Axis(labelAngle=0)),
-                xOffset=alt.XOffset("구분:N", sort=[label_a, label_b]),
-                y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s")),
-                color=alt.Color(
-                    "구분:N", scale=alt.Scale(domain=[label_a, label_b], range=["#93c5fd", "#2563eb"]),
-                    legend=alt.Legend(orient="bottom", title=None),
-                ),
-                tooltip=[alt.Tooltip("BPU:N", title="BPU"), alt.Tooltip("구분:N", title="구분"),
-                         alt.Tooltip("값:Q", title="거래액", format=",.0f")],
-            )
-            .properties(height=260)
+        _y_max = float(_bar_df["값"].max()) * 1.15
+        _base = alt.Chart(_bar_df)
+        _enc_x = alt.X("BPU:N", title=None, axis=alt.Axis(labelAngle=0))
+        _enc_off = alt.XOffset("구분:N", sort=[label_a, label_b])
+        _enc_y = alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(domain=[0, _y_max]))
+        _bars = _base.mark_bar().encode(
+            x=_enc_x, xOffset=_enc_off, y=_enc_y,
+            color=alt.Color(
+                "구분:N", scale=alt.Scale(domain=[label_a, label_b], range=["#93c5fd", "#2563eb"]),
+                legend=alt.Legend(orient="bottom", title=None),
+            ),
+            tooltip=[alt.Tooltip("BPU:N", title="BPU"), alt.Tooltip("구분:N", title="구분"),
+                     alt.Tooltip("값:Q", title="거래액", format=",.0f"),
+                     alt.Tooltip("라벨:N", title=f"{label_a} 대비")],
         )
+        _labels = _base.transform_filter(alt.datum["구분"] == label_b).mark_text(
+            dy=-8, fontSize=13, fontWeight="bold",
+        ).encode(
+            x=_enc_x, xOffset=_enc_off, y=_enc_y,
+            text="라벨:N", color=alt.Color("라벨색:N", scale=None),
+        )
+        _chart = alt.layer(_bars, _labels).properties(height=260)
         st.altair_chart(_chart, use_container_width=True)
     else:
         st.info("표시할 데이터가 없습니다.")
