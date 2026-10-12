@@ -2664,22 +2664,26 @@ def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
 
     # --- 3) 카테고리 Top 변동 (전 BPU 합산 거래액 기준) ---
     st.markdown(
-        "**카테고리 Top 변동**  ·  <span style='color:#6b7280;font-size:0.85rem'>전 BPU 합산 거래액, 일평균</span>",
+        "**카테고리 Top 변동**  ·  <span style='color:#6b7280;font-size:0.85rem'>거래액, 일평균 · 전체(전 BPU 합산) + 정상/이월/입점</span>",
         unsafe_allow_html=True,
     )
-    _cat_agg = {}
-    for row in result["cat_rows"]["거래액"]:
-        if row["is_total"]:
-            continue
-        e = _cat_agg.setdefault(row["카테고리"], {"A": 0.0, "B": 0.0})
-        e["A"] += row["A"] or 0.0
-        e["B"] += row["B"] or 0.0
-    _movers = []
-    for cat, v in _cat_agg.items():
-        diff = v["B"] - v["A"]
-        pct = (v["B"] / v["A"] - 1) * 100 if v["A"] else None
-        _movers.append({"카테고리": cat, "diff": diff, "pct": pct})
-    _movers.sort(key=lambda x: x["diff"], reverse=True)
+    def _build_movers(bpu_filter):
+        _agg = {}
+        for row in result["cat_rows"]["거래액"]:
+            if row["is_total"]:
+                continue
+            if bpu_filter is not None and row["BPU"] not in bpu_filter:
+                continue
+            e = _agg.setdefault(row["카테고리"], {"A": 0.0, "B": 0.0})
+            e["A"] += row["A"] or 0.0
+            e["B"] += row["B"] or 0.0
+        out = []
+        for cat, v in _agg.items():
+            diff = v["B"] - v["A"]
+            pct = (v["B"] / v["A"] - 1) * 100 if v["A"] else None
+            out.append({"카테고리": cat, "diff": diff, "pct": pct})
+        out.sort(key=lambda x: x["diff"], reverse=True)
+        return out
 
     def _mover_card(title, items, positive):
         _color = "#16a34a" if positive else "#dc2626"
@@ -2699,12 +2703,24 @@ def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
             f"<div style='font-weight:600;margin-bottom:4px;'>{title}</div>{_rows_html}</div>"
         )
 
-    _mc1, _mc2 = st.columns(2)
-    with _mc1:
-        st.markdown(_mover_card("🔺 가장 많이 증가", [m for m in _movers[:3] if m["diff"] > 0] or _movers[:3], True), unsafe_allow_html=True)
-    with _mc2:
-        _down = sorted(_movers, key=lambda x: x["diff"])[:3]
-        st.markdown(_mover_card("🔻 가장 많이 감소", [m for m in _down if m["diff"] < 0] or _down, False), unsafe_allow_html=True)
+    def _render_movers(movers):
+        _mc1, _mc2 = st.columns(2)
+        with _mc1:
+            st.markdown(_mover_card("🔺 가장 많이 증가", [m for m in movers[:3] if m["diff"] > 0] or movers[:3], True), unsafe_allow_html=True)
+        with _mc2:
+            _down = sorted(movers, key=lambda x: x["diff"])[:3]
+            st.markdown(_mover_card("🔻 가장 많이 감소", [m for m in _down if m["diff"] < 0] or _down, False), unsafe_allow_html=True)
+
+    _render_movers(_build_movers(None))
+
+    # 정상(e-영업1) / 이월(e-영업2) / 입점(e-영업3+4) 별로도 나눠서 본다
+    for _g_name, _g_bpus in [("정상", ["e-영업1"]), ("이월", ["e-영업2"]), ("입점", ["e-영업3", "e-영업4"])]:
+        st.markdown(
+            f"<div style='margin:14px 0 6px;font-weight:600;color:#374151;'>{_g_name}"
+            f"<span style='color:#9ca3af;font-weight:400;font-size:0.8rem;'> · {' + '.join(_g_bpus)}</span></div>",
+            unsafe_allow_html=True,
+        )
+        _render_movers(_build_movers(_g_bpus))
 
     st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
 
