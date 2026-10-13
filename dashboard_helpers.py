@@ -3513,18 +3513,23 @@ _EVENT_DETAIL_BPUS = [("전체", "Total"), ("e-영업1", "e-영업1"), ("e-영�
                       ("e-영업3", "e-영업3"), ("e-영업4", "e-영업4")]
 
 
-def compute_event_detail(df_traffic, range_b, agg="sum"):
-    """올해 행사 기간(range_b)과 그 동요일(364일 전) 기간의 BPU별 트래픽/거래액/구매객수/CR/객단가.
+def compute_event_detail(df_traffic, range_b, agg="sum", range_a=None):
+    """올해 행사 기간(range_b)과 비교 기간(range_a, 보통 작년 같은 행사 기간)의 BPU별
+    트래픽/거래액/구매객수/CR/객단가. range_a가 없으면 range_b의 동요일(364일 전)을 쓴다.
 
-    데이터가 아직 없는 날짜(진행 중인 행사)는 올해에서 빼고, 작년도 같은 날짜만큼의
-    동요일만 비교한다 — 일수가 같아야 합계 기준 전년비가 공정하다. CR/객단가는 합계/합계.
+    올해 데이터가 아직 없는 날짜(진행 중인 행사)는 빼고, 비교 기간도 같은 일수(앞에서부터)만
+    쓴다 — 일수가 같아야 합계 기준 전년비가 공정하다. CR/객단가는 합계/합계.
     agg: 'sum'(행사 기간 합계) / 'mean'(일평균) — 비율 지표는 영향 없음."""
     base = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
     have = set(pd.to_datetime(base["날짜"].unique()))
     all_days = pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1]))
     cur_days = [d for d in all_days if d in have]
-    prev_days = [d - pd.Timedelta(days=364) for d in cur_days]
     n = len(cur_days)
+    if range_a is not None:
+        prev_all = list(pd.date_range(pd.Timestamp(range_a[0]), pd.Timestamp(range_a[1])))
+        prev_days = [d for d in prev_all if d in have][:n]
+    else:
+        prev_days = [d - pd.Timedelta(days=364) for d in cur_days]
 
     def _sums(days, bpu):
         sub = base[(base["BPU"] == bpu) & (base["날짜"].isin(days))]
@@ -3550,6 +3555,8 @@ def compute_event_detail(df_traffic, range_b, agg="sum"):
         "rows": rows, "n": n, "agg": agg,
         "cur": (cur_days[0], cur_days[-1]) if cur_days else None,
         "prev": (prev_days[0], prev_days[-1]) if prev_days else None,
+        "n_prev": len(prev_days),
+        "by_range": range_a is not None,
     }
 
 
@@ -3597,7 +3604,8 @@ def render_event_detail_html(result, title, year_a, year_b):
                      f"{_ev_delta_html(r['전년비'])}</td></tr>")
     st.markdown(
         f"<div style='font-weight:700;margin:6px 0 2px;'>☐ {title}</div>"
-        f"<div style='text-align:center;font-size:0.78rem;color:#6b7280;max-width:560px;'>전년동요일</div>"
+        f"<div style='text-align:center;font-size:0.78rem;color:#6b7280;max-width:560px;'>"
+        f"{'전년 행사기간' if result.get('by_range') else '전년동요일'}</div>"
         f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;min-width:420px;max-width:640px;'>"
         f"{head}{body}</table></div>",
         unsafe_allow_html=True,
@@ -3620,7 +3628,7 @@ def build_event_detail_excel(result, title, year_a, year_b):
     f_yoy_head = PatternFill("solid", fgColor="FDE047")
 
     ws.cell(row=1, column=1, value=f"☐ {title}").font = Font(bold=True, size=12)
-    ws.cell(row=2, column=3, value="전년동요일").alignment = center
+    ws.cell(row=2, column=3, value="전년 행사기간" if result.get("by_range") else "전년동요일").alignment = center
     ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=5)
     for j, h in enumerate(["구분", "BPU", f"{year_a}년", f"{year_b}년", "전년비"]):
         c = ws.cell(row=3, column=1 + j, value=h)
@@ -3680,7 +3688,7 @@ def build_event_detail_excel(result, title, year_a, year_b):
     cur, prev = result["cur"], result["prev"]
     if cur and prev:
         ws.cell(row=row + 1, column=1,
-                value=(f"※ {year_b}년 {cur[0].strftime('%m/%d')}~{cur[1].strftime('%m/%d')} vs {year_a}년 동요일 "
+                value=(f"※ {year_b}년 {cur[0].strftime('%m/%d')}~{cur[1].strftime('%m/%d')} vs {year_a}년 {'행사 기간' if result.get('by_range') else '동요일'} "
                        f"{prev[0].strftime('%m/%d')}~{prev[1].strftime('%m/%d')} ({result['n']}일) · "
                        f"{'일평균' if result['agg'] == 'mean' else '기간 합계'} · CR/객단가는 합계 기준 재계산")).font = Font(color="6B7280", size=9)
 

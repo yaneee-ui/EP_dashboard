@@ -4953,12 +4953,12 @@ if side["page"].startswith("12."):
                 # --- 행사 상세 실적 (전년동요일): 올해 행사 기간 vs 364일 전 같은 요일 구간 ---
                 st.markdown("---")
                 _ev_name = _sel_b_label.split(" · ")[1].split(" (")[0] if (_sel_b_label and " · " in _sel_b_label) else "행사"
-                st.markdown(f"#### 📑 {_ev_name} 상세 실적 (전년동요일)")
+                st.markdown(f"#### 📑 {_ev_name} 상세 실적 (전년 행사기간 기준)")
                 _ev_agg_label = st.radio(
                     "집계 방식", ["기간 합계", "일평균"], horizontal=True, key="event_detail_agg",
                     label_visibility="collapsed",
                 )
-                _ev_detail = compute_event_detail(df_traffic, range_b, "mean" if _ev_agg_label == "일평균" else "sum")
+                _ev_detail = compute_event_detail(df_traffic, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a)
                 if _ev_detail["cur"] is None:
                     st.info("이번 기간에 데이터가 있는 날짜가 아직 없어요.")
                 else:
@@ -4966,9 +4966,9 @@ if side["page"].startswith("12."):
                     _ev_title = f"{_ev_name} 상세 실적"
                     st.caption(
                         f"{_ev_yb}년 {_ev_detail['cur'][0].strftime('%m/%d')}~{_ev_detail['cur'][1].strftime('%m/%d')} vs "
-                        f"{_ev_ya}년 동요일 {_ev_detail['prev'][0].strftime('%m/%d')}~{_ev_detail['prev'][1].strftime('%m/%d')} "
+                        f"{_ev_ya}년 행사 기간 {_ev_detail['prev'][0].strftime('%m/%d')}~{_ev_detail['prev'][1].strftime('%m/%d')} "
                         f"({_ev_detail['n']}일) · 거래액 단위 백만원 · CR/객단가는 합계 기준 재계산 · "
-                        "위 비교(작년 행사 기간 기준)와 달리 같은 요일끼리 맞춘 전년 구간이에요"
+                        "비교 기간은 위에서 고른 '비교 기간'(작년 행사)을 그대로 써요"
                     )
                     st.download_button(
                         "⬇️ 행사 상세 실적 엑셀 다운로드",
