@@ -48,6 +48,7 @@ from dashboard_helpers import (
     render_revenue_ranking, render_top_products,
     load_event_calendar, compute_event_comparison, render_event_comparison_tables,
     render_event_comparison_summary, build_event_comparison_excel,
+    compute_event_detail, render_event_detail_html, build_event_detail_excel,
 )
 
 
@@ -4948,6 +4949,36 @@ if side["page"].startswith("12."):
             try:
                 _result = compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b)
                 render_event_comparison_summary(_result, label_a=_label_a, label_b=_label_b)
+
+                # --- 행사 상세 실적 (전년동요일): 올해 행사 기간 vs 364일 전 같은 요일 구간 ---
+                st.markdown("---")
+                _ev_name = _sel_b_label.split(" · ")[1].split(" (")[0] if (_sel_b_label and " · " in _sel_b_label) else "행사"
+                st.markdown(f"#### 📑 {_ev_name} 상세 실적 (전년동요일)")
+                _ev_agg_label = st.radio(
+                    "집계 방식", ["기간 합계", "일평균"], horizontal=True, key="event_detail_agg",
+                    label_visibility="collapsed",
+                )
+                _ev_detail = compute_event_detail(df_traffic, range_b, "mean" if _ev_agg_label == "일평균" else "sum")
+                if _ev_detail["cur"] is None:
+                    st.info("이번 기간에 데이터가 있는 날짜가 아직 없어요.")
+                else:
+                    _ev_ya, _ev_yb = _ev_detail["prev"][0].year, _ev_detail["cur"][0].year
+                    _ev_title = f"{_ev_name} 상세 실적"
+                    st.caption(
+                        f"{_ev_yb}년 {_ev_detail['cur'][0].strftime('%m/%d')}~{_ev_detail['cur'][1].strftime('%m/%d')} vs "
+                        f"{_ev_ya}년 동요일 {_ev_detail['prev'][0].strftime('%m/%d')}~{_ev_detail['prev'][1].strftime('%m/%d')} "
+                        f"({_ev_detail['n']}일) · 거래액 단위 백만원 · CR/객단가는 합계 기준 재계산 · "
+                        "위 비교(작년 행사 기간 기준)와 달리 같은 요일끼리 맞춘 전년 구간이에요"
+                    )
+                    st.download_button(
+                        "⬇️ 행사 상세 실적 엑셀 다운로드",
+                        data=build_event_detail_excel(_ev_detail, _ev_title, _ev_ya, _ev_yb),
+                        file_name=f"행사상세실적_{range_b_input[0].strftime('%Y%m%d')}.xlsx",
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        key="event_detail_dl",
+                    )
+                    render_event_detail_html(_ev_detail, _ev_title, _ev_ya, _ev_yb)
+                st.markdown("---")
 
                 st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
                 with st.expander("📋 상세 표 보기 (BPU별 전체 지표 · 카테고리별 전체 목록)", expanded=False):

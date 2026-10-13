@@ -3496,3 +3496,194 @@ def build_daily_category_compare_excel(result):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ============================================================
+# 행사 상세 실적 (전년동요일) — 구분 | BPU | 작년 | 올해 | 전년비 양식
+# ============================================================
+_EVENT_DETAIL_METRICS = [
+    # (표시 라벨, 분자, 분모, 종류)  종류: int / mm(백만원) / pct
+    ("트래픽", "트래픽", None, "int"),
+    ("거래액\n(백만원)", "거래액", None, "mm"),
+    ("구매객수", "구매객수", None, "int"),
+    ("CR", "구매객수", "트래픽", "pct"),
+    ("객단가", "거래액", "구매객수", "int"),
+]
+_EVENT_DETAIL_BPUS = [("전체", "Total"), ("e-영업1", "e-영업1"), ("e-영업2", "e-영업2"),
+                      ("e-영업3", "e-영업3"), ("e-영업4", "e-영업4")]
+
+
+def compute_event_detail(df_traffic, range_b, agg="sum"):
+    """올해 행사 기간(range_b)과 그 동요일(364일 전) 기간의 BPU별 트래픽/거래액/구매객수/CR/객단가.
+
+    데이터가 아직 없는 날짜(진행 중인 행사)는 올해에서 빼고, 작년도 같은 날짜만큼의
+    동요일만 비교한다 — 일수가 같아야 합계 기준 전년비가 공정하다. CR/객단가는 합계/합계.
+    agg: 'sum'(행사 기간 합계) / 'mean'(일평균) — 비율 지표는 영향 없음."""
+    base = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
+    have = set(pd.to_datetime(base["날짜"].unique()))
+    all_days = pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1]))
+    cur_days = [d for d in all_days if d in have]
+    prev_days = [d - pd.Timedelta(days=364) for d in cur_days]
+    n = len(cur_days)
+
+    def _sums(days, bpu):
+        sub = base[(base["BPU"] == bpu) & (base["날짜"].isin(days))]
+        return {c: float(sub[c].sum()) for c in ["트래픽", "거래액", "구매객수"]}
+
+    rows = []
+    cache = {}
+    for label, bpu_key in _EVENT_DETAIL_BPUS:
+        cache[bpu_key] = (_sums(prev_days, bpu_key), _sums(cur_days, bpu_key))
+    for m_label, num, den, kind in _EVENT_DETAIL_METRICS:
+        for label, bpu_key in _EVENT_DETAIL_BPUS:
+            vals = []
+            for s in cache[bpu_key]:
+                if den is None:
+                    v = s[num] / n if (agg == "mean" and n) else s[num]
+                else:
+                    v = s[num] / s[den] * (100 if kind == "pct" else 1) if s[den] else None
+                vals.append(v)
+            a, b = vals
+            rows.append({"지표": m_label, "BPU": label, "kind": kind, "A": a, "B": b,
+                         "전년비": ((b / a - 1) * 100 if (a and b is not None) else None)})
+    return {
+        "rows": rows, "n": n, "agg": agg,
+        "cur": (cur_days[0], cur_days[-1]) if cur_days else None,
+        "prev": (prev_days[0], prev_days[-1]) if prev_days else None,
+    }
+
+
+def _ev_fmt(v, kind):
+    if v is None or pd.isna(v):
+        return ""
+    if kind == "mm":
+        return f"{v / 1e6:,.1f}"
+    if kind == "pct":
+        return f"{v:.1f}%"
+    return f"{v:,.0f}"
+
+
+def _ev_delta_html(v):
+    if v is None or pd.isna(v):
+        return ""
+    if v < 0:
+        return f"<span style='color:#dc2626;font-weight:700;'>△{abs(v):.1f}%</span>"
+    return f"<span style='color:#2563eb;font-weight:700;'>{v:.1f}%</span>"
+
+
+def render_event_detail_html(result, title, year_a, year_b):
+    """보고서 양식(구분/BPU/작년/올해/전년비, 전년비 열 강조) 그대로 HTML 렌더링."""
+    th = "padding:5px 12px;border:1px solid #9ca3af;text-align:center;font-size:0.85rem;font-weight:700;"
+    td = "padding:5px 12px;border:1px solid #cbd5e1;text-align:right;font-size:0.86rem;"
+    box = "border-left:3px solid #1d4ed8;border-right:3px solid #1d4ed8;"
+    head = (f"<tr><th style='{th}background:#fff;'>구분</th><th style='{th}background:#fff;'>BPU</th>"
+            f"<th style='{th}background:#fff;'>{year_a}년</th><th style='{th}background:#fff;'>{year_b}년</th>"
+            f"<th style='{th}background:#fde047;{box}border-top:3px solid #1d4ed8;'>전년비</th></tr>")
+    body, by_metric = "", {}
+    for r in result["rows"]:
+        by_metric.setdefault(r["지표"], []).append(r)
+    total_metrics = len(by_metric)
+    for mi, (metric, rs) in enumerate(by_metric.items()):
+        for i, r in enumerate(rs):
+            first = (f"<td rowspan='{len(rs)}' style='{th}background:#f3f4f6;white-space:pre-line;'>{metric}</td>"
+                     if i == 0 else "")
+            is_total = r["BPU"] == "전체"
+            row_bg = "background:#dbeafe;font-weight:700;" if is_total else ""
+            last = (mi == total_metrics - 1 and i == len(rs) - 1)
+            body += (f"<tr>{first}<td style='{th}{row_bg}'>{r['BPU']}</td>"
+                     f"<td style='{td}{row_bg}'>{_ev_fmt(r['A'], r['kind'])}</td>"
+                     f"<td style='{td}{row_bg}'>{_ev_fmt(r['B'], r['kind'])}</td>"
+                     f"<td style='{td}{row_bg}{box}{'border-bottom:3px solid #1d4ed8;' if last else ''}'>"
+                     f"{_ev_delta_html(r['전년비'])}</td></tr>")
+    st.markdown(
+        f"<div style='font-weight:700;margin:6px 0 2px;'>☐ {title}</div>"
+        f"<div style='text-align:center;font-size:0.78rem;color:#6b7280;max-width:560px;'>전년동요일</div>"
+        f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;min-width:420px;max-width:640px;'>"
+        f"{head}{body}</table></div>",
+        unsafe_allow_html=True,
+    )
+
+
+def build_event_detail_excel(result, title, year_a, year_b):
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "행사 상세 실적"
+    thin = Side(style="thin", color="9CA3AF")
+    heavy = Side(style="thick", color="1D4ED8")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
+    f_total = PatternFill("solid", fgColor="DBEAFE")
+    f_metric = PatternFill("solid", fgColor="F3F4F6")
+    f_yoy_head = PatternFill("solid", fgColor="FDE047")
+
+    ws.cell(row=1, column=1, value=f"☐ {title}").font = Font(bold=True, size=12)
+    ws.cell(row=2, column=3, value="전년동요일").alignment = center
+    ws.merge_cells(start_row=2, start_column=3, end_row=2, end_column=5)
+    for j, h in enumerate(["구분", "BPU", f"{year_a}년", f"{year_b}년", "전년비"]):
+        c = ws.cell(row=3, column=1 + j, value=h)
+        c.font, c.alignment = Font(bold=True), center
+        c.border = Border(left=thin, right=thin, top=thin, bottom=thin)
+    ws.cell(row=3, column=5).fill = f_yoy_head
+    ws.cell(row=3, column=5).border = Border(left=heavy, right=heavy, top=heavy, bottom=thin)
+
+    by_metric = {}
+    for r in result["rows"]:
+        by_metric.setdefault(r["지표"], []).append(r)
+    row = 4
+    last_row = 3 + len(result["rows"])
+    for metric, rs in by_metric.items():
+        top = row
+        for r in rs:
+            ws.cell(row=row, column=2, value=r["BPU"]).alignment = center
+            for j, (key, col) in enumerate([("A", 3), ("B", 4)]):
+                v = r[key]
+                c = ws.cell(row=row, column=col)
+                if v is not None:
+                    if r["kind"] == "mm":
+                        c.value, c.number_format = v / 1e6, "#,##0.0"
+                    elif r["kind"] == "pct":
+                        c.value, c.number_format = v / 100, "0.0%"
+                    else:
+                        c.value, c.number_format = v, "#,##0"
+                c.alignment = right
+            yc = ws.cell(row=row, column=5)
+            if r["전년비"] is not None:
+                yc.value = r["전년비"] / 100
+                yc.number_format = '0.0%;"△"0.0%'
+                yc.font = Font(bold=True, color="DC2626" if r["전년비"] < 0 else "2563EB")
+            yc.alignment = right
+            for col in range(2, 6):
+                c = ws.cell(row=row, column=col)
+                is_yoy = col == 5
+                c.border = Border(
+                    left=heavy if is_yoy else thin, right=heavy if is_yoy else thin,
+                    top=thin, bottom=heavy if (is_yoy and row == last_row) else thin,
+                )
+                if r["BPU"] == "전체":
+                    c.fill = f_total
+                    if col < 5:
+                        c.font = Font(bold=True)
+            row += 1
+        mc = ws.cell(row=top, column=1, value=metric)
+        mc.alignment, mc.font, mc.fill = center, Font(bold=True), f_metric
+        ws.merge_cells(start_row=top, start_column=1, end_row=row - 1, end_column=1)
+        for rr in range(top, row):
+            ws.cell(row=rr, column=1).border = Border(left=thin, right=thin, top=thin, bottom=thin)
+
+    ws.column_dimensions["A"].width = 12
+    ws.column_dimensions["B"].width = 11
+    for col in "CDE":
+        ws.column_dimensions[col].width = 15
+    cur, prev = result["cur"], result["prev"]
+    if cur and prev:
+        ws.cell(row=row + 1, column=1,
+                value=(f"※ {year_b}년 {cur[0].strftime('%m/%d')}~{cur[1].strftime('%m/%d')} vs {year_a}년 동요일 "
+                       f"{prev[0].strftime('%m/%d')}~{prev[1].strftime('%m/%d')} ({result['n']}일) · "
+                       f"{'일평균' if result['agg'] == 'mean' else '기간 합계'} · CR/객단가는 합계 기준 재계산")).font = Font(color="6B7280", size=9)
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
