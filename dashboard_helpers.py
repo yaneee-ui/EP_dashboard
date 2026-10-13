@@ -3150,8 +3150,8 @@ def build_total_monthly_trend_excel(result):
                     else:
                         v = _trend_value(tbl[y][m], key)
                         if v is not None:
-                            c.value = v / 1e6 if kind == "mm" else v
-                            c.number_format = {"mm": "#,##0.0", "int": "#,##0", "pct": "0%"}[kind]
+                            c.value = v
+                            c.number_format = {"mm": "#,##0", "int": "#,##0", "pct": "0%"}[kind]
                         if lab == "EP":
                             c.fill = f_cur_ep if (m == cur_m and y == cur_y) else f_ep
                     c.font = Font(bold=bold, color=color)
@@ -3172,7 +3172,7 @@ def build_total_monthly_trend_excel(result):
     for col in range(3, 15):
         ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 11
     ws.cell(row=row + 1, column=1,
-            value="※ 거래액 단위: 백만원(일평균) · 트래픽당 거래액 = 거래액 합계/트래픽 합계 · 진행 중인 달은 작년 동요일(364일 전) 동일 일수 기준").font = Font(color="6B7280", size=9)
+            value="※ 거래액 단위: 원(일평균) · 트래픽당 거래액 = 거래액 합계/트래픽 합계 · 진행 중인 달은 작년 동요일(364일 전) 동일 일수 기준").font = Font(color="6B7280", size=9)
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -3307,9 +3307,7 @@ def build_daily_compare_excel(result):
             for j, v in enumerate(r["값"]):
                 cell = ws.cell(row=row, column=3 + j)
                 if v is not None:
-                    if r["kind"] == "mm":
-                        cell.value, cell.number_format = v / 1e6, "#,##0.0"
-                    elif r["kind"] == "pct":
+                    if r["kind"] == "pct":
                         cell.value, cell.number_format = v / 100, "0.0%"
                     else:
                         cell.value, cell.number_format = v, "#,##0"
@@ -3327,7 +3325,7 @@ def build_daily_compare_excel(result):
                     cell.font = Font(bold=True)
             ws.cell(row=row, column=2).alignment = center
             row += 1
-        ws.cell(row=top, column=1, value=metric).font = Font(bold=True)
+        ws.cell(row=top, column=1, value=metric.replace("(백만)", "(원)")).font = Font(bold=True)
         ws.cell(row=top, column=1).fill = f_metric
         ws.cell(row=top, column=1).alignment = center
         ws.merge_cells(start_row=top, start_column=1, end_row=row - 1, end_column=1)
@@ -3452,7 +3450,7 @@ def build_daily_category_compare_excel(result):
 
     for k, metric in enumerate(["거래액", "트래픽"]):
         c0 = 1 + k * (width + 1)
-        ws.cell(row=1, column=c0, value=metric + (" (백만)" if metric == "거래액" else "")).font = Font(bold=True)
+        ws.cell(row=1, column=c0, value=metric + (" (원)" if metric == "거래액" else "")).font = Font(bold=True)
         hdr = ["구분", "카테고리"] + [f"{x.month}월 {x.day:02d}일" for x in result["dates"]] + ["전일비", "전년동요일비"]
         for j, h in enumerate(hdr):
             cell = ws.cell(row=2, column=c0 + j, value=h)
@@ -3466,8 +3464,8 @@ def build_daily_category_compare_excel(result):
                 for j, v in enumerate(r["값"]):
                     cell = ws.cell(row=row, column=c0 + 2 + j)
                     if v is not None:
-                        cell.value = v / 1e6 if metric == "거래액" else v
-                        cell.number_format = "#,##0.0" if metric == "거래액" else "#,##0"
+                        cell.value = v
+                        cell.number_format = "#,##0"
                 for j, key in enumerate(["전일비", "전년동요일비"]):
                     cell = ws.cell(row=row, column=c0 + 2 + n + j)
                     if r[key] is not None:
