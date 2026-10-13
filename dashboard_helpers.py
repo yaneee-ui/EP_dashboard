@@ -3533,7 +3533,8 @@ def compute_event_detail(df_traffic, range_b, agg="sum", range_a=None):
 
     def _sums(days, bpu):
         sub = base[(base["BPU"] == bpu) & (base["날짜"].isin(days))]
-        return {c: float(sub[c].sum()) for c in ["트래픽", "거래액", "구매객수"]}
+        # 로더가 float32로 캐스팅해서 읽으므로 합산은 float64로 해서 누적 오차를 줄인다
+        return {c: float(sub[c].astype("float64").sum()) for c in ["트래픽", "거래액", "구매객수"]}
 
     rows = []
     cache = {}
@@ -3650,11 +3651,10 @@ def build_event_detail_excel(result, title, year_a, year_b):
                 v = r[key]
                 c = ws.cell(row=row, column=col)
                 if v is not None:
-                    if r["kind"] == "mm":
-                        c.value, c.number_format = v / 1e6, "#,##0.0"
-                    elif r["kind"] == "pct":
+                    if r["kind"] == "pct":
                         c.value, c.number_format = v / 100, "0.0%"
                     else:
+                        # 거래액(mm)도 화면과 달리 원 단위 전체값 그대로 저장
                         c.value, c.number_format = v, "#,##0"
                 c.alignment = right
             yc = ws.cell(row=row, column=5)
@@ -3675,7 +3675,7 @@ def build_event_detail_excel(result, title, year_a, year_b):
                     if col < 5:
                         c.font = Font(bold=True)
             row += 1
-        mc = ws.cell(row=top, column=1, value=metric)
+        mc = ws.cell(row=top, column=1, value=metric.replace("(백만원)", "(원)"))
         mc.alignment, mc.font, mc.fill = center, Font(bold=True), f_metric
         ws.merge_cells(start_row=top, start_column=1, end_row=row - 1, end_column=1)
         for rr in range(top, row):
@@ -3732,6 +3732,7 @@ def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None)
 
     def _sums(days, bpu):
         s = d[(d["BPU"] == bpu) & d["날짜"].isin(days)]
+        s = s[["카테고리"] + cols].astype({c: "float64" for c in cols})
         return s.groupby("카테고리", observed=True)[cols].sum()
 
     def _value(row, metric):
@@ -3849,7 +3850,7 @@ def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
 
     for k, (metric, kind) in enumerate(_EVENT_CAT_METRICS):
         c0 = 1 + k * (width + 1)
-        unit = " (백만원)" if kind == "mm" else ""
+        unit = " (원)" if kind == "mm" else ""
         ws.cell(row=1, column=c0, value=f"☐ {title_prefix} 카테고리별 {metric}{unit}").font = Font(bold=True, size=12)
         ws.cell(row=2, column=c0 + 2, value="전년 행사기간").alignment = center
         ws.merge_cells(start_row=2, start_column=c0 + 2, end_row=2, end_column=c0 + 4)
@@ -3866,9 +3867,7 @@ def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
                 v = r[key]
                 c = ws.cell(row=row, column=c0 + off)
                 if v is not None:
-                    if kind == "mm":
-                        c.value, c.number_format = v / 1e6, "#,##0.0"
-                    elif kind == "pct":
+                    if kind == "pct":
                         c.value, c.number_format = v / 100, "0.0%"
                     else:
                         c.value, c.number_format = v, "#,##0"
@@ -3882,9 +3881,7 @@ def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
             yc.alignment = right
             dc = ws.cell(row=row, column=c0 + 5)
             if r["diff"] is not None:
-                if kind == "mm":
-                    dc.value, dc.number_format = r["diff"] / 1e6, "+#,##0.0;-#,##0.0;0.0"
-                elif kind == "pct":
+                if kind == "pct":
                     dc.value, dc.number_format = r["diff"], '+0.0"%p";-0.0"%p";0.0"%p"'
                 else:
                     dc.value, dc.number_format = r["diff"], "+#,##0;-#,##0;0"
