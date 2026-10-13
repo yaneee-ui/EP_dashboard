@@ -49,6 +49,7 @@ from dashboard_helpers import (
     load_event_calendar, compute_event_comparison, render_event_comparison_tables,
     render_event_comparison_summary, build_event_comparison_excel,
     compute_event_detail, render_event_detail_html, build_event_detail_excel,
+    compute_event_category_detail, render_event_category_table_html, add_event_category_sheet,
 )
 
 
@@ -4970,14 +4971,40 @@ if side["page"].startswith("12."):
                         f"({_ev_detail['n']}일) · 거래액 단위 백만원 · CR/객단가는 합계 기준 재계산 · "
                         "비교 기간은 위에서 고른 '비교 기간'(작년 행사)을 그대로 써요"
                     )
+                    _ev_cat = (
+                        compute_event_category_detail(
+                            df_category, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a
+                        ) if not df_category.empty else None
+                    )
+                    _ev_xlsx = build_event_detail_excel(_ev_detail, _ev_title, _ev_ya, _ev_yb)
+                    if _ev_cat is not None:
+                        _ev_xlsx = add_event_category_sheet(_ev_xlsx, _ev_cat, _ev_name, _ev_ya, _ev_yb)
                     st.download_button(
-                        "⬇️ 행사 상세 실적 엑셀 다운로드",
-                        data=build_event_detail_excel(_ev_detail, _ev_title, _ev_ya, _ev_yb),
+                        "⬇️ 행사 상세 실적 엑셀 다운로드 (BPU별 + 카테고리별 시트)",
+                        data=_ev_xlsx,
                         file_name=f"행사상세실적_{range_b_input[0].strftime('%Y%m%d')}.xlsx",
                         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                         key="event_detail_dl",
                     )
                     render_event_detail_html(_ev_detail, _ev_title, _ev_ya, _ev_yb)
+
+                    if _ev_cat is not None and _ev_cat["n"]:
+                        st.markdown(f"##### 📋 {_ev_name} 카테고리별 상세 (정상 / 이월 / 입점)")
+                        st.caption(
+                            "카테고리 원본 기준이라 위 BPU 표의 트래픽/구매객수와 소폭 다를 수 있어요 "
+                            "(거래액은 동일) · 증감 = 올해 − 작년(CR은 %p) · 거래액 단위 백만원"
+                        )
+                        _evc_metrics = ["거래액", "트래픽", "구매객수", "CR", "객단가"]
+                        for _row_metrics in (_evc_metrics[:3], _evc_metrics[3:]):
+                            _evc_cols = st.columns(3)
+                            for _col, _m in zip(_evc_cols, _row_metrics):
+                                with _col:
+                                    st.markdown(
+                                        render_event_category_table_html(
+                                            _ev_cat, _m, f"{_ev_name} 카테고리별 {_m}", _ev_ya, _ev_yb
+                                        ),
+                                        unsafe_allow_html=True,
+                                    )
                 st.markdown("---")
 
                 st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)

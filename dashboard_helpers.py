@@ -3695,3 +3695,223 @@ def build_event_detail_excel(result, title, year_a, year_b):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+# ============================================================
+# 행사 카테고리별 상세 (정상/이월/입점[3BPU·4BPU] x 카테고리, 작년 vs 올해)
+# ============================================================
+_EVENT_CAT_SECTIONS = [
+    # (구분, [(소계 행 라벨, BPU)])
+    ("정상", [("전체", "e-영업1")]),
+    ("이월", [("전체", "e-영업2")]),
+    ("입점", [("3BPU", "e-영업3"), ("4BPU", "e-영업4")]),
+]
+_EVENT_CAT_METRICS = [
+    # (표시 이름, 종류, 설명)  종류: mm=백만원, int=정수, pct=비율(%)
+    ("거래액", "mm"), ("트래픽", "int"), ("구매객수", "int"), ("CR", "pct"), ("객단가", "int"),
+]
+
+
+def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None):
+    """행사 기간(올해 range_b vs 비교 range_a)의 정상/이월/입점(3BPU·4BPU) x 카테고리별
+    거래액·트래픽·구매객수·CR·객단가. 올해 데이터가 있는 일수만큼만 비교 기간도 앞에서부터
+    잘라 일수를 맞춘다. CR/객단가는 합계/합계로 재계산. 증감(diff)은 올해-작년(CR은 %p)."""
+    d = df_category
+    if "회원구분" in d.columns:
+        d = d[d["회원구분"] == "전체"]
+    d = d[d["브랜드"] == "전체"]
+    have = set(pd.to_datetime(d["날짜"].unique()))
+    cur_days = [x for x in pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1])) if x in have]
+    n = len(cur_days)
+    if range_a is not None:
+        prev_days = [x for x in pd.date_range(pd.Timestamp(range_a[0]), pd.Timestamp(range_a[1])) if x in have][:n]
+    else:
+        prev_days = [x - pd.Timedelta(days=364) for x in cur_days]
+
+    cols = ["거래액", "트래픽", "구매객수"]
+
+    def _sums(days, bpu):
+        s = d[(d["BPU"] == bpu) & d["날짜"].isin(days)]
+        return s.groupby("카테고리", observed=True)[cols].sum()
+
+    def _value(row, metric):
+        if row is None:
+            return None
+        g, t, c = float(row["거래액"]), float(row["트래픽"]), float(row["구매객수"])
+        div = n if (agg == "mean" and n) else 1
+        if metric == "거래액":
+            return g / div
+        if metric == "트래픽":
+            return t / div
+        if metric == "구매객수":
+            return c / div
+        if metric == "CR":
+            return c / t * 100 if t else None
+        return g / c if c else None  # 객단가
+
+    def _get(tbl, name):
+        return tbl.loc[name] if name in tbl.index else None
+
+    out = {}
+    for metric, kind in _EVENT_CAT_METRICS:
+        rows = []
+        for grp, subs in _EVENT_CAT_SECTIONS:
+            for sub_label, bpu in subs:
+                ta, tb = _sums(prev_days, bpu), _sums(cur_days, bpu)
+                names = ["전체"] + sorted(n_ for n_ in (set(ta.index) | set(tb.index)) if n_ != "전체")
+                for name in names:
+                    ra, rb = _get(ta, name), _get(tb, name)
+                    if name != "전체":
+                        if not ((ra is not None and ra.sum()) or (rb is not None and rb.sum())):
+                            continue
+                    a, b = _value(ra, metric), _value(rb, metric)
+                    rows.append({
+                        "구분": grp, "카테고리": sub_label if name == "전체" else name,
+                        "is_total": name == "전체", "A": a, "B": b, "kind": kind,
+                        "전년비": ((b / a - 1) * 100 if (a and b is not None) else None),
+                        "diff": (b - a) if (a is not None and b is not None) else None,
+                    })
+        out[metric] = rows
+    return {
+        "metrics": out, "n": n, "agg": agg,
+        "cur": (cur_days[0], cur_days[-1]) if cur_days else None,
+        "prev": (prev_days[0], prev_days[-1]) if prev_days else None,
+    }
+
+
+def _evc_fmt(v, kind, diff=False):
+    if v is None or pd.isna(v):
+        return ""
+    if kind == "mm":
+        return f"{v / 1e6:,.1f}"
+    if kind == "pct":
+        return f"{v:.1f}%p" if diff else f"{v:.1f}%"
+    return f"{v:,.0f}"
+
+
+def render_event_category_table_html(result, metric, title, year_a, year_b):
+    """한 지표의 카테고리별 표(구분/카테고리/작년/올해/전년비/증감)를 HTML 문자열로 반환."""
+    rows = result["metrics"][metric]
+    kind = dict(_EVENT_CAT_METRICS)[metric]
+    th = "padding:3px 6px;border:1px solid #6b7280;text-align:center;font-size:0.76rem;font-weight:700;"
+    td = "padding:3px 6px;border:1px solid #9ca3af;text-align:right;font-size:0.78rem;"
+    unit = " (백만원)" if kind == "mm" else ""
+    head = (f"<tr><th style='{th}background:#fff;'>구분</th><th style='{th}background:#fff;'>카테고리</th>"
+            f"<th style='{th}background:#fff;'>{year_a % 100}년</th><th style='{th}background:#fff;'>{year_b % 100}년</th>"
+            f"<th style='{th}background:#fff;'>전년비</th><th style='{th}background:#fff;color:#9ca3af;'>증감</th></tr>")
+    span = {}
+    for r in rows:
+        span[r["구분"]] = span.get(r["구분"], 0) + 1
+    seen, body = set(), ""
+    for r in rows:
+        first = ""
+        if r["구분"] not in seen:
+            seen.add(r["구분"])
+            first = f"<td rowspan='{span[r['구분']]}' style='{th}background:#e5e7eb;'>{r['구분']}</td>"
+        bg = "background:#e5e7eb;font-weight:700;" if r["is_total"] else ""
+        yo = r["전년비"]
+        if yo is None:
+            yo_html = ""
+        elif yo < 0:
+            yo_html = f"<span style='color:#dc2626;'>△{abs(yo):.0f}%</span>"
+        else:
+            yo_html = f"{yo:.0f}%"
+        df_ = r["diff"]
+        if df_ is None:
+            df_html = ""
+        else:
+            col = "#16a34a" if df_ > 0 else ("#dc2626" if df_ < 0 else "#9ca3af")
+            shown = df_ / 1e6 if kind == "mm" else df_
+            txt = f"{shown:+,.1f}" if kind in ("mm", "pct") else f"{shown:+,.0f}"
+            df_html = f"<span style='color:{col};font-size:0.74rem;font-weight:600;'>{txt}</span>"
+        body += (f"<tr>{first}<td style='{th}{bg}'>{r['카테고리']}</td>"
+                 f"<td style='{td}{bg}'>{_evc_fmt(r['A'], kind)}</td><td style='{td}{bg}'>{_evc_fmt(r['B'], kind)}</td>"
+                 f"<td style='{td}{bg}'>{yo_html}</td><td style='{td}'>{df_html}</td></tr>")
+    return (f"<div style='font-weight:700;margin:4px 0 2px;'>☐ {title}{unit}</div>"
+            f"<div style='font-size:0.74rem;color:#6b7280;margin-bottom:2px;'>전년 행사기간</div>"
+            f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;'>{head}{body}</table></div>")
+
+
+def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
+    """기존 행사 상세 실적 엑셀(bytes)에 '카테고리별' 시트를 추가해서 새 bytes로 반환.
+    5개 지표 표(거래액/트래픽/구매객수/CR/객단가)를 가로로 나란히 배치."""
+    import openpyxl
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes))
+    ws = wb.create_sheet("카테고리별")
+    thin = Side(style="thin", color="6B7280")
+    box = Border(left=thin, right=thin, top=thin, bottom=thin)
+    f_total = PatternFill("solid", fgColor="E5E7EB")
+    center = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    right = Alignment(horizontal="right", vertical="center")
+    width = 6
+
+    for k, (metric, kind) in enumerate(_EVENT_CAT_METRICS):
+        c0 = 1 + k * (width + 1)
+        unit = " (백만원)" if kind == "mm" else ""
+        ws.cell(row=1, column=c0, value=f"☐ {title_prefix} 카테고리별 {metric}{unit}").font = Font(bold=True, size=12)
+        ws.cell(row=2, column=c0 + 2, value="전년 행사기간").alignment = center
+        ws.merge_cells(start_row=2, start_column=c0 + 2, end_row=2, end_column=c0 + 4)
+        for j, h in enumerate(["구분", "카테고리", f"{year_a % 100}년", f"{year_b % 100}년", "전년비", "증감"]):
+            c = ws.cell(row=3, column=c0 + j, value=h)
+            c.font, c.alignment, c.border = Font(bold=True, color="9CA3AF" if h == "증감" else None), center, box
+        rows = result["metrics"][metric]
+        row = 4
+        top_by_grp = {}
+        for r in rows:
+            top_by_grp.setdefault(r["구분"], [row, row])[1] = row
+            ws.cell(row=row, column=c0 + 1, value=r["카테고리"]).alignment = center
+            for off, key in ((2, "A"), (3, "B")):
+                v = r[key]
+                c = ws.cell(row=row, column=c0 + off)
+                if v is not None:
+                    if kind == "mm":
+                        c.value, c.number_format = v / 1e6, "#,##0.0"
+                    elif kind == "pct":
+                        c.value, c.number_format = v / 100, "0.0%"
+                    else:
+                        c.value, c.number_format = v, "#,##0"
+                c.alignment = right
+            yc = ws.cell(row=row, column=c0 + 4)
+            if r["전년비"] is not None:
+                yc.value = r["전년비"] / 100
+                yc.number_format = '0%;"△"0%'
+                if r["전년비"] < 0:
+                    yc.font = Font(color="DC2626", bold=r["is_total"])
+            yc.alignment = right
+            dc = ws.cell(row=row, column=c0 + 5)
+            if r["diff"] is not None:
+                if kind == "mm":
+                    dc.value, dc.number_format = r["diff"] / 1e6, "+#,##0.0;-#,##0.0;0.0"
+                elif kind == "pct":
+                    dc.value, dc.number_format = r["diff"], '+0.0"%p";-0.0"%p";0.0"%p"'
+                else:
+                    dc.value, dc.number_format = r["diff"], "+#,##0;-#,##0;0"
+                dc.font = Font(size=9, bold=True, color="16A34A" if r["diff"] > 0 else ("DC2626" if r["diff"] < 0 else "9CA3AF"))
+            dc.alignment = right
+            for j in range(1, width):
+                cell = ws.cell(row=row, column=c0 + j)
+                cell.border = box
+                if r["is_total"] and j < 5:
+                    cell.fill = f_total
+                    if j >= 1:
+                        _neg = j == 4 and r["전년비"] is not None and r["전년비"] < 0
+                        cell.font = Font(bold=True, color="DC2626" if _neg else None)
+            row += 1
+        for grp, (t, b) in top_by_grp.items():
+            g = ws.cell(row=t, column=c0, value=grp)
+            g.alignment, g.font, g.fill = center, Font(bold=True), f_total
+            if b > t:
+                ws.merge_cells(start_row=t, start_column=c0, end_row=b, end_column=c0)
+            for rr in range(t, b + 1):
+                ws.cell(row=rr, column=c0).border = box
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c0)].width = 7
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c0 + 1)].width = 11
+        for j in range(2, width):
+            ws.column_dimensions[openpyxl.utils.get_column_letter(c0 + j)].width = 11
+        ws.column_dimensions[openpyxl.utils.get_column_letter(c0 + width)].width = 3
+
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
