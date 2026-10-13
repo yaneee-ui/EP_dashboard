@@ -3826,9 +3826,14 @@ def render_event_category_table_html(result, metric, title, year_a, year_b):
         body += (f"<tr>{first}<td style='{th}{bg}'>{r['카테고리']}</td>"
                  f"<td style='{td}{bg}'>{_evc_fmt(r['A'], kind)}</td><td style='{td}{bg}'>{_evc_fmt(r['B'], kind)}</td>"
                  f"<td style='{td}{bg}'>{yo_html}</td><td style='{td}'>{df_html}</td></tr>")
-    return (f"<div style='font-weight:700;margin:4px 0 2px;'>☐ {title}{unit}</div>"
-            f"<div style='font-size:0.74rem;color:#6b7280;margin-bottom:2px;'>전년 행사기간</div>"
-            f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;'>{head}{body}</table></div>")
+    # 보고서 양식처럼 '전년 행사기간'은 25년/26년/전년비 열 위에 가운데 정렬, 단위는 오른쪽 끝 위에 둔다
+    pre = ("<tr>"
+           "<td colspan='2' style='border:none;'></td>"
+           "<td colspan='3' style='border:none;text-align:center;font-size:0.74rem;color:#6b7280;padding:2px 0;'>전년 행사기간</td>"
+           f"<td style='border:none;text-align:right;font-size:0.72rem;color:#6b7280;padding:2px 0;white-space:nowrap;'>{unit.strip()}</td>"
+           "</tr>")
+    return (f"<div style='font-weight:700;margin:4px 0 2px;'>☐ {title}</div>"
+            f"<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;'>{pre}{head}{body}</table></div>")
 
 
 def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
@@ -3848,10 +3853,11 @@ def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
 
     for k, (metric, kind) in enumerate(_EVENT_CAT_METRICS):
         c0 = 1 + k * (width + 1)
-        unit = " (원)" if kind == "mm" else ""
-        ws.cell(row=1, column=c0, value=f"☐ {title_prefix} 카테고리별 {metric}{unit}").font = Font(bold=True, size=12)
+        ws.cell(row=1, column=c0, value=f"☐ {title_prefix} 카테고리별 {metric}").font = Font(bold=True, size=12)
         ws.cell(row=2, column=c0 + 2, value="전년 행사기간").alignment = center
         ws.merge_cells(start_row=2, start_column=c0 + 2, end_row=2, end_column=c0 + 4)
+        if kind == "mm":
+            ws.cell(row=2, column=c0 + 5, value="(원)").alignment = right
         for j, h in enumerate(["구분", "카테고리", f"{year_a % 100}년", f"{year_b % 100}년", "전년비", "증감"]):
             c = ws.cell(row=3, column=c0 + j, value=h)
             c.font, c.alignment, c.border = Font(bold=True, color="9CA3AF" if h == "증감" else None), center, box
