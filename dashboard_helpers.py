@@ -13,7 +13,7 @@ import io
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, UNIT_CONFIG,
     compute_kpi_deltas, raw_cutoff_date, effective_month_of_week, week_of_month,
-    format_delta_html, pct_delta_safe, metric_kpi_stats, metric_period_series,
+    format_delta_html, pct_delta_safe, metric_kpi_stats, metric_period_series, week_start_label,
 )
 from ai_insights import generate_ranking_insights, render_ranking_insight_box
 
@@ -58,7 +58,7 @@ def render_week_range_filter(series, key_prefix, col_slider, col_reset, default_
     series: 이미 '주별'로 리샘플된(Monday 라벨) 시리즈. 반환값: 선택 범위로 잘라진 시리즈."""
     if series.empty:
         return series
-    labels = [f"{effective_month_of_week(d).month}월 {week_of_month(d)}주차" for d in series.index]
+    labels = [week_start_label(d) for d in series.index]
     n = len(labels)
     default_start_idx = max(0, n - default_weeks)
     _range_key = f"{key_prefix}_wkrange"
@@ -212,11 +212,7 @@ def _week_labels_for_year(daily_df, metric, year):
     labels = []
     for bucket_end in weekly_raw.index:
         mon = bucket_end - pd.Timedelta(days=6)
-        eff = effective_month_of_week(mon)
-        if eff.year != year:
-            labels.append(f"{eff.year % 100}년 {eff.month}월 {week_of_month(mon)}주차")
-        else:
-            labels.append(f"{eff.month}월 {week_of_month(mon)}주차")
+        labels.append(week_start_label(mon))
     return labels
 
 
@@ -1497,7 +1493,7 @@ def render_next_month_target_table(result, next_month):
         return f"{start.month}/{start.day}~{end.month}/{end.day}"
 
     header_cells = "".join(
-        f"<th style='text-align:right;'>{next_month}월 {wn}주차<br>"
+        f"<th style='text-align:right;'>{week_start_label(start)}<br>"
         f"<span style='font-weight:400;color:#9ca3af;font-size:0.72rem;'>({_date_range(start, end)})</span></th>"
         for wn, _, _, start, end in weeks
     )
@@ -1548,7 +1544,7 @@ def build_next_month_target_excel(result, ref_year, next_month, next_year):
     ws.cell(row=header_row, column=1).font = BOLD
     weeks = result["weeks"]
     for i, (wn, _, _, start, end) in enumerate(weeks, start=2):
-        c = ws.cell(row=header_row, column=i, value=f"{next_month}월 {wn}주차\n({start.month}/{start.day}~{end.month}/{end.day})")
+        c = ws.cell(row=header_row, column=i, value=f"{week_start_label(start)}\n({start.month}/{start.day}~{end.month}/{end.day})")
         c.fill = HEADER_FILL
         c.font = BOLD
         c.alignment = Alignment(horizontal="center", wrap_text=True)

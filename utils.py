@@ -338,16 +338,22 @@ def week_of_month(date) -> int:
     return sum(1 for m in mondays_in_month if m <= date)
 
 
+def week_start_label(date) -> str:
+    """주 라벨은 그 주 월요일 날짜로 통일한다. 예) 2026-10-05(월)~10-11(일) 주 -> '26-10-05주'.
+    date가 주 중간/일요일이어도 그 주의 월요일로 맞춘다."""
+    d = pd.Timestamp(date)
+    mon = d - pd.Timedelta(days=d.weekday())
+    return f"{mon.strftime('%y')}-{mon.month:02d}-{mon.day:02d}주"
+
+
 def make_period_label(last_date, unit: str) -> str:
-    """조회 기준 라벨. 예) '26년 7월 2주차' / '26년 7월 11일' / '26년 6월'."""
+    """조회 기준 라벨. 예) '26-10-05주' / '26년 7월 11일' / '26년 6월'."""
     d = pd.Timestamp(last_date)
     yy = d.strftime("%y")
     if unit == "일별":
         return f"{yy}년 {d.month}월 {d.day}일"
     elif unit == "주별":
-        eff = effective_month_of_week(d)
-        wom = week_of_month(d)
-        return f"{eff.strftime('%y')}년 {eff.month}월 {wom}주차"
+        return week_start_label(d)
     elif unit == "월마감":
         return f"{yy}년 {d.month}월 (마감)"
     else:  # 월별

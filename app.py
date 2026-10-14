@@ -28,7 +28,7 @@ from utils import (
     format_value, format_delta_html, format_delta_text, pct_delta_safe,
 )
 from utils import _match_mean, _partial_last_period
-from utils import metric_kpi_stats, metric_period_series
+from utils import metric_kpi_stats, metric_period_series, week_start_label
 from styles import CUSTOM_CSS
 from insight_card import render_insight_card
 from dashboard_helpers import (
@@ -286,7 +286,7 @@ with _sticky:
                     _cp_ref_preview = _cp_max_d.strftime("%Y-%m-%d")
             else:
                 _cp_period_labels = [
-                    (d.strftime("%Y년 %m월") if coupon_unit == "월별" else f"{d.strftime('%Y-%m-%d')} 주")
+                    (d.strftime("%Y년 %m월") if coupon_unit == "월별" else week_start_label(d))
                     for d in _cp_period_s.index
                 ]
                 _cp_default_label = _cp_period_labels[-1] if _cp_period_labels else ""
@@ -642,7 +642,11 @@ with _sticky:
             _wk7_total = df_traffic[df_traffic["BPU"] == "Total"]
             _wk7_labels_25 = _week_labels_for_year(_wk7_total, "트래픽", 2025)
             _wk7_labels_26 = _week_labels_for_year(_wk7_total, "트래픽", 2026)
-            _wk7_labels = _wk7_labels_25 if len(_wk7_labels_25) >= len(_wk7_labels_26) else _wk7_labels_26
+            _wk7_n_weeks = max(len(_wk7_labels_25), len(_wk7_labels_26))
+            # 주 라벨은 올해(26년) 기준 월요일 날짜('26-10-05주')로 통일 — 올해 N번째 주의 날짜.
+            # 작년 같은 순번 주는 같은 x 위치에 맞춰 비교되므로, 라벨은 올해 날짜 하나로 둔다.
+            _wk7_first_mon = pd.Timestamp("2026-01-01") - pd.Timedelta(days=pd.Timestamp("2026-01-01").weekday())
+            _wk7_labels = [week_start_label(_wk7_first_mon + pd.Timedelta(weeks=i)) for i in range(_wk7_n_weeks)]
             if not _wk7_labels:
                 _wk7_labels = ["1주차"]
 
@@ -2965,7 +2969,7 @@ if side["page"].startswith("9."):
             _combined_full["비용률"] = (_combined_full["쿠폰할인"] / _combined_full["거래액"] * 100).where(_combined_full["거래액"] > 0)
             _combined_full = _combined_full.sort_index()
             _prev_label_txt = "전일비" if coupon_unit == "일별" else "전주비"
-            _period_fmt = (lambda d: d.strftime("%Y-%m-%d")) if coupon_unit == "일별" else (lambda d: f"{d.strftime('%Y-%m-%d')} 주")
+            _period_fmt = (lambda d: d.strftime("%Y-%m-%d")) if coupon_unit == "일별" else week_start_label
             _prev_label, _has_yoy = _prev_label_txt, False
             _step = {"일별": pd.DateOffset(days=1), "주별": pd.DateOffset(weeks=1)}[coupon_unit]
 
@@ -3107,10 +3111,13 @@ if side["page"].startswith("9."):
                 # ============================================================
                 st.markdown(f"**{coupon_unit} 쿠폰할인 · 비용률 추이**")
 
-                _chart_series = _combined
-                if coupon_unit == "일별" and len(_combined) > 1:
+                # 쿠폰 그래프에서는 24년 이력은 제외한다(원본엔 있어도 전년비 계산용일 뿐) — 25년 이후만 표시.
+                _CP_CHART_MIN = pd.Timestamp("2025-01-01")
+                _cp_chart_min_date = max(_combined.index.min(), _CP_CHART_MIN).date()
+                _chart_series = _combined[_combined.index >= _CP_CHART_MIN]
+                if coupon_unit == "일별" and len(_chart_series) > 1:
                     _cp_chart_default_start = max(
-                        _combined.index.min().date(), _combined.index.max().date() - _dt.timedelta(days=30)
+                        _cp_chart_min_date, _combined.index.max().date() - _dt.timedelta(days=30)
                     )
                     _cp_chart_key = f"coupon_chart_range_{coupon_bpu}_{coupon_type_sel}"
                     _cc1, _cc2 = st.columns([2, 1])
@@ -3119,7 +3126,7 @@ if side["page"].startswith("9."):
                         _cp_chart_dr = st.date_input(
                             "그래프 기간",
                             value=(_cp_chart_default_start, _combined.index.max().date()),
-                            min_value=_combined.index.min().date(), max_value=_combined.index.max().date(),
+                            min_value=_cp_chart_min_date, max_value=_combined.index.max().date(),
                             label_visibility="collapsed", key=_cp_chart_key,
                         )
                     with _cc2:
@@ -3130,7 +3137,8 @@ if side["page"].startswith("9."):
                         )
                     if isinstance(_cp_chart_dr, tuple) and len(_cp_chart_dr) == 2:
                         _chart_series = _combined[
-                            (_combined.index >= pd.Timestamp(_cp_chart_dr[0])) & (_combined.index <= pd.Timestamp(_cp_chart_dr[1]))
+                            (_combined.index >= max(pd.Timestamp(_cp_chart_dr[0]), _CP_CHART_MIN))
+                            & (_combined.index <= pd.Timestamp(_cp_chart_dr[1]))
                         ]
 
                 import altair as alt
@@ -3554,7 +3562,7 @@ if side["page"].startswith("11."):
         _wk4_abs_last = df_traffic["날짜"].max()
         _wk4_ref_monday = _wk4_abs_last - pd.Timedelta(days=_wk4_abs_last.weekday())
         _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(4, -1, -1)]  # 오래된 주 -> 최신 주 순
-        _wk4_labels = [f"{effective_month_of_week(d).month}월 {week_of_month(d)}주차" for d in _wk4_starts]
+        _wk4_labels = [week_start_label(d) for d in _wk4_starts]
 
         _wk4_metric_defs = [
             ("거래액", "거래액", None, False),
@@ -4130,7 +4138,7 @@ def _render_weekly_segment_page(page_title, traffic_segment):
                 _wk_25_rng = f"{_md(min(_wk_matching_25))}-{_md(max(_wk_matching_25))}"
                 _wk_partial_note = "" if len(_wk_actual_days_26) >= 7 else f" (진행 중 — {len(_wk_actual_days_26)}일치)"
                 st.caption(
-                    f"📅 최신 주차({_wk_last_week_num}주차) 기준: 26년 {_wk_26_rng}{_wk_partial_note}"
+                    f"📅 최신 주차({week_start_label(_wk_week_start_26)}) 기준: 26년 {_wk_26_rng}{_wk_partial_note}"
                     f"  vs  25년(동요일) {_wk_25_rng}"
                 )
 
