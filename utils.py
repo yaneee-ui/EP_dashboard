@@ -127,13 +127,42 @@ def _partial_last_period(daily: pd.Series, unit: str):
     return is_partial, cur_days, step
 
 
-def compute_kpi_deltas(series: pd.Series, unit: str, raw_daily: pd.Series = None):
+def _match_ratio(num: pd.Series, den: pd.Series, dates, scale=1.0):
+    """_match_mean의 비율 지표 버전 — dates에 해당하는 날들의 분자/분모를 각각 합산한 뒤
+    나눈다(일별 비율의 단순평균 금지). 정확한 날짜가 없으면 그 이전 가장 가까운 날로 근사."""
+    if num.empty or den.empty:
+        return None
+    n_tot = d_tot = 0.0
+    for t in dates:
+        if t in num.index and t in den.index:
+            n_v, d_v = num.loc[t], den.loc[t]
+        else:
+            cand = num.index[num.index <= t]
+            if not len(cand):
+                continue
+            n_v = num.loc[cand[-1]]
+            d_v = den.loc[cand[-1]] if cand[-1] in den.index else None
+        if n_v is None or d_v is None or pd.isna(n_v) or pd.isna(d_v):
+            continue
+        n_tot += float(n_v)
+        d_tot += float(d_v)
+    if not d_tot:
+        return None
+    return n_tot / d_tot * scale
+
+
+def compute_kpi_deltas(series: pd.Series, unit: str, raw_daily: pd.Series = None,
+                       den_daily: pd.Series = None, scale: float = 1.0):
     """최신 시점 기준 현재값 + 3종 증감률(전기간/평균/전년) 계산.
 
     raw_daily(리샘플 전 일별 시리즈)를 주면, 진행 중인(부분) 달/주를 볼 때 비교 대상도
     '같은 일수만큼'으로 맞춰 계산한다. 예) 8월이 1~3일치만 있으면, 전년비를 '작년 8월 전체
     평균'이 아니라 '작년 같은 날들(동요일 364일 전)'과 비교 — 일별 카드와 결과가 일치.
-    raw_daily가 없으면 기존 동작 그대로(완성 기간 기준)."""
+    raw_daily가 없으면 기존 동작 그대로(완성 기간 기준).
+
+    den_daily를 주면 비율 지표(CR/객단가) 모드 — raw_daily는 분자 일별 시리즈, den_daily는
+    분모 일별 시리즈이고, 부분기간 보정에서 '일별 비율의 평균'이 아니라 분자합/분모합으로
+    계산한다(scale: CR은 100)."""
     cfg = UNIT_CONFIG[unit]
     series = series.dropna()
     if series.empty:
@@ -157,24 +186,30 @@ def compute_kpi_deltas(series: pd.Series, unit: str, raw_daily: pd.Series = None
         rd = raw_daily.dropna().sort_index()
         is_partial, cur_days, step = _partial_last_period(rd, unit)
         if is_partial and cur_days is not None and len(cur_days) > 0:
-            _cur_raw = rd.loc[cur_days].mean()
-            if not pd.isna(_cur_raw):
+            if den_daily is not None:
+                _dd = den_daily.sort_index()
+                _mm = lambda dates: _match_ratio(rd, _dd, dates, scale)  # noqa: E731
+                _cur_raw = _mm(list(cur_days))
+            else:
+                _mm = lambda dates: _match_mean(rd, dates)  # noqa: E731
+                _cur_raw = rd.loc[cur_days].mean()
+            if _cur_raw is not None and not pd.isna(_cur_raw):
                 current = float(_cur_raw)
             # 전월/전주비: 한 기간 전, 같은 일자들
-            _prev2 = _match_mean(rd, [d - step for d in cur_days])
+            _prev2 = _mm([d - step for d in cur_days])
             if _prev2 is not None:
                 prev, prev_delta = _prev2, _pct_delta(current, _prev2)
             # 평균비: 이전 avg_window개 기간 각각 같은 일자 평균 → 다시 평균
             _pmeans = []
             for k in range(1, cfg["avg_window"] + 1):
-                m = _match_mean(rd, [d - k * step for d in cur_days])
+                m = _mm([d - k * step for d in cur_days])
                 if m is not None:
                     _pmeans.append(m)
             if _pmeans:
                 avg_ref = sum(_pmeans) / len(_pmeans)
                 avg_delta = _pct_delta(current, avg_ref)
             # 전년비: 364일(동요일) 기준으로 같은 일자들
-            _yoy2 = _match_mean(rd, [d - pd.Timedelta(days=364) for d in cur_days])
+            _yoy2 = _mm([d - pd.Timedelta(days=364) for d in cur_days])
             if _yoy2 is not None:
                 yoy_ref, yoy_delta = _yoy2, _pct_delta(current, _yoy2)
 
@@ -336,3 +371,49 @@ def is_last_period_partial(df, unit) -> bool:
         month_end = next_month - pd.Timedelta(days=1)
         return last_date < month_end
     return False
+
+
+# ---- 비율 지표(CR/객단가)는 항상 분자합/분모합으로 계산 (일별 비율 단순평균 금지) ----
+RATIO_METRICS = {"CR": ("구매객수", "트래픽", 100.0), "객단가": ("거래액", "구매객수", 1.0)}
+_FLOW_METRICS = {"트래픽", "거래액", "구매객수"}
+
+
+def metric_period_series(df: pd.DataFrame, col_name: str, unit: str) -> pd.Series:
+    """df(날짜 컬럼 포함, 일별)의 col_name을 조회 단위(unit)로 리샘플한 시계열.
+    트래픽/거래액/구매객수는 월마감이면 합계·그 외 평균, CR/객단가는 분자합/분모합(df에 구매객수·
+    트래픽·거래액 컬럼 필요). 주별 라벨 이동·월마감 미완성 마지막 달 제외까지 적용한다."""
+    cfg = UNIT_CONFIG[unit]
+    d = df.set_index("날짜").sort_index()
+    if col_name in RATIO_METRICS and all(c in d.columns for c in RATIO_METRICS[col_name][:2]):
+        nc, dc, scale = RATIO_METRICS[col_name]
+        n_r = d[nc].resample(cfg["rule"]).sum()
+        d_r = d[dc].resample(cfg["rule"]).sum()
+        series = (n_r / d_r * scale).where(d_r > 0)
+    else:
+        agg = "sum" if (unit == "월마감" and col_name in _FLOW_METRICS) else "mean"
+        series = d[col_name].resample(cfg["rule"]).agg(agg)
+    if unit == "주별":
+        series.index = series.index - pd.Timedelta(days=6)
+    elif unit == "월마감" and not series.empty and d.index.max() < series.index[-1]:
+        series = series.iloc[:-1]
+    return series
+
+
+def metric_kpi_stats(df: pd.DataFrame, col_name: str, unit: str, selected_period_date=None):
+    """metric_period_series + 기준시점 자르기 + 부분기간 보정(compute_kpi_deltas)을 한 번에.
+    CR/객단가는 부분기간·동요일 매칭에서도 분자합/분모합으로 계산한다."""
+    series = metric_period_series(df, col_name, unit)
+    if selected_period_date is not None and not series.empty:
+        series = series[series.index <= selected_period_date]
+    d = df.set_index("날짜").sort_index()
+    cutoff = raw_cutoff_date(selected_period_date, unit) if selected_period_date is not None else None
+    if col_name in RATIO_METRICS and all(c in d.columns for c in RATIO_METRICS[col_name][:2]):
+        nc, dc, scale = RATIO_METRICS[col_name]
+        num, den = d[nc], d[dc]
+        if cutoff is not None:
+            num, den = num[num.index <= cutoff], den[den.index <= cutoff]
+        return compute_kpi_deltas(series, unit, raw_daily=num, den_daily=den, scale=scale)
+    raw = d[col_name]
+    if cutoff is not None:
+        raw = raw[raw.index <= cutoff]
+    return compute_kpi_deltas(series, unit, raw_daily=raw)

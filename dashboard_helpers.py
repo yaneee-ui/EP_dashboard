@@ -13,7 +13,7 @@ import io
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, UNIT_CONFIG,
     compute_kpi_deltas, raw_cutoff_date, effective_month_of_week, week_of_month,
-    format_delta_html, pct_delta_safe,
+    format_delta_html, pct_delta_safe, metric_kpi_stats, metric_period_series,
 )
 from ai_insights import generate_ranking_insights, render_ranking_insight_box
 
@@ -663,32 +663,17 @@ def compute_bpu_comparison_rows(df_traffic, unit="일별", selected_period_date=
     SUMMABLE_METRICS = {"트래픽", "거래액", "구매객수"}
     cfg = UNIT_CONFIG[unit]
 
-    def _series_for(bpu_key, metric, member="전체"):
+    def _sub_for(bpu_key, member="전체"):
         if bpu_key in BPU_GROUPS:
-            sub = aggregate_traffic(df_traffic, BPU_GROUPS[bpu_key], member)
-        else:
-            sub = df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == member)]
-        if sub.empty:
-            return pd.Series(dtype="float64"), pd.Series(dtype="float64")
-        s = sub.set_index("날짜")[metric].sort_index()
-        _agg = "sum" if (unit == "월마감" and metric in SUMMABLE_METRICS) else "mean"
-        series = s.resample(cfg["rule"]).agg(_agg)
-        if unit == "주별":
-            series.index = series.index - pd.Timedelta(days=6)
-        elif unit == "월마감":
-            if not series.empty and s.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
-        _s_raw = s
-        if selected_period_date is not None and not series.empty:
-            series = series[series.index <= selected_period_date]
-            _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)]
-        return series, _s_raw
+            return aggregate_traffic(df_traffic, BPU_GROUPS[bpu_key], member)
+        return df_traffic[(df_traffic["BPU"] == bpu_key) & (df_traffic["회원구분"] == member)]
 
     rows = []
     for metric_key, member, metric_label, is_pct in METRICS:
         for bpu_key in BPU_COLS:
-            series, _s_raw = _series_for(bpu_key, metric_key, member)
-            stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+            sub = _sub_for(bpu_key, member)
+            # CR/객단가는 일별 비율의 평균이 아니라 분자합/분모합으로 계산(metric_kpi_stats)
+            stats = metric_kpi_stats(sub, metric_key, unit, selected_period_date) if not sub.empty else None
             rows.append({"metric_label": metric_label, "is_pct": is_pct, "bpu": bpu_key, "stats": stats})
     return rows, cfg, BPU_COLS
 

@@ -49,10 +49,11 @@ def _load_app_functions(*names):
             helpers_src = f.read()
     from utils import (
         UNIT_CONFIG, compute_kpi_deltas, raw_cutoff_date, _partial_last_period, _match_mean,
-        pct_delta_safe,
+        pct_delta_safe, metric_kpi_stats, metric_period_series,
     )
     ns = {
         "pd": pd, "np": np, "io": io,
+        "metric_kpi_stats": metric_kpi_stats, "metric_period_series": metric_period_series,
         "UNIT_CONFIG": UNIT_CONFIG, "compute_kpi_deltas": compute_kpi_deltas,
         "raw_cutoff_date": raw_cutoff_date, "_partial_last_period": _partial_last_period,
         "_match_mean": _match_mean, "pct_delta_safe": pct_delta_safe,
@@ -227,6 +228,34 @@ def test_bpu_weekly_report_aov_matches_gmv_over_count():
 
 
 # ============================================================
+# 3b. CR/객단가는 항상 분자합/분모합 (일별 비율 평균 금지) — metric_kpi_stats
+# ============================================================
+def test_metric_kpi_stats_ratio_of_sums():
+    print("\n[5b] metric_kpi_stats — CR/객단가는 합계 기준 (일별 평균 아님)")
+    from utils import metric_kpi_stats
+    dates = pd.date_range("2026-08-03", "2026-08-12")  # 월요일부터 10일 (진행 중인 8월)
+    traffic = [100, 1000, 100, 1000, 100, 1000, 100, 1000, 100, 1000]
+    buyers = [10, 10, 10, 10, 10, 10, 10, 10, 10, 10]
+    gmv = [t * 100 for t in buyers]
+    df = pd.DataFrame({"날짜": dates, "트래픽": traffic, "구매객수": buyers, "거래액": gmv})
+    df["CR"] = df["구매객수"] / df["트래픽"] * 100
+    st_ = metric_kpi_stats(df, "CR", "월별", pd.Timestamp("2026-08-31"))
+    expected = sum(buyers) / sum(traffic) * 100
+    naive = df["CR"].mean()
+    check(
+        "월별 CR = 구매객수합/트래픽합 (일별 CR 평균과 달라야 함)",
+        st_ is not None and abs(st_["current"] - expected) < 1e-6 and abs(expected - naive) > 1,
+        f"계산={st_['current']:.3f} 기대={expected:.3f} 단순평균={naive:.3f}",
+    )
+    st_d = metric_kpi_stats(df, "객단가", "월별", pd.Timestamp("2026-08-31"))
+    check(
+        "월별 객단가 = 거래액합/구매객수합",
+        st_d is not None and abs(st_d["current"] - sum(gmv) / sum(buyers)) < 1e-6,
+        f"{st_d['current'] if st_d else None}",
+    )
+
+
+# ============================================================
 # 4. 컨버터: 병합 셀(ffill) 처리 — 2026-08-13에 발견한 버그 재현
 # ============================================================
 def test_converter_ffill_merged_cells():
@@ -381,6 +410,7 @@ if __name__ == "__main__":
     test_complete_week_uses_full_average()
     test_ratio_metric_no_naive_average()
     test_bpu_weekly_report_aov_matches_gmv_over_count()
+    test_metric_kpi_stats_ratio_of_sums()
     test_converter_ffill_merged_cells()
     test_pct_delta_safe_handles_negative_base()
     test_render_line_chart_handles_missing_yoy_data()

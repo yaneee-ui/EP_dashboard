@@ -28,6 +28,7 @@ from utils import (
     format_value, format_delta_html, format_delta_text, pct_delta_safe,
 )
 from utils import _match_mean, _partial_last_period
+from utils import metric_kpi_stats, metric_period_series
 from styles import CUSTOM_CSS
 from insight_card import render_insight_card
 from dashboard_helpers import (
@@ -965,18 +966,11 @@ if side["page"].startswith("1."):
         _ff_computed = {}
         for col_name, display_name in all_items:
             s = tr_combo.set_index("날짜")[col_name].sort_index()
-            # 절대값 지표(트래픽/거래액/구매객수)는 월마감이면 합계, 비율 지표(CR/객단가)는 항상 평균
+            # 절대값 지표(트래픽/거래액/구매객수)는 월마감이면 합계, 그 외 일평균. 비율 지표
+            # (CR/객단가)는 항상 분자합/분모합으로 계산(일별 비율 평균 금지) — metric_kpi_stats
             _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
-            if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감":
-                if not series.empty and s.index.max() < series.index[-1]:
-                    series = series.iloc[:-1]
-            if not series.empty:
-                series = series[series.index <= selected_period_date]
+            stats = metric_kpi_stats(tr_combo, col_name, unit, selected_period_date)
             _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
-            stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
             _kpi_computed[display_name] = (col_name, stats)
 
             # CR/객단가는 계산되는 값이라 FF 기여분을 따로 표기할 필요 없음 — 여기서 건너뜀
@@ -1187,11 +1181,7 @@ if side["page"].startswith("1."):
         # 리샘플 (전체 기간 — 전년 비교선용)
         s_raw = tr_combo.set_index("날짜")[tr_metric].sort_index()
         _agg = "sum" if (unit == "월마감" and tr_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
-        tr_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
-        if unit == "주별":
-            tr_full.index = tr_full.index - pd.Timedelta(days=6)
-        elif unit == "월마감" and not tr_full.empty and s_raw.index.max() < tr_full.index[-1]:
-            tr_full = tr_full.iloc[:-1]
+        tr_full = metric_period_series(tr_combo, tr_metric, unit)  # CR/객단가는 분자합/분모합
 
         # 올해만 추출
         latest_year = int(tr_full.index.max().year)
@@ -1351,17 +1341,7 @@ if side["page"].startswith("1."):
         body_rows = []
         prev_label = yoy_label = None
         for col_name, display_name in all_items:
-            s = tr_combo.set_index("날짜")[col_name].sort_index()
-            _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
-            series = s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
-            if unit == "주별":
-                series.index = series.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                series = series.iloc[:-1]
-            if not series.empty:
-                series = series[series.index <= selected_period_date]
-            _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
-            stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
+            stats = metric_kpi_stats(tr_combo, col_name, unit, selected_period_date)
             if stats is None:
                 body_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
                 continue
@@ -1808,14 +1788,7 @@ if side["page"].startswith("2."):
             for col_name, display_name in CAT_METRICS:
                 s = cat_combo.set_index("날짜")[col_name].sort_index()
                 _agg = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
-                series = s.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
-                if unit == "주별":
-                    series.index = series.index - pd.Timedelta(days=6)
-                elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-                    series = series.iloc[:-1]
-                series = series[series.index <= selected_period_date] if not series.empty else series
-                _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
-                _cat_computed[display_name] = (col_name, compute_kpi_deltas(series, unit, raw_daily=_s_raw))
+                _cat_computed[display_name] = (col_name, metric_kpi_stats(cat_combo, col_name, unit, selected_period_date))
 
                 _ff_stats = None
                 # CR/객단가는 트래픽·구매객수·거래액에서 계산되는 값이라, FF 기여분을 따로
@@ -2001,11 +1974,7 @@ if side["page"].startswith("2."):
 
             s_raw = cat_combo.set_index("날짜")[cat_metric].sort_index()
             _agg = "sum" if (unit == "월마감" and cat_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
-            cat_full = s_raw.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg)
-            if unit == "주별":
-                cat_full.index = cat_full.index - pd.Timedelta(days=6)
-            elif unit == "월마감" and not cat_full.empty and s_raw.index.max() < cat_full.index[-1]:
-                cat_full = cat_full.iloc[:-1]
+            cat_full = metric_period_series(cat_combo, cat_metric, unit)  # CR/객단가는 분자합/분모합
 
             latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
             cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
@@ -2149,16 +2118,7 @@ if side["page"].startswith("2."):
             cat_summary_rows = []
             cat_prev_label = cat_yoy_label = None
             for col_name, display_name in CAT_METRICS:
-                s2 = cat_combo.set_index("날짜")[col_name].sort_index()
-                _agg2 = "sum" if (unit == "월마감" and col_name in {"트래픽", "거래액", "구매객수"}) else "mean"
-                series2 = s2.resample(UNIT_CONFIG[unit]["rule"]).agg(_agg2)
-                if unit == "주별":
-                    series2.index = series2.index - pd.Timedelta(days=6)
-                elif unit == "월마감" and not series2.empty and s2.index.max() < series2.index[-1]:
-                    series2 = series2.iloc[:-1]
-                series2 = series2[series2.index <= selected_period_date] if not series2.empty else series2
-                _s2_raw = s2[s2.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s2
-                stats2 = compute_kpi_deltas(series2, unit, raw_daily=_s2_raw)
+                stats2 = metric_kpi_stats(cat_combo, col_name, unit, selected_period_date)
                 if stats2 is None:
                     cat_summary_rows.append(f"<tr><td>{display_name}</td><td>-</td><td>-</td><td>-</td></tr>")
                     continue
