@@ -1341,7 +1341,15 @@ if side["page"].startswith("1."):
         st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         # 실적 요약 표 (트래픽 지표)
-        st.markdown(f"**EP 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu}</span>", unsafe_allow_html=True)
+        # Total(EP실적 '전체' 구분)은 비상품랜딩(상품 상세를 거치지 않는 랜딩)이 트래픽에 포함돼 있고,
+        # 자사/입점/e-영업1~4는 상품 페이지(기본 구분) 기준이라 포함돼 있지 않다.
+        _lp_note = "비상품랜딩 포함" if bpu == "Total" else "비상품랜딩 제외"
+        st.markdown(
+            f"**EP 실적 요약 표**  ·  <span style='color:#6b7280;font-size:0.85rem'>{bpu}</span>"
+            f"  <span style='background:#eef2ff;color:#3730a3;font-size:0.76rem;padding:1px 8px;border-radius:10px;"
+            f"margin-left:4px;'>트래픽 {_lp_note}</span>",
+            unsafe_allow_html=True,
+        )
         body_rows = []
         prev_label = yoy_label = None
         for col_name, display_name in all_items:
