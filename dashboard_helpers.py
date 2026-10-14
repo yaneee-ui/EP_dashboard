@@ -3350,10 +3350,13 @@ def build_daily_compare_excel(result):
 _DAILY_CAT_GROUPS = {"정상": ["e-영업1"], "이월": ["e-영업2"], "입점": ["e-영업3", "e-영업4"]}
 
 
-def compute_daily_category_compare(df_category, segment="전체", ff_exclude=False, ref_date=None, n_days=2):
+def compute_daily_category_compare(df_category, segment="전체", ff_exclude=False, ref_date=None, n_days=2, df_traffic=None):
     """정상(e-영업1)/이월(e-영업2)/입점(e-영업3+4) 그룹별 카테고리 거래액·트래픽의 최근 n_days일 값,
     전일비, 전년동요일비(364일 전). 각 그룹 맨 위는 TOTAL(카테고리='전체' 행).
-    두 날짜 모두 값이 없거나 0인 카테고리는 숨긴다. 세그먼트/핏플랍 제외는 2번 페이지와 같은 규칙."""
+    두 날짜 모두 값이 없거나 0인 카테고리는 숨긴다. 세그먼트/핏플랍 제외는 2번 페이지와 같은 규칙.
+
+    TOTAL 행은 카테고리 단위 중복 집계를 피하려고 df_traffic(전체 실적, EP실적)의 값으로 대체한다
+    (EP실적에는 브랜드가 없어서 핏플랍 제외 상태에서는 카테고리 원본의 전체 행을 그대로 쓴다)."""
     d = df_category
     if "회원구분" in d.columns:
         d = d[d["회원구분"] == segment]
@@ -3372,6 +3375,13 @@ def compute_daily_category_compare(df_category, segment="전체", ff_exclude=Fal
             sub = d[d["BPU"].isin(bpus) & d["날짜"].isin(need)]
             piv = sub.groupby(["카테고리", "날짜"], observed=True)[metric].sum().unstack("날짜")
             piv = piv.reindex(columns=sorted(need))
+            if df_traffic is not None and not ff_exclude:
+                tt = df_traffic[df_traffic["BPU"].isin(bpus) & df_traffic["날짜"].isin(need)]
+                if "회원구분" in tt.columns:
+                    tt = tt[tt["회원구분"] == segment]
+                if not tt.empty:
+                    tot = tt.groupby("날짜")[metric].sum().astype("float64")
+                    piv.loc["전체"] = [tot.get(x, float("nan")) for x in piv.columns]
 
             def _row(name):
                 if name not in piv.index:
@@ -3710,10 +3720,13 @@ _EVENT_CAT_METRICS = [
 ]
 
 
-def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None):
+def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None, df_traffic=None):
     """행사 기간(올해 range_b vs 비교 range_a)의 정상/이월/입점(3BPU·4BPU) x 카테고리별
     거래액·트래픽·구매객수·CR·객단가. 올해 데이터가 있는 일수만큼만 비교 기간도 앞에서부터
-    잘라 일수를 맞춘다. CR/객단가는 합계/합계로 재계산. 증감(diff)은 올해-작년(CR은 %p)."""
+    잘라 일수를 맞춘다. CR/객단가는 합계/합계로 재계산. 증감(diff)은 올해-작년(CR은 %p).
+
+    카테고리 단위 값은 한 구매가 여러 카테고리에 걸치면 중복 집계되므로, 소계 행(전체/3BPU/4BPU)은
+    df_traffic(전체 실적, EP실적)의 BPU 값으로 대체해 BPU 표와 맞춘다. 카테고리 행은 카테고리 원본."""
     d = df_category
     if "회원구분" in d.columns:
         d = d[d["회원구분"] == "전체"]
@@ -3731,7 +3744,14 @@ def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None)
     def _sums(days, bpu):
         s = d[(d["BPU"] == bpu) & d["날짜"].isin(days)]
         s = s[["카테고리"] + cols].astype({c: "float64" for c in cols})
-        return s.groupby("카테고리", observed=True)[cols].sum()
+        tbl = s.groupby("카테고리", observed=True)[cols].sum()
+        if df_traffic is not None:
+            tb = df_traffic[(df_traffic["BPU"] == bpu) & df_traffic["날짜"].isin(days)]
+            if "회원구분" in tb.columns:
+                tb = tb[tb["회원구분"] == "전체"]
+            if not tb.empty:
+                tbl.loc["전체", cols] = [float(tb[c].astype("float64").sum()) for c in cols]
+        return tbl
 
     def _value(row, metric):
         if row is None:

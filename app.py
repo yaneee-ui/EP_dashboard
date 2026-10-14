@@ -4076,12 +4076,13 @@ if side["page"].startswith("11."):
             if not df_category.empty:
                 st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
                 st.markdown("**카테고리별 (정상 / 이월 / 입점)**")
-                _dcc = compute_daily_category_compare(df_category, _wk_cat_segment, _wk_ff_exclude)
+                _dcc = compute_daily_category_compare(df_category, _wk_cat_segment, _wk_ff_exclude, df_traffic=df_traffic)
                 st.caption(
                     f"기준일 {_dcc['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원 · 세그먼트: {_wk_cat_segment}"
                     + (" · 핏플랍 제외" if _wk_ff_exclude else "")
                     + " (2번 페이지 설정 그대로) · 두 날짜 모두 실적이 없는 카테고리는 숨겨요 · "
-                    "트래픽은 카테고리 원본 기준이라 위 표(EP실적 기준)와 소폭 다를 수 있어요"
+                    "TOTAL은 위 표와 같은 전체 실적(EP실적) 기준이고, 카테고리 행은 카테고리 원본이라 "
+                    "여러 카테고리에 걸친 구매가 중복 집계돼 합계가 TOTAL보다 클 수 있어요"
                 )
                 st.download_button(
                     "⬇️ 카테고리별 일자 비교 엑셀 다운로드",
@@ -4973,7 +4974,8 @@ if side["page"].startswith("12."):
                     )
                     _ev_cat = (
                         compute_event_category_detail(
-                            df_category, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a
+                            df_category, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a,
+                            df_traffic=df_traffic,
                         ) if not df_category.empty else None
                     )
                     _ev_xlsx = build_event_detail_excel(_ev_detail, _ev_title, _ev_ya, _ev_yb)
@@ -4991,8 +4993,9 @@ if side["page"].startswith("12."):
                     if _ev_cat is not None and _ev_cat["n"]:
                         st.markdown(f"##### 📋 {_ev_name} 카테고리별 상세 (정상 / 이월 / 입점)")
                         st.caption(
-                            "카테고리 원본 기준이라 위 BPU 표의 트래픽/구매객수와 소폭 다를 수 있어요 "
-                            "(거래액은 동일) · 증감 = 올해 − 작년(CR은 %p) · 거래액 단위 백만원"
+                            "소계 행(전체 / 3BPU / 4BPU)은 위 BPU 표와 같은 전체 실적(EP실적) 기준이고, "
+                            "카테고리 행은 카테고리 원본이라 여러 카테고리에 걸친 구매가 중복 집계돼 합계가 소계보다 클 수 있어요 · "
+                            "증감 = 올해 − 작년(CR은 %p) · 거래액 단위 백만원"
                         )
                         _evc_metrics = ["거래액", "트래픽", "구매객수", "CR", "객단가"]
                         for _row_metrics in (_evc_metrics[:3], _evc_metrics[3:]):
