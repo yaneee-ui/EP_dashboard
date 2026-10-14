@@ -4340,6 +4340,10 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     st.markdown("---")
     _render_section(f"{traffic_segment} 거래액", "거래액", traffic_segment, show_ff=True)
 
+    st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
+    st.markdown("---")
+    _render_section(f"{traffic_segment} 구매객수", "구매객수", traffic_segment, show_ff=True)
+
     # 규칙 기반 자동 인사이트 — 최신 주차 기준, "주별" 단위로 compute_bpu_comparison_rows를
     # 새로 호출해서(위 차트들과는 별개 계산이지만 같은 함수라 기준이 항상 일치) 만든다.
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
