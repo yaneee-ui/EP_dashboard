@@ -368,7 +368,8 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         rows, order_out = [], {}
         for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
             _m_rows = compute_category_yoy_rows(
-                df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=metric_col
+                df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=metric_col,
+                df_traffic=df_traffic,
             )
             if order is None:
                 order_out[bv] = [r["카테고리"] for r in _m_rows]
@@ -407,12 +408,14 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
             _num_by_cat = {
                 r["카테고리"]: r for r in compute_category_yoy_rows(
-                    df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=num_col
+                    df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=num_col,
+                    df_traffic=df_traffic,
                 )
             }
             _den_by_cat = {
                 r["카테고리"]: r for r in compute_category_yoy_rows(
-                    df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=den_col
+                    df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=den_col,
+                    df_traffic=df_traffic,
                 )
             }
             _bv_order = order.get(bv, [])
@@ -734,10 +737,14 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         st.markdown(table_html, unsafe_allow_html=True)
 
 
-def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date, metric_col="거래액"):
+def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date, metric_col="거래액", df_traffic=None):
     """2번 페이지 '카테고리별 요약'표와 완전히 동일한 규칙(세그먼트 필터·핏플랍 제외·
     compute_kpi_deltas)으로 특정 BPU 하나의 카테고리별 metric_col(기본 거래액) stats를 계산한다.
-    '전체' 카테고리 행도 포함해서 맨 위에 오도록 반환."""
+    '전체' 카테고리 행도 포함해서 맨 위에 오도록 반환.
+
+    df_traffic(전체 실적, EP실적)을 넘기면 '전체' 행(합계)은 카테고리 원본 대신 그 BPU의 전체 실적
+    값으로 대체한다 — 카테고리 단위는 한 구매가 여러 카테고리에 걸쳐 중복 집계되기 때문.
+    (EP실적에는 브랜드가 없어서 핏플랍 제외 상태에서는 대체하지 않는다.)"""
     d = df_category[df_category["BPU"] == bpu_value]
     if d.empty:
         return []
@@ -771,6 +778,25 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
         if stats is None or not stats["current"]:
             continue
         rows.append({"카테고리": cat_name, **stats})
+
+    if df_traffic is not None and not ff_exclude and metric_col in ("트래픽", "거래액", "구매객수"):
+        _tr = df_traffic[df_traffic["BPU"] == bpu_value]
+        if "회원구분" in _tr.columns:
+            _tr = _tr[_tr["회원구분"] == cat_segment]
+        if not _tr.empty and metric_col in _tr.columns:
+            _ts = _tr.set_index("날짜")[metric_col].sort_index()
+            _tser = _ts.resample(cfg["rule"]).agg(_agg)
+            if unit == "주별":
+                _tser.index = _tser.index - pd.Timedelta(days=6)
+            elif unit == "월마감" and not _tser.empty and _ts.index.max() < _tser.index[-1]:
+                _tser = _tser.iloc[:-1]
+            if not _tser.empty:
+                _tser = _tser[_tser.index <= selected_period_date]
+            _t_raw = _ts[_ts.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else _ts
+            _t_stats = compute_kpi_deltas(_tser, unit, raw_daily=_t_raw)
+            if _t_stats is not None and _t_stats["current"]:
+                rows = [r for r in rows if r["카테고리"] != "전체"]
+                rows.append({"카테고리": "전체", **_t_stats})
 
     # 거래액 내림차순으로 정렬했었는데, 그러면 주간보고 시트가 기간마다 순위 바뀜에
     # 따라 카테고리 행 순서가 계속 들썩여서 기간별 비교가 불편하다는 피드백이 있었음
