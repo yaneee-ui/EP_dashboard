@@ -301,7 +301,8 @@ with _sticky:
                 unsafe_allow_html=True,
             )
 
-            fc1, fc2, fc3, _fc_spacer = st.columns([1, 1, 1, 5])
+            # 기준 일자/시점 바로 옆에 단축 버튼(금일/전일 등) 두 칸을 붙여서 간격이 벌어지지 않게 한다
+            fc1, fc2, fc3, _cpq_b1, _cpq_b2, _fc_spacer = st.columns([1, 1, 1, 0.38, 0.38, 4.2], gap="small")
             with fc1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
                 coupon_bpu = st.selectbox("매체", _cp_bpu_options_top, index=0, key="coupon_bpu", label_visibility="collapsed")
@@ -324,29 +325,29 @@ with _sticky:
                         coupon_ref_ts = _cand[-1] if len(_cand) else _cp_period_s.index[-1]
                 else:
                     _cp_sel_label = st.selectbox(
-                        "기준 시점", _cp_period_labels, index=len(_cp_period_labels) - 1,
+                        "기준 시점", _cp_period_labels[::-1], index=0,
                         label_visibility="collapsed", key="coupon_ref_period",
                     )
                     coupon_ref_ts = _cp_period_s.index[_cp_period_labels.index(_cp_sel_label)]
 
             # 기준 시점 단축 버튼 — 1/2번 페이지와 같은 방식: 항상 데이터 최신 시점 기준 상대값이라
             # 눌러도 위치가 누적되지 않는다. (일별 금일/전일, 주별 금주/전주, 월별 금월/전월)
-            with _fc_spacer:
-                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
-                _cpq_b1, _cpq_b2, _cpq_rest = st.columns([1, 1, 4])
-                if coupon_unit == "일별":
-                    _cpq1 = ("금일", "coupon_quick_cur", ("coupon_ref_date", _cp_max_d))
-                    _cpq2 = ("전일", "coupon_quick_prev", ("coupon_ref_date", _cp_max_d - _dt.timedelta(days=1)))
-                else:
-                    _cpq_names = ("금주", "전주") if coupon_unit == "주별" else ("금월", "전월")
-                    _cpq_cur = _cp_period_labels[-1] if _cp_period_labels else ""
-                    _cpq_prev = _cp_period_labels[-2] if len(_cp_period_labels) >= 2 else _cpq_cur
-                    _cpq1 = (_cpq_names[0], "coupon_quick_cur", ("coupon_ref_period", _cpq_cur))
-                    _cpq2 = (_cpq_names[1], "coupon_quick_prev", ("coupon_ref_period", _cpq_prev))
-                with _cpq_b1:
-                    st.button(_cpq1[0], key=_cpq1[1], on_click=_reset_date_range, args=_cpq1[2])
-                with _cpq_b2:
-                    st.button(_cpq2[0], key=_cpq2[1], on_click=_reset_date_range, args=_cpq2[2])
+            for _cpq_col in (_cpq_b1, _cpq_b2):
+                with _cpq_col:
+                    st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+            if coupon_unit == "일별":
+                _cpq1 = ("금일", "coupon_quick_cur", ("coupon_ref_date", _cp_max_d))
+                _cpq2 = ("전일", "coupon_quick_prev", ("coupon_ref_date", _cp_max_d - _dt.timedelta(days=1)))
+            else:
+                _cpq_names = ("금주", "전주") if coupon_unit == "주별" else ("금월", "전월")
+                _cpq_cur = _cp_period_labels[-1] if _cp_period_labels else ""
+                _cpq_prev = _cp_period_labels[-2] if len(_cp_period_labels) >= 2 else _cpq_cur
+                _cpq1 = (_cpq_names[0], "coupon_quick_cur", ("coupon_ref_period", _cpq_cur))
+                _cpq2 = (_cpq_names[1], "coupon_quick_prev", ("coupon_ref_period", _cpq_prev))
+            with _cpq_b1:
+                st.button(_cpq1[0], key=_cpq1[1], on_click=_reset_date_range, args=_cpq1[2])
+            with _cpq_b2:
+                st.button(_cpq2[0], key=_cpq2[1], on_click=_reset_date_range, args=_cpq2[2])
 
     # ========================================================
     # 페이지 1 / 2: 매체필터 + 기준시점 (+카테고리/브랜드)
@@ -433,7 +434,7 @@ with _sticky:
                 _pq2_label, _pq2_key, _pq2_args = "전전일", "period_quick_d2", ("period_filter_date", _max_d - _dt.timedelta(days=2))
             else:
                 _sel_label = st.selectbox(
-                    "기준 시점", _period_labels, index=len(_period_labels) - 1,
+                    "기준 시점", _period_labels[::-1], index=0,
                     label_visibility="collapsed", key="period_filter",
                 )
                 selected_period_date = _period_s.index[_period_labels.index(_sel_label)]
@@ -3446,7 +3447,7 @@ if side["page"].startswith("11."):
         with _wk_c1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기준 시점(월)</div>", unsafe_allow_html=True)
             _wk_sel_label = st.selectbox(
-                "기준 시점", _wk_labels, index=len(_wk_labels) - 1,
+                "기준 시점", _wk_labels[::-1], index=0,
                 label_visibility="collapsed", key="wk_ref_period",
             )
         _wk_ref = _wk_periods[_wk_labels.index(_wk_sel_label)]
