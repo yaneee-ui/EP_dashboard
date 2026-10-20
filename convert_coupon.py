@@ -24,6 +24,8 @@ import os
 import pandas as pd
 
 OUT = "ep_coupon_daily.csv"
+# 쿠폰 탭은 2025년부터만 쓴다 (원본엔 2024년도 들어있지만 2026-10-20에 제외하기로 함)
+MIN_DATE = pd.Timestamp("2025-01-01")
 KEEP_BPU = {"e-영업1", "e-영업2", "e-영업3", "e-영업4"}
 
 SOURCES = [
@@ -59,9 +61,11 @@ for src, coupon_type, pos in SOURCES:
     parts.append(out)
 
 out_df = pd.concat(parts, ignore_index=True)
+out_df = out_df[out_df["날짜"] >= MIN_DATE]
 
 if os.path.exists(OUT):
     existing = pd.read_csv(OUT, parse_dates=["날짜"])
+    existing = existing[existing["날짜"] >= MIN_DATE]
     _new_dates = set(out_df["날짜"].unique())
     _missing_dates = existing[~existing["날짜"].isin(_new_dates)]
     if not _missing_dates.empty:
