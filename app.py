@@ -32,7 +32,7 @@ from utils import metric_kpi_stats, metric_period_series, week_start_label
 from styles import CUSTOM_CSS
 from insight_card import render_insight_card
 from dashboard_helpers import (
-    _ref_str, _status_entry, BPU_GROUPS, _reset_date_range,
+    _ref_str, _status_entry, BPU_GROUPS, _reset_date_range, follow_latest_range,
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
@@ -678,6 +678,7 @@ with _sticky:
             _wk7_c1, _wk7_spacer = st.columns([2, 3])
             with _wk7_c1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>주차 범위</div>", unsafe_allow_html=True)
+                follow_latest_range("wk_traffic_range", _wk7_labels[_wk7_default_end - 1], options=_wk7_labels)
                 _wk7_sel_labels = st.select_slider(
                     "주차 범위", options=_wk7_labels,
                     value=(_wk7_labels[_wk7_default_start - 1], _wk7_labels[_wk7_default_end - 1]),
@@ -751,6 +752,7 @@ with _sticky:
             )
         with gc5:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>종료일</div>", unsafe_allow_html=True)
+            follow_latest_range("cum_end_date", _cum_max_d)
             cum_end = st.date_input(
                 "종료일", value=_cum_max_d, min_value=_cum_min_d, max_value=_cum_max_d,
                 label_visibility="collapsed", key="cum_end_date",
@@ -1234,6 +1236,7 @@ if side["page"].startswith("1."):
             _tr_range_key = f"tr_range_{bpu}_{segment}"
             col_d, col_reset, col_y = st.columns([3, 1, 1])
             with col_d:
+                follow_latest_range(_tr_range_key, tr_series.index.max().date())
                 dr = st.date_input("기간", value=(_default_start, tr_series.index.max().date()),
                                    min_value=tr_series.index.min().date(), max_value=tr_series.index.max().date(),
                                    key=_tr_range_key)
@@ -1631,6 +1634,7 @@ if side["page"].startswith("1."):
             _ep_range_key = f"ep_range_{bpu}_{match_status}_{lowest_status}"
             col_ed, col_ereset, col_ey = st.columns([3, 1, 1])
             with col_ed:
+                follow_latest_range(_ep_range_key, _ep_max_d)
                 ep_dr = st.date_input(
                     "기간", value=(_ep_default_start, _ep_max_d),
                     min_value=_ep_min_d, max_value=_ep_max_d, key=_ep_range_key,
@@ -2036,6 +2040,7 @@ if side["page"].startswith("2."):
                 _cat_range_key = f"cat_range_{bpu}_{selected_cat}_{selected_brand}"
                 col_cd, col_reset, col_cy = st.columns([3, 1, 1])
                 with col_cd:
+                    follow_latest_range(_cat_range_key, _cat_max_d)
                     cat_dr = st.date_input(
                         "기간", value=(_cat_default_start, _cat_max_d),
                         min_value=_cat_min_d, max_value=_cat_max_d, key=_cat_range_key,
@@ -2574,6 +2579,7 @@ if side["page"].startswith("2."):
                     col_cmpd, col_cmpr = st.columns([3, 1])
                     with col_cmpd:
                         st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간</div>", unsafe_allow_html=True)
+                        follow_latest_range(_cmp_range_key, _cmp_max_d)
                         cmp_dr = st.date_input(
                             "기간", value=(_cmp_default_start, _cmp_max_d),
                             min_value=_cmp_min_d, max_value=_cmp_max_d,
@@ -3150,6 +3156,7 @@ if side["page"].startswith("9."):
                     _cc1, _cc2 = st.columns([2, 1])
                     with _cc1:
                         st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>그래프 기간</div>", unsafe_allow_html=True)
+                        follow_latest_range(_cp_chart_key, _combined.index.max().date())
                         _cp_chart_dr = st.date_input(
                             "그래프 기간",
                             value=(_cp_chart_default_start, _combined.index.max().date()),

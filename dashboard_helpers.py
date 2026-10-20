@@ -42,6 +42,55 @@ BPU_GROUPS = {
 }
 
 
+def follow_latest_range(state_key, latest, options=None, fallback_days=14, fallback_labels=2):
+    """기간/주차 범위 위젯이 '예전 최신 시점'에서 끝나 있었다면, 새 데이터가 들어왔을 때 끝을 새 최신으로
+    옮기고 시작도 같은 폭만큼 따라 이동시킨다.
+
+    Streamlit 위젯은 key로 선택값을 기억해서(value= 기본값은 처음 한 번만 적용), 데이터가 하루/한 주
+    늘어도 예전에 끝나 있던 날짜(예: '26-10-12주')에서 멈춰 보이는 문제가 있었다. 위젯을 만들기
+    *전에* 호출해야 한다.
+      - latest: 지금 데이터의 최신 시점(날짜 또는 라벨)
+      - options: 라벨 위젯(select_slider)이면 정렬된 옵션 목록
+      - 이전 최신이 기록돼 있으면 정확히 그 시점에 끝난 경우만, 기록이 없으면(처음 배포된 세션)
+        최신에서 가까운(날짜 14일/라벨 2칸 이내) 경우만 '최근을 보고 있었다'고 보고 따라간다.
+      - 사용자가 일부러 과거 구간으로 옮겨둔 경우는 건드리지 않는다."""
+    marker = f"{state_key}__latest"
+    prev = st.session_state.get(marker)
+    st.session_state[marker] = latest
+    cur = st.session_state.get(state_key)
+    if cur is None:
+        return
+    is_range = isinstance(cur, (tuple, list)) and len(cur) == 2
+    end = cur[1] if is_range else cur
+    start = cur[0] if is_range else None
+    if end == latest:
+        return
+    try:
+        if options is not None:
+            if end not in options or latest not in options:
+                return
+            gap = options.index(latest) - options.index(end)
+            follow = (prev is not None and end == prev) or (prev is None and 0 < gap <= fallback_labels)
+            if not follow or gap <= 0:
+                return
+            if is_range and start in options:
+                ns = options[min(len(options) - 1, options.index(start) + gap)]
+                st.session_state[state_key] = (ns, latest)
+            elif not is_range:
+                st.session_state[state_key] = latest
+        else:
+            gap_days = (latest - end).days
+            follow = (prev is not None and end == prev) or (prev is None and 0 < gap_days <= fallback_days)
+            if not follow or gap_days <= 0:
+                return
+            if is_range:
+                st.session_state[state_key] = (min(start + (latest - end), latest), latest)
+            else:
+                st.session_state[state_key] = latest
+    except Exception:
+        return
+
+
 def _reset_date_range(_state_key, _value):
     """'최근으로' 버튼용 콜백. on_click으로 넘겨서 위젯이 다시 그려지기 전에
     session_state를 먼저 갱신한다 (버튼 클릭 처리 중 위젯이 이미 인스턴스화된
@@ -62,6 +111,7 @@ def render_week_range_filter(series, key_prefix, col_slider, col_reset, default_
     n = len(labels)
     default_start_idx = max(0, n - default_weeks)
     _range_key = f"{key_prefix}_wkrange"
+    follow_latest_range(_range_key, labels[-1], options=labels)
     with col_slider:
         st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>주차 범위</div>", unsafe_allow_html=True)
         sel_labels = st.select_slider(
