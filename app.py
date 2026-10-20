@@ -329,6 +329,25 @@ with _sticky:
                     )
                     coupon_ref_ts = _cp_period_s.index[_cp_period_labels.index(_cp_sel_label)]
 
+            # 기준 시점 단축 버튼 — 1/2번 페이지와 같은 방식: 항상 데이터 최신 시점 기준 상대값이라
+            # 눌러도 위치가 누적되지 않는다. (일별 금일/전일, 주별 금주/전주, 월별 금월/전월)
+            with _fc_spacer:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+                _cpq_b1, _cpq_b2, _cpq_rest = st.columns([1, 1, 4])
+                if coupon_unit == "일별":
+                    _cpq1 = ("금일", "coupon_quick_cur", ("coupon_ref_date", _cp_max_d))
+                    _cpq2 = ("전일", "coupon_quick_prev", ("coupon_ref_date", _cp_max_d - _dt.timedelta(days=1)))
+                else:
+                    _cpq_names = ("금주", "전주") if coupon_unit == "주별" else ("금월", "전월")
+                    _cpq_cur = _cp_period_labels[-1] if _cp_period_labels else ""
+                    _cpq_prev = _cp_period_labels[-2] if len(_cp_period_labels) >= 2 else _cpq_cur
+                    _cpq1 = (_cpq_names[0], "coupon_quick_cur", ("coupon_ref_period", _cpq_cur))
+                    _cpq2 = (_cpq_names[1], "coupon_quick_prev", ("coupon_ref_period", _cpq_prev))
+                with _cpq_b1:
+                    st.button(_cpq1[0], key=_cpq1[1], on_click=_reset_date_range, args=_cpq1[2])
+                with _cpq_b2:
+                    st.button(_cpq2[0], key=_cpq2[1], on_click=_reset_date_range, args=_cpq2[2])
+
     # ========================================================
     # 페이지 1 / 2: 매체필터 + 기준시점 (+카테고리/브랜드)
     # ========================================================
@@ -3155,8 +3174,14 @@ if side["page"].startswith("9."):
                 _trend_df = _trend_df.reset_index()
                 _trend_df["연월_label"] = _trend_df["연월"].apply(_period_fmt)
                 _month_order = _trend_df["연월_label"].tolist()
+                # x축 라벨이 많으면 vega가 일부를 건너뛰는데, 앞에서부터 건너뛰면 마지막(최신) 라벨이
+                # 빠져 그래프가 '지난주까지'로 보이는 문제가 있었다 — 최신 기간부터 거꾸로 일정 간격으로
+                # 눈금을 지정해서 항상 마지막 기간 라벨이 보이게 한다.
+                _tick_stride = max(1, -(-len(_month_order) // 14))
+                _tick_vals = _month_order[::-1][::_tick_stride][::-1]
                 _base = alt.Chart(_trend_df).encode(
-                    x=alt.X("연월_label:O", title=None, sort=_month_order, axis=alt.Axis(labelAngle=-40))
+                    x=alt.X("연월_label:O", title=None, sort=_month_order,
+                            axis=alt.Axis(labelAngle=-40, values=_tick_vals))
                 )
                 # 막대를 클릭하면 그 날짜(구간)의 쿠폰명별 랭킹이 아래 표시되도록, 클릭
                 # 선택(click selection)을 막대에 건다. 선택된 막대는 진하게, 나머지는
@@ -3177,6 +3202,19 @@ if side["page"].startswith("9."):
                     _chart, use_container_width=True, on_select="rerun", key=_chart_click_key,
                 )
                 st.caption("💡 막대를 클릭하면 그 날짜(구간)의 쿠폰명별 할인액 랭킹을 아래에서 볼 수 있어요.")
+                if coupon_unit in ("주별", "월별") and len(_trend_df):
+                    _cp_last_p = pd.Timestamp(_trend_df["연월"].iloc[-1])
+                    _cp_data_last = df_coupon_daily["날짜"].max()
+                    if coupon_unit == "주별":
+                        _cp_full_days, _cp_done_days = 7, (min(_cp_data_last, _cp_last_p + pd.Timedelta(days=6)) - _cp_last_p).days + 1
+                    else:
+                        _cp_month_end = _cp_last_p + pd.offsets.MonthEnd(0)
+                        _cp_full_days, _cp_done_days = _cp_month_end.day, (min(_cp_data_last, _cp_month_end) - _cp_last_p).days + 1
+                    if 0 < _cp_done_days < _cp_full_days:
+                        st.caption(
+                            f"ℹ️ 마지막 구간({_period_fmt(_cp_last_p) if coupon_unit == '주별' else _cp_last_p.strftime('%Y년 %m월')})은 "
+                            f"진행 중이라 {_cp_done_days}일치만 들어있어서 막대가 작게 보여요."
+                        )
 
                 # 클릭된 막대가 있으면 그 날짜를, 없으면 기존처럼 기준시점(_latest)을 랭킹 기준으로 쓴다.
                 _rank_date = _latest
