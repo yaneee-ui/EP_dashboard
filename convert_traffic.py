@@ -19,6 +19,7 @@
 않고 ep_traffic.csv(현재분)만 통째로 새로 만든다.
 """
 import pandas as pd
+from raw_sanity import guard
 
 SRC = "1_EP실적.xlsx"
 OUT = "ep_traffic.csv"
@@ -80,6 +81,7 @@ wide["CR"] = wide["CR"] * 100  # 원본은 0~1 비율, 대시보드는 %(0~100) 
 
 out_df = wide[["날짜", "BPU", "회원구분", "CR", "객단가", "거래액", "구매객수", "트래픽"]]
 out_df = out_df.sort_values(["날짜", "BPU", "회원구분"]).reset_index(drop=True)
+guard("EP실적(1_EP실적.xlsx)", OUT, out_df, dims=["BPU", "회원구분"])
 out_df.to_csv(OUT, index=False, encoding="utf-8-sig")
 
 print(f"저장 완료: {OUT}, shape={out_df.shape}")

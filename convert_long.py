@@ -15,6 +15,7 @@ ep_data_long.csv는 2026년(현재분)만 담아서 매번 새로 만든다.
 import os
 import datetime
 import pandas as pd
+from raw_sanity import guard
 
 SRC = "Data.xlsx"
 OUT_CURRENT = "ep_data_long.csv"
@@ -106,6 +107,8 @@ if os.path.exists(OUT_ARCHIVE):
 else:
     archive_df.to_csv(OUT_ARCHIVE, index=False, encoding="utf-8-sig")
     print(f"마감분 저장: {OUT_ARCHIVE}, shape={archive_df.shape}, ~{ARCHIVE_CUTOFF}까지")
+
+guard("EP채널(Data.xlsx)", OUT_CURRENT, current_df, dims=["BPU", "원부매칭여부", "최저가여부"], check_last_date=False)
 
 if os.path.exists(OUT_CURRENT) and not current_df.empty:
     # 원본(Data.xlsx)이 매번 연초~오늘 전체를 담고 있다고 가정했었는데, 최근엔

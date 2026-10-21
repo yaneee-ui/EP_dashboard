@@ -31,6 +31,7 @@ load_product_data()가 두 파일을 합쳐서 읽음):
 import os
 
 import pandas as pd
+from raw_sanity import guard
 
 SRC_XLSX = "ep_product_raw.xlsx"
 SRC_CSV = "ep_product_raw.csv"
@@ -89,6 +90,7 @@ else:
     archive_df.to_csv(OUT_ARCHIVE, index=False, encoding="utf-8-sig", compression="gzip")
     print(f"마감분 저장: {OUT_ARCHIVE}, shape={archive_df.shape}, ~{ARCHIVE_CUTOFF}까지")
 
+guard("상품(ep_product_raw)", OUT_CURRENT, current_df, dims=["BPU", "카테고리", "브랜드"])
 current_df.to_csv(OUT_CURRENT, index=False, encoding="utf-8-sig", compression="gzip")
 print(f"현재분 저장: {OUT_CURRENT}, shape={current_df.shape}")
 

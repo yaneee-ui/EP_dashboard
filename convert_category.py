@@ -23,6 +23,7 @@ CR은 이미 "9.1%"처럼 %가 붙은 사람이 읽기 좋은 형태로 옴 - xl
 """
 import os
 import pandas as pd
+from raw_sanity import guard
 
 SRC_XLSX = "1_EP상세실적.xlsx"
 SRC_CSV = "1_EP상세실적.csv"
@@ -101,6 +102,7 @@ if _cr_is_ratio:
 
 out_df = wide[["날짜", "BPU", "카테고리", "브랜드", "회원구분", "CR", "객단가", "거래액", "구매객수", "트래픽"]]
 out_df = out_df.sort_values(["날짜", "BPU", "카테고리", "브랜드", "회원구분"]).reset_index(drop=True)
+guard("EP상세실적(1_EP상세실적.xlsx)", OUT, out_df, dims=["BPU", "카테고리", "브랜드", "회원구분"])
 out_df.to_csv(OUT, index=False, encoding="utf-8-sig", compression="gzip")
 
 print(f"저장 완료: {OUT}, shape={out_df.shape}")

@@ -22,6 +22,7 @@
 """
 import os
 import pandas as pd
+from raw_sanity import guard
 
 OUT = "ep_coupon_daily.csv"
 # 쿠폰 탭은 2025년부터만 쓴다 (원본엔 2024년도 들어있지만 2026-10-20에 제외하기로 함)
@@ -62,6 +63,7 @@ for src, coupon_type, pos in SOURCES:
 
 out_df = pd.concat(parts, ignore_index=True)
 out_df = out_df[out_df["날짜"] >= MIN_DATE]
+guard("쿠폰(☆EP쿠폰_*.csv)", OUT, out_df, dims=["BPU", "쿠폰유형"], check_last_date=False)
 
 if os.path.exists(OUT):
     existing = pd.read_csv(OUT, parse_dates=["날짜"])

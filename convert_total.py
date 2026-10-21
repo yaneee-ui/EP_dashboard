@@ -12,15 +12,24 @@
 import os
 
 import pandas as pd
+from raw_sanity import abort, guard
 
 SRC = "1_전체실적.xlsx"
 OUT = "ep_total_daily.csv"
 
-raw = pd.read_excel(SRC, sheet_name=0)
+try:
+    raw = pd.read_excel(SRC, sheet_name=0)
+except Exception as e:  # DRM(문서보안) 파일 등
+    abort("전체실적(1_전체실적.xlsx)", [f"엑셀로 열 수 없어요 — 문서보안(DRM)이 걸린 파일일 수 있어요. ({type(e).__name__})"])
 raw = raw.rename(columns={raw.columns[0]: "지표"})
 raw["지표"] = raw["지표"].ffill()
 
 date_cols = [c for c in raw.columns[6:] if pd.notna(pd.to_datetime(str(c), errors="coerce"))]
+if not date_cols:
+    abort("전체실적(1_전체실적.xlsx)", [
+        "일자별 열(2026-01-01 ...)이 없어요 — '2026년 01월'처럼 월별 형식으로 내려받은 것 같아요.",
+        f"읽힌 열 이름: {list(raw.columns[6:9])} ...",
+    ])
 
 parts = []
 for metric in ["트래픽", "거래액"]:
@@ -44,6 +53,8 @@ out_df = long.pivot_table(index=["날짜", "채널"], columns="지표", values="
 out_df.columns.name = None
 out_df["트래픽"] = out_df["트래픽"].round().astype("int64")
 out_df["거래액"] = out_df["거래액"].round().astype("int64")
+
+guard("전체실적(1_전체실적.xlsx)", OUT, out_df, dims=["채널"], check_last_date=False)
 
 if os.path.exists(OUT):
     existing = pd.read_csv(OUT, parse_dates=["날짜"])
