@@ -9,6 +9,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import pandas as pd
 import io
+import unicodedata
 
 from utils import (
     COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST, UNIT_CONFIG,
@@ -2535,6 +2536,15 @@ def render_top_products(sub_df, unit, selected_period_date, title, subtitle, bra
     _cols += ["구매건수"] if _has_qty else []
     _cols += ["거래액", "비중"]
     _disp = _agg[_cols].copy()
+    # 상품명 끝에 공백이 붙은 상품(예: '... 200ml ')이나 보이지 않는 문자가 섞인 상품은 Streamlit 표(캔버스)에서
+    # 이름이 통째로 빈칸으로 그려지는 문제가 있었다 — 표시용으로만 공백/비가시 문자를 정리한다.
+    _disp["상품명"] = (
+        _disp["상품명"].astype(object).map(
+            lambda v: "" if pd.isna(v) else "".join(
+                (" " if ch in " 　" else ch) for ch in str(v) if unicodedata.category(ch) not in ("Cf", "Cc")
+            ).strip()
+        )
+    )
     if _has_qty:
         _disp["구매건수"] = _disp["구매건수"].map(lambda v: "-" if pd.isna(v) else f"{v:,.0f}")
     _disp["거래액"] = _disp["거래액"].map(lambda v: f"{v:,.0f}")
