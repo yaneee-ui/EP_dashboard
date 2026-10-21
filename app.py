@@ -302,7 +302,7 @@ with _sticky:
             )
 
             # 기준 일자/시점 바로 옆에 단축 버튼(금일/전일 등) 두 칸을 붙여서 간격이 벌어지지 않게 한다
-            fc1, fc2, fc3, _cpq_b1, _cpq_b2, _fc_spacer = st.columns([1, 1, 1, 0.38, 0.38, 4.2], gap="small")
+            fc1, fc2, fc3, _cpq_col, _fc_spacer = st.columns([1, 1, 1, 1, 4], gap="small")
             with fc1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
                 coupon_bpu = st.selectbox("매체", _cp_bpu_options_top, index=0, key="coupon_bpu", label_visibility="collapsed")
@@ -332,9 +332,10 @@ with _sticky:
 
             # 기준 시점 단축 버튼 — 1/2번 페이지와 같은 방식: 항상 데이터 최신 시점 기준 상대값이라
             # 눌러도 위치가 누적되지 않는다. (일별 금일/전일, 주별 금주/전주, 월별 금월/전월)
-            for _cpq_col in (_cpq_b1, _cpq_b2):
-                with _cpq_col:
-                    st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+            with _cpq_col:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>&nbsp;</div>", unsafe_allow_html=True)
+                with st.container(key="cp_quick_row"):
+                    _cpq_b1, _cpq_b2 = st.columns([1, 1])
             if coupon_unit == "일별":
                 _cpq1 = ("금일", "coupon_quick_cur", ("coupon_ref_date", _cp_max_d))
                 _cpq2 = ("전일", "coupon_quick_prev", ("coupon_ref_date", _cp_max_d - _dt.timedelta(days=1)))

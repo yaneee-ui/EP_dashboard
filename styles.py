@@ -119,5 +119,15 @@ div[data-testid="stMain"] div[data-testid="stMultiSelect"] {
     width: auto !important;
     min-width: 0 !important;
 }
+/* 쿠폰 비용 분석의 금일/전일(금주/전주, 금월/전월) 버튼도 1/2번 페이지와 같은 간격으로 붙인다.
+   (태그명을 앞에 붙이지 않는 셀렉터 — Streamlit이 태그를 바꿔도 깨지지 않게) */
+.st-key-cp_quick_row [data-testid="stHorizontalBlock"] {
+    gap: 0.4rem !important;
+}
+.st-key-cp_quick_row [data-testid="stColumn"] {
+    flex: 0 0 auto !important;
+    width: auto !important;
+    min-width: 0 !important;
+}
 </style>
 """
