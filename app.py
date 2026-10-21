@@ -1200,7 +1200,7 @@ if side["page"].startswith("1."):
         st.markdown("**EP 실적 추이**")
         tr_metric_options = ["트래픽", "거래액", "구매객수", "CR", "객단가"]
         tr_metric = st.radio(
-            "지표 선택", tr_metric_options, index=0, key="tr_metric",
+            "지표 선택", tr_metric_options, index=tr_metric_options.index("거래액"), key="tr_metric",
             horizontal=True, label_visibility="collapsed",
         )
 
@@ -1623,7 +1623,9 @@ if side["page"].startswith("1."):
         st.markdown("**EP 채널 추이**")
         ep_metrics_list = [m for m, _ in EP_CHANNEL_METRICS]
         ep_metric = st.radio(
-            "지표", ep_metrics_list, index=0, key="ep_metric",
+            "지표", ep_metrics_list,
+            index=ep_metrics_list.index("순결제비중(%)") if "순결제비중(%)" in ep_metrics_list else 0,
+            key="ep_metric",
             horizontal=True, label_visibility="collapsed",
         )
 
