@@ -415,7 +415,7 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         for bv in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
             _m_rows = compute_category_yoy_rows(
                 df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=metric_col,
-                df_traffic=df_traffic,
+                df_traffic=df_traffic, keep_zero_current=True,
             )
             if order is None:
                 order_out[bv] = [r["카테고리"] for r in _m_rows]
@@ -455,13 +455,13 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
             _num_by_cat = {
                 r["카테고리"]: r for r in compute_category_yoy_rows(
                     df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=num_col,
-                    df_traffic=df_traffic,
+                    df_traffic=df_traffic, keep_zero_current=True,
                 )
             }
             _den_by_cat = {
                 r["카테고리"]: r for r in compute_category_yoy_rows(
                     df_category, bv, cat_segment, ff_exclude, unit, selected_period_date, metric_col=den_col,
-                    df_traffic=df_traffic,
+                    df_traffic=df_traffic, keep_zero_current=True,
                 )
             }
             _bv_order = order.get(bv, [])
@@ -768,7 +768,7 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         st.markdown(table_html, unsafe_allow_html=True)
 
 
-def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date, metric_col="거래액", df_traffic=None):
+def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date, metric_col="거래액", df_traffic=None, keep_zero_current=False):
     """2번 페이지 '카테고리별 요약'표와 완전히 동일한 규칙(세그먼트 필터·핏플랍 제외·
     compute_kpi_deltas)으로 특정 BPU 하나의 카테고리별 metric_col(기본 거래액) stats를 계산한다.
     '전체' 카테고리 행도 포함해서 맨 위에 오도록 반환.
@@ -794,19 +794,36 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
 
     cfg = UNIT_CONFIG[unit]
     _agg = "sum" if unit == "월마감" else "mean"
+
+    def _period_series(_s):
+        _ser = _s.resample(cfg["rule"]).agg(_agg)
+        if unit == "주별":
+            _ser.index = _ser.index - pd.Timedelta(days=6)
+        elif unit == "월마감" and not _ser.empty and _s.index.max() < _ser.index[-1]:
+            _ser = _ser.iloc[:-1]
+        if not _ser.empty:
+            _ser = _ser[_ser.index <= selected_period_date]
+        return _ser
+
+    # 전체 카테고리 기준으로 '선택한 기간의 마지막 구간'이 어디인지 구해둔다 — 어떤 카테고리가 이번
+    # 구간엔 거래가 없고 과거 구간에만 값이 있으면(예: 5월에만 있던 리빙, 25년 4월까지만 있던 캠핑),
+    # series의 마지막 값(과거 달 값)이 '현재 값'으로 잘못 표시되던 문제가 있어 그런 카테고리는 뺀다.
+    _all_ser = _period_series(d.groupby("날짜")[metric_col].sum().sort_index())
+    _expected_last = _all_ser.index[-1] if not _all_ser.empty else None
+
     rows = []
     for cat_name, g in d.groupby("카테고리"):
         s = g.set_index("날짜")[metric_col].sort_index()
-        series = s.resample(cfg["rule"]).agg(_agg)
-        if unit == "주별":
-            series.index = series.index - pd.Timedelta(days=6)
-        elif unit == "월마감" and not series.empty and s.index.max() < series.index[-1]:
-            series = series.iloc[:-1]
-        if not series.empty:
-            series = series[series.index <= selected_period_date]
+        series = _period_series(s)
+        if series.empty or (_expected_last is not None and series.index[-1] != _expected_last):
+            continue
         _s_raw = s[s.index <= raw_cutoff_date(selected_period_date, unit)] if selected_period_date is not None else s
         stats = compute_kpi_deltas(series, unit, raw_daily=_s_raw)
-        if stats is None or not stats["current"]:
+        if stats is None:
+            continue
+        # 이번 구간 값이 0이면 보통 숨기지만(거래액 없는 카테고리 제외), keep_zero_current=True면 작년 값이
+        # 있는 행은 남겨서(전년비 -100%) 카테고리 합계와 '전체'가 작년 열에서도 맞게 한다.
+        if not stats["current"] and not (keep_zero_current and stats.get("yoy_value")):
             continue
         rows.append({"카테고리": cat_name, **stats})
 
@@ -814,6 +831,10 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
         _tr = df_traffic[df_traffic["BPU"] == bpu_value]
         if "회원구분" in _tr.columns:
             _tr = _tr[_tr["회원구분"] == cat_segment]
+        # 카테고리 원본이 EP실적보다 하루 이틀 늦게 갱신되는 경우가 있다 — '전체' 행만 더 최신
+        # 날짜까지 평균하면 카테고리 행들의 합계와 기간이 어긋나 합계가 전체보다 커 보이므로,
+        # 카테고리 원본의 마지막 날짜까지만 쓴다.
+        _tr = _tr[_tr["날짜"] <= d["날짜"].max()]
         if not _tr.empty and metric_col in _tr.columns:
             _ts = _tr.set_index("날짜")[metric_col].sort_index()
             _tser = _ts.resample(cfg["rule"]).agg(_agg)
