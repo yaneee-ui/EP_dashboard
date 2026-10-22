@@ -4777,6 +4777,51 @@ if side["page"].startswith("10."):
             ("구매전환율(CR)", "구매객수", "트래픽", True, True),
         ]
 
+        def _render_gmv_prev_year_expander(cur_tbl):
+            """거래액 표 아래에 접었다 펼 수 있는 '작년 월별 거래액 + 전년비' 영역."""
+            with st.expander(f"📊 {forecast_year - 1}년 월별 거래액 · 전년비 (펼쳐 보기)", expanded=False):
+                prev_tbl = build_forecast_table(
+                    df_traffic, "거래액", "거래액", None, forecast_year - 1, is_ratio=False, ratio_scale=1.0,
+                )
+                month_cols = [c for c in cur_tbl.columns if c != "합계"]
+                # 올해 값이 있는 달(확정월 + 당월 마감예상)만 전년비를 계산한다
+                live_months = [c for c in month_cols if (cur_tbl[c] > 0).any()]
+
+                st.markdown(f"**{forecast_year - 1}년 월별 거래액** (합계 = {forecast_year - 1}년 연간)")
+                st.dataframe(
+                    prev_tbl.style.format(lambda v: "-" if (v is None or pd.isna(v) or v == 0) else f"{v:,.0f}", na_rep="-"),
+                    use_container_width=True,
+                )
+
+                yoy = pd.DataFrame(index=cur_tbl.index, columns=month_cols + [f"누적(1~{len(live_months)}월)"], dtype=object)
+                for row in cur_tbl.index:
+                    for c in month_cols:
+                        cv, pv = cur_tbl.loc[row, c], prev_tbl.loc[row, c] if row in prev_tbl.index else None
+                        yoy.loc[row, c] = pct_delta_safe(cv, pv) if (c in live_months and cv and pv) else None
+                    cum_c = float(sum(cur_tbl.loc[row, c] for c in live_months))
+                    cum_p = float(sum((prev_tbl.loc[row, c] if row in prev_tbl.index else 0) for c in live_months))
+                    yoy.loc[row, f"누적(1~{len(live_months)}월)"] = pct_delta_safe(cum_c, cum_p) if (cum_c and cum_p) else None
+
+                def _fmt_yoy(v):
+                    if v is None or pd.isna(v):
+                        return "-"
+                    return f"△{abs(v):.1f}%" if v < 0 else f"{v:.1f}%"
+
+                def _color_yoy(v):
+                    if v is None or pd.isna(v):
+                        return ""
+                    return "color: #dc2626; font-weight: 600;" if v < 0 else "color: #16a34a; font-weight: 600;"
+
+                st.markdown(
+                    f"**전년비 ({forecast_year}년 vs {forecast_year - 1}년)** — "
+                    f"{'당월은 마감예상 기준, ' if _fc_is_partial_month else ''}누적은 {forecast_year}년 값이 있는 달만 같은 달끼리 비교"
+                )
+                # 숫자 NaN은 Streamlit 표가 'None'으로 그려서, 표시 문자열을 미리 만들고 색만 따로 입힌다
+                yoy_f = yoy.astype(float)
+                yoy_txt = yoy_f.map(_fmt_yoy)
+                yoy_clr = yoy_f.map(_color_yoy)
+                st.dataframe(yoy_txt.style.apply(lambda _d: yoy_clr, axis=None), use_container_width=True)
+
         for _label, _num_col, _den_col, _is_ratio, _is_pct in _fc_metric_defs:
             st.markdown(f"#### {_label}")
             _tbl = build_forecast_table(
@@ -4785,6 +4830,8 @@ if side["page"].startswith("10."):
             )
             _styled = _style_forecast_table(_tbl, is_pct=_is_pct)
             st.dataframe(_styled, use_container_width=True)
+            if _label == "거래액":
+                _render_gmv_prev_year_expander(_tbl)
             st.markdown("<div style='height:12px;'></div>", unsafe_allow_html=True)
 
         # --- 전년비 (마감예상 달 vs 작년 같은 달 실제값) ---
