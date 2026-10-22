@@ -4646,6 +4646,9 @@ if side["page"].startswith("3."):
 # 페이지 11: 마감 예상 실적 — 진행 중인 달을 일할계산으로 마감까지 추정해서
 # Total/자사/정상/이월/입점 x 1~12월 표로 보여준다.
 # ============================================================
+# 연도별 EP 거래액 목표 (원) — 마감 예상 실적 페이지의 달성률 계산에 사용
+EP_YEARLY_GMV_TARGET = {2026: 46_750_000_000}
+
 if side["page"].startswith("10."):
     st.markdown("### 📈 마감 예상 실적")
     st.caption(
@@ -4679,6 +4682,71 @@ if side["page"].startswith("10."):
             file_name=f"마감예상실적_{forecast_year}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
+
+        # --- 연간 EP 거래액 목표 달성률 ---
+        # 목표는 연도별로 여기서 관리한다 (26년 EP 거래액 목표 467.5억).
+        _fc_target = EP_YEARLY_GMV_TARGET.get(forecast_year)
+        if _fc_target:
+            _fc_gmv_tbl = build_forecast_table(
+                df_traffic, "거래액", "거래액", None, forecast_year, is_ratio=False, ratio_scale=1.0,
+            )
+            _fc_tot = _fc_gmv_tbl.loc["Total"] if "Total" in _fc_gmv_tbl.index else None
+            _fc_base = df_traffic[
+                (df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체") & (df_traffic["날짜"].dt.year == forecast_year)
+            ]
+            if _fc_tot is not None and not _fc_base.empty:
+                _fc_actual = float(_fc_base["거래액"].astype("float64").sum())          # 1/1~최신일 실제 누적
+                _fc_forecast_total = float(_fc_tot["합계"])                            # 확정월 + 당월 마감예상
+                _fc_last_actual = _fc_base["날짜"].max()
+                _fc_months_left = 12 - _fc_last_actual.month
+                _fc_remain = _fc_target - _fc_forecast_total
+                _fc_closed = [c for c in _fc_tot.index if c != "합계" and _fc_tot[c] > 0 and
+                              not (_fc_is_partial_month and c == f"{_fc_cur_month_num}월")]
+                _fc_closed_avg = float(sum(_fc_tot[c] for c in _fc_closed) / len(_fc_closed)) if _fc_closed else None
+
+                def _eok(v):
+                    return f"{v / 1e8:,.1f}억"
+
+                _rate_actual = _fc_actual / _fc_target * 100
+                _rate_fc = _fc_forecast_total / _fc_target * 100
+                st.markdown(f"#### 🎯 {forecast_year}년 EP 거래액 목표 달성률")
+                _kc = st.columns(4)
+                _kpis = [
+                    ("연간 목표", _eok(_fc_target), f"{_fc_target:,.0f}원"),
+                    (f"현재 누적 달성률 ({_fc_last_actual.month}/{_fc_last_actual.day}까지)", f"{_rate_actual:.1f}%", f"{_eok(_fc_actual)} ({_fc_actual:,.0f}원)"),
+                    (f"당월 마감예상 반영 달성률", f"{_rate_fc:.1f}%", f"{_eok(_fc_forecast_total)} ({_fc_forecast_total:,.0f}원)"),
+                    ("잔여 목표", _eok(max(_fc_remain, 0)) if _fc_remain > 0 else "달성 🎉",
+                     (f"남은 {_fc_months_left}개월 월평균 {_eok(_fc_remain / _fc_months_left)} 필요" if (_fc_remain > 0 and _fc_months_left > 0)
+                      else ("목표 초과" if _fc_remain <= 0 else "")) ),
+                ]
+                for _col, (_t, _v, _sub) in zip(_kc, _kpis):
+                    with _col:
+                        st.markdown(
+                            "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 12px;min-height:104px;'>"
+                            f"<div style='color:#6b7280;font-size:0.78rem;margin-bottom:4px;'>{_t}</div>"
+                            f"<div style='font-size:1.45rem;font-weight:700;color:#111827;'>{_v}</div>"
+                            f"<div style='font-size:0.74rem;color:#6b7280;margin-top:6px;'>{_sub}</div></div>",
+                            unsafe_allow_html=True,
+                        )
+                _bar_pct = max(0.0, min(_rate_fc, 100.0))
+                _bar_act = max(0.0, min(_rate_actual, 100.0))
+                st.markdown(
+                    "<div style='margin:10px 0 2px;font-size:0.78rem;color:#6b7280;'>진행률 (진한색: 현재 누적 · 연한색: 당월 마감예상까지)</div>"
+                    "<div style='position:relative;height:16px;background:#e5e7eb;border-radius:8px;overflow:hidden;'>"
+                    f"<div style='position:absolute;left:0;top:0;height:100%;width:{_bar_pct:.1f}%;background:#93c5fd;'></div>"
+                    f"<div style='position:absolute;left:0;top:0;height:100%;width:{_bar_act:.1f}%;background:#2563eb;'></div>"
+                    "</div>",
+                    unsafe_allow_html=True,
+                )
+                if _fc_closed_avg and _fc_months_left > 0 and _fc_remain > 0:
+                    _need_avg = _fc_remain / _fc_months_left
+                    st.caption(
+                        f"ℹ️ 남은 {_fc_months_left}개월 필요 월평균 {_eok(_need_avg)} vs 올해 마감월 월평균 {_eok(_fc_closed_avg)} "
+                        f"(필요액은 마감월 평균의 {_need_avg / _fc_closed_avg * 100:.0f}%). 당월 마감예상은 일할계산이라 실제와 다를 수 있어요."
+                    )
+                else:
+                    st.caption("ℹ️ 당월 마감예상은 일할계산이라 실제와 다를 수 있어요.")
+                st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
 
         def _style_forecast_table(df, is_pct=False, is_currency_like=False):
             """마감예상 달 컬럼은 배경을 살짝 강조하고, 0(아직 안 온 달)은 빈칸(-)으로 표시."""
