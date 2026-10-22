@@ -4386,9 +4386,9 @@ def _render_weekly_segment_page(page_title, traffic_segment):
     # 핏플랍(FF) 제외 비교선 on/off — 켜면 25년 선 외에 '25년(FF제외)' 점선을 같이 그린다.
     # (페이지마다 따로 기억되도록 세그먼트별 key 사용)
     _show_ff_line = st.toggle(
-        "핏플랍 제외 비교선 표시 (25년 FF제외)", value=True,
+        "핏플랍 제외 비교선 표시 (25년 FF제외)", value=False,
         key=f"wk_show_ff_{traffic_segment}",
-        help="켜면 25년 실적에서 핏플랍(FF) 브랜드를 뺀 점선을 같이 보여줘요. 끄면 25년/26년만 표시돼요.",
+        help="켜면 25년 실적에서 핏플랍(FF) 브랜드를 뺀 점선을 같이 보여줘요. 끄면 25년/26년만 표시돼요 (기본: 끔).",
     ) if _has_ff_data else False
 
     _render_section(f"{traffic_segment} 트래픽", "트래픽", traffic_segment, show_ff=_show_ff_line)
