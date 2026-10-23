@@ -4793,14 +4793,41 @@ if side["page"].startswith("10."):
                     use_container_width=True,
                 )
 
-                yoy = pd.DataFrame(index=cur_tbl.index, columns=month_cols + [f"누적(1~{len(live_months)}월)"], dtype=object)
+                cum_name = f"누적(1~{len(live_months)}월)"
+                month_num = lambda c: int(c.replace("월", ""))
+
+                # ① 달력월 기준: 작년 같은 달 실제 마감 금액과 비교
+                yoy = pd.DataFrame(index=cur_tbl.index, columns=month_cols + [cum_name], dtype=object)
                 for row in cur_tbl.index:
                     for c in month_cols:
                         cv, pv = cur_tbl.loc[row, c], prev_tbl.loc[row, c] if row in prev_tbl.index else None
                         yoy.loc[row, c] = pct_delta_safe(cv, pv) if (c in live_months and cv and pv) else None
                     cum_c = float(sum(cur_tbl.loc[row, c] for c in live_months))
                     cum_p = float(sum((prev_tbl.loc[row, c] if row in prev_tbl.index else 0) for c in live_months))
-                    yoy.loc[row, f"누적(1~{len(live_months)}월)"] = pct_delta_safe(cum_c, cum_p) if (cum_c and cum_p) else None
+                    yoy.loc[row, cum_name] = pct_delta_safe(cum_c, cum_p) if (cum_c and cum_p) else None
+
+                # ② 동요일 기준: 올해 그 달의 각 날짜를 364일 전(같은 요일)과 비교 — BI '전년비 실적'과 같은 기준
+                base = df_traffic[(df_traffic["회원구분"] == "전체")]
+                def _daily_gmv(row):
+                    bpus = FORECAST_BPU_ROWS[row]
+                    sub = base[base["BPU"] == "Total"] if bpus is None else base[base["BPU"].isin(bpus)]
+                    return sub.groupby("날짜")["거래액"].sum().astype("float64")
+
+                yoy_dow = pd.DataFrame(index=cur_tbl.index, columns=month_cols + [cum_name], dtype=object)
+                for row in cur_tbl.index:
+                    daily = _daily_gmv(row)
+                    cum_c = cum_p = 0.0
+                    for c in month_cols:
+                        if c not in live_months:
+                            continue
+                        m_start = pd.Timestamp(forecast_year, month_num(c), 1)
+                        days = pd.date_range(m_start, m_start + pd.offsets.MonthEnd(0))
+                        pv = float(daily.reindex(days - pd.Timedelta(days=364)).sum())
+                        cv = float(cur_tbl.loc[row, c])  # 당월은 마감예상 금액 (일할계산)
+                        yoy_dow.loc[row, c] = pct_delta_safe(cv, pv) if (cv and pv) else None
+                        cum_c += cv
+                        cum_p += pv
+                    yoy_dow.loc[row, cum_name] = pct_delta_safe(cum_c, cum_p) if (cum_c and cum_p) else None
 
                 def _fmt_yoy(v):
                     if v is None or pd.isna(v):
@@ -4812,15 +4839,24 @@ if side["page"].startswith("10."):
                         return ""
                     return "color: #dc2626; font-weight: 600;" if v < 0 else "color: #16a34a; font-weight: 600;"
 
+                def _show_yoy(df_yoy):
+                    # 숫자 NaN은 Streamlit 표가 'None'으로 그려서, 표시 문자열을 미리 만들고 색만 따로 입힌다
+                    yoy_f = df_yoy.astype(float)
+                    yoy_txt = yoy_f.map(_fmt_yoy)
+                    yoy_clr = yoy_f.map(_color_yoy)
+                    st.dataframe(yoy_txt.style.apply(lambda _d: yoy_clr, axis=None), use_container_width=True)
+
+                note_cur = "당월은 마감예상 기준, " if _fc_is_partial_month else ""
                 st.markdown(
-                    f"**전년비 ({forecast_year}년 vs {forecast_year - 1}년)** — "
-                    f"{'당월은 마감예상 기준, ' if _fc_is_partial_month else ''}누적은 {forecast_year}년 값이 있는 달만 같은 달끼리 비교"
+                    f"**① 전년비 · 월마감 기준** — {forecast_year}년 월 합계 vs {forecast_year - 1}년 같은 달 마감 금액. "
+                    f"{note_cur}누적은 {forecast_year}년 값이 있는 달만 같은 달끼리 비교"
                 )
-                # 숫자 NaN은 Streamlit 표가 'None'으로 그려서, 표시 문자열을 미리 만들고 색만 따로 입힌다
-                yoy_f = yoy.astype(float)
-                yoy_txt = yoy_f.map(_fmt_yoy)
-                yoy_clr = yoy_f.map(_color_yoy)
-                st.dataframe(yoy_txt.style.apply(lambda _d: yoy_clr, axis=None), use_container_width=True)
+                _show_yoy(yoy)
+                st.markdown(
+                    f"**② 전년비 · 동요일 기준** — 각 날짜를 364일 전 같은 요일과 비교해요(BI '전년비 실적' 보고서와 같은 기준). "
+                    f"{note_cur}요일 구성 차이 때문에 ①(월마감 기준)과 몇 %p 다를 수 있어요."
+                )
+                _show_yoy(yoy_dow)
 
         for _label, _num_col, _den_col, _is_ratio, _is_pct in _fc_metric_defs:
             st.markdown(f"#### {_label}")
