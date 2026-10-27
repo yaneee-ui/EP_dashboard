@@ -5009,8 +5009,15 @@ if side["page"].startswith("10."):
                     f"<div style='font-size:0.85rem;color:#374151;line-height:1.8;margin-bottom:10px;'>{_nm_lines}</div>",
                     unsafe_allow_html=True,
                 )
+                st.markdown(f"**{_nm_next_year}년 {_nm_next_month}월 목표 주차별 배분** (단위: 백만원)")
+                st.markdown(
+                    render_next_month_target_table(_nm_result, _nm_next_month, "target_weeks", "목표 거래액"),
+                    unsafe_allow_html=True,
+                )
+                st.caption(f"ℹ️ {_nm_ref_year}년 {_nm_next_month}월 주차별 비중을 그대로 적용한 값이에요 — TOTAL이 위 '{_nm_next_year}년 {_nm_next_month}월 목표' 금액과 일치해요. 주차 열은 작년 주차 기준이에요.")
+                st.markdown(f"**{_nm_ref_year}년 {_nm_next_month}월 실제 주차별 실적** (단위: 백만원)")
                 st.markdown(render_next_month_target_table(_nm_result, _nm_next_month), unsafe_allow_html=True)
-                st.caption(f"ℹ️ 아래 표는 목표 %와 무관하게 {_nm_ref_year}년 {_nm_next_month}월 실제 주차별 실적이에요(단위: 백만원) — TOTAL이 위 '{_nm_ref_year}년 {_nm_next_month}월 마감' 금액과 항상 일치해요.")
+                st.caption(f"ℹ️ 이 표는 목표 %와 무관한 {_nm_ref_year}년 {_nm_next_month}월 실제 실적이에요 — TOTAL이 위 '{_nm_ref_year}년 {_nm_next_month}월 마감' 금액과 항상 일치해요.")
                 _nm_excel_bytes = build_next_month_target_excel(_nm_result, _nm_ref_year, _nm_next_month, _nm_next_year)
                 st.download_button(
                     "⬇️ 엑셀 다운로드",

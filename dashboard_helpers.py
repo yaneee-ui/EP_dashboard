@@ -1528,6 +1528,8 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
         return None
     target_gmv = prev_actual * (1 + target_pct / 100)
     weeks = [(wn, v, c, start, end) for wn, v, c, start, end in weeks_raw]
+    # 목표 주차별 배분 = 작년 주차별 비중 그대로 목표 총액에 적용 (= 작년 주차 실적 × (1+목표%))
+    target_weeks = [(wn, v * (1 + target_pct / 100), c, start, end) for wn, v, c, start, end in weeks_raw]
 
     ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
     if not df_category.empty and "브랜드" in df_category.columns:
@@ -1547,14 +1549,15 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     return {
         "prev_actual": prev_actual, "target_gmv": target_gmv, "yoy_pct": target_pct,
         "ff_prev": ff_prev, "prev_ex_ff": prev_ex_ff, "target_ex_ff": target_ex_ff,
-        "ex_ff_yoy_pct": ex_ff_yoy_pct, "weeks": weeks,
+        "ex_ff_yoy_pct": ex_ff_yoy_pct, "weeks": weeks, "target_weeks": target_weeks,
     }
 
 
-def render_next_month_target_table(result, next_month):
-    """compute_next_month_target() 결과의 주차별 배분을 표(거래액/일평균, 단위 백만원)로.
-    헤더에 그 주차의 실제 대상 일자 구간(예: 10/1~10/5)도 괄호로 같이 보여준다."""
-    weeks = result["weeks"]
+def render_next_month_target_table(result, next_month, weeks_key="weeks", gmv_label="거래액"):
+    """compute_next_month_target() 결과의 주차별 표(거래액/일평균, 단위 백만원)로.
+    weeks_key="weeks"면 작년 실적, "target_weeks"면 목표 배분. 헤더에 그 주차의 실제 대상
+    일자 구간(예: 10/1~10/5)도 괄호로 같이 보여준다."""
+    weeks = result[weeks_key]
     total_sum = sum(v for _, v, _, _, _ in weeks)
     total_cnt = sum(c for _, _, c, _, _ in weeks)
 
@@ -1578,7 +1581,7 @@ def render_next_month_target_table(result, next_month):
     return (
         "<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>"
         f"<th>구분</th>{header_cells}</tr></thead><tbody>"
-        f"<tr><td class='m'>거래액</td>{gmv_cells}</tr>"
+        f"<tr><td class='m'>{gmv_label}</td>{gmv_cells}</tr>"
         f"<tr><td class='m'>일평균</td>{avg_cells}</tr>"
         "</tbody></table></div>"
     )
@@ -1642,7 +1645,37 @@ def build_next_month_target_excel(result, ref_year, next_month, next_year):
     tc2.number_format = "#,##0"
     tc2.font, tc2.fill = BOLD, TOTAL_FILL
 
-    ws.column_dimensions["A"].width = 12
+    # 목표 주차별 배분 (작년 주차 비중 × 목표) — 위 작년 실적 표 아래에 같은 양식으로
+    t_weeks = result["target_weeks"]
+    t_hdr = header_row + 4
+    ws.cell(row=t_hdr - 1, column=1, value=f"{next_year}년 {next_month}월 목표 주차별 배분 (작년 주차별 비중 적용)").font = BOLD
+    ws.cell(row=t_hdr, column=1, value="구분").fill = HEADER_FILL
+    ws.cell(row=t_hdr, column=1).font = BOLD
+    for i, (_, _, _, start, end) in enumerate(t_weeks, start=2):
+        c = ws.cell(row=t_hdr, column=i, value=f"{week_start_label(start)}\n({start.month}/{start.day}~{end.month}/{end.day})")
+        c.fill = HEADER_FILL
+        c.font = BOLD
+        c.alignment = Alignment(horizontal="center", wrap_text=True)
+    c = ws.cell(row=t_hdr, column=_total_col, value="TOTAL")
+    c.fill = HEADER_FILL
+    c.font = BOLD
+    c.alignment = Alignment(horizontal="center")
+    t_sum = sum(v for _, v, _, _, _ in t_weeks)
+    ws.cell(row=t_hdr + 1, column=1, value="목표 거래액").font = BOLD
+    for i, (_, v, _, _, _) in enumerate(t_weeks, start=2):
+        ws.cell(row=t_hdr + 1, column=i, value=round(v)).number_format = "#,##0"
+    tc = ws.cell(row=t_hdr + 1, column=_total_col, value=round(t_sum))
+    tc.number_format = "#,##0"
+    tc.font, tc.fill = BOLD, TOTAL_FILL
+    ws.cell(row=t_hdr + 2, column=1, value="일평균").font = BOLD
+    for i, (_, v, cnt, _, _) in enumerate(t_weeks, start=2):
+        ws.cell(row=t_hdr + 2, column=i, value=round(v / cnt) if cnt else None).number_format = "#,##0"
+    tc2 = ws.cell(row=t_hdr + 2, column=_total_col, value=round(t_sum / total_cnt) if total_cnt else None)
+    tc2.number_format = "#,##0"
+    tc2.font, tc2.fill = BOLD, TOTAL_FILL
+    ws.row_dimensions[t_hdr].height = 30
+
+    ws.column_dimensions["A"].width = 14
     for i in range(2, _total_col + 1):
         ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 14
     ws.row_dimensions[header_row].height = 30
