@@ -1529,7 +1529,7 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     target_gmv = prev_actual * (1 + target_pct / 100)
     weeks = [(wn, v, c, start, end) for wn, v, c, start, end in weeks_raw]
     # 목표 주차별 배분: 올해(ref_year+1) 달력월 일자마다 '전년 동요일'(364일 전)의 실적 흐름을
-    # 따라 목표 총액을 일별로 나눈 뒤 주차(월~일, 1일/말일은 짧을 수 있음)로 묶는다. 요일·행사
+    # 따라(행사 아닌 날은 전후 주와 1:2:1 평활) 목표 총액을 일별로 나눈 뒤 주차(월~일, 1일/말일은 짧을 수 있음)로 묶는다. 요일·행사
     # 시점이 올해 날짜에 맞게 밀려서(예: 전년 블프 11/21~28 -> 올해 11/20~27) 행사 주간이 제자리에 온다.
     tgt_start = pd.Timestamp(ref_year + 1, next_month, 1)
     tgt_end = (tgt_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
@@ -1552,7 +1552,18 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
                     return min(pe["시작일"] + (d - ev["시작일"]), pe["종료일"])
         return d - pd.Timedelta(days=364)
 
-    base = pd.Series([s.get(_prev_day(d), float("nan")) for d in tgt_days], index=tgt_days)
+    def _base_val(d):
+        pd_ = _prev_day(d)
+        if pd_ == d - pd.Timedelta(days=364):
+            # 행사가 아닌 날은 전년 같은 요일의 전/후 주(±7일)와 1:2:1로 섞어 하루짜리 튀는 값을 완화
+            vals = [(s.get(pd_ + pd.Timedelta(days=k)), w) for k, w in ((-7, 1), (0, 2), (7, 1))]
+            vals = [(v, w) for v, w in vals if v is not None and pd.notna(v)]
+            if vals:
+                return sum(v * w for v, w in vals) / sum(w for _, w in vals)
+            return float("nan")
+        return s.get(pd_, float("nan"))
+
+    base = pd.Series([_base_val(d) for d in tgt_days], index=tgt_days)
     if base.notna().sum() == 0 or base.sum() <= 0:
         base = pd.Series([float(v) for v in [prev_actual / len(tgt_days)] * len(tgt_days)], index=tgt_days)
     base = base.fillna(base.mean())
