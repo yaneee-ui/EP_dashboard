@@ -656,11 +656,48 @@ def build_forecast_excel(df_traffic, df_coupon_daily, df_ep, forecast_year, fc_c
     return wb_buf.getvalue()
 
 
+def _style_export_sheet(ws, df_export):
+    """화면 표와 같은 양식으로: 헤더 회색 굵게, '합계' 행 굵게+회색, 비율 열은 %서식(값은 반올림 없이
+    그대로), 숫자는 천단위 콤마. 비율 열 = 이름에 '(%)'가 있거나 '비용률'이 들어간 열('증감' 제외)."""
+    from openpyxl.styles import Alignment, Font, PatternFill
+    from openpyxl.utils import get_column_letter
+
+    HEADER_FILL = PatternFill("solid", fgColor="E5E7EB")
+    TOTAL_FILL = PatternFill("solid", fgColor="F3F4F6")
+    for c in ws[1]:
+        c.font = Font(bold=True)
+        c.fill = HEADER_FILL
+        c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+    for ci, col in enumerate(df_export.columns, start=1):
+        name = str(col)
+        is_pct = "(%)" in name or ("비용률" in name and "증감" not in name)
+        for ri in range(2, ws.max_row + 1):
+            cell = ws.cell(row=ri, column=ci)
+            if ci == 1:
+                continue
+            v = cell.value
+            if isinstance(v, (int, float)) and not isinstance(v, bool):
+                if is_pct:
+                    cell.value = v / 100
+                    cell.number_format = "0.0%"
+                else:
+                    cell.number_format = "#,##0.0" if "증감" in name else "#,##0"
+        ws.column_dimensions[get_column_letter(ci)].width = 14 if ci > 1 else 16
+    for ri in range(2, ws.max_row + 1):
+        if ws.cell(row=ri, column=1).value == "합계":
+            for c in ws[ri]:
+                c.font = Font(bold=True)
+                c.fill = TOTAL_FILL
+    ws.row_dimensions[1].height = 30
+    ws.freeze_panes = "B2"
+
+
 def render_excel_download(df_export, filename, label="⬇️ 엑셀 다운로드"):
     """DataFrame을 엑셀 파일로 변환해 다운로드 버튼으로 제공."""
     buf = io.BytesIO()
     with pd.ExcelWriter(buf, engine="openpyxl") as writer:
         df_export.to_excel(writer, index=False, sheet_name="누적 데이터")
+        _style_export_sheet(writer.sheets["누적 데이터"], df_export)
     st.download_button(
         label,
         data=buf.getvalue(),
