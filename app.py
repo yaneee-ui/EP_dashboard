@@ -2665,6 +2665,23 @@ if side["page"].startswith("4."):
         tr_table_rows["CR"] = (_sum_series["구매객수"] / _sum_series["트래픽"] * 100).replace([float("inf")], None)
         tr_table_rows["객단가"] = (_sum_series["거래액"] / _sum_series["구매객수"]).replace([float("inf")], None)
 
+        # 비용률 = 쿠폰할인 ÷ 거래액(분자·분모 각각 기간 합계). 쿠폰 데이터는 고객구분이 없어서
+        # 전체 고객구분일 때만 계산하고, 쿠폰 데이터 시작일(2025-01-01) 이전 기간은 '-'.
+        if cum_segment == "전체" and not df_coupon_daily.empty:
+            if bpu == "Total":
+                _cum_cp = df_coupon_daily
+            elif bpu in BPU_GROUPS:
+                _cum_cp = df_coupon_daily[df_coupon_daily["BPU"].isin(BPU_GROUPS[bpu])]
+            else:
+                _cum_cp = df_coupon_daily[df_coupon_daily["BPU"] == bpu]
+            _cp_s = _cum_cp.groupby("날짜")["쿠폰할인"].sum().sort_index()
+            _cp_series = _cp_s.resample(UNIT_CONFIG[cum_unit]["rule"]).sum()
+            if cum_unit == "주별":
+                _cp_series.index = _cp_series.index - pd.Timedelta(days=6)
+            _cp_series = _cp_series.reindex(_sum_series["거래액"].index)
+            _cp_series[_cp_series.index < _cum_cp["날짜"].min()] = float("nan")
+            tr_table_rows["비용률"] = (_cp_series / _sum_series["거래액"] * 100).where(_sum_series["거래액"] > 0)
+
     # --- EP채널 부분 (전시상품수 등은 모드에 따라 평균/합계, 원부매칭율/최저가율은 항상 합계기반 재계산) ---
     if bpu in BPU_GROUPS:
         _cum_ep = aggregate_ep(df_ep, BPU_GROUPS[bpu], "Total", "Total")
@@ -2714,7 +2731,7 @@ if side["page"].startswith("4."):
     else:
         COLS = [
             ("트래픽", "UV", False), ("거래액", "거래액(순결제)", False), ("구매객수", "구매객수", False),
-            ("CR", "구매전환율(%)", True), ("객단가", "객단가", False),
+            ("CR", "구매전환율(%)", True), ("객단가", "객단가", False), ("비용률", "비용률(%)", True),
             ("원부매칭율(%)", "원부매칭율(%)", True), ("최저가율(%)", "최저가율(%)", True),
             ("평균 EP 전시 상품수", "전시상품수 (평균)", False), ("평균 원부매칭 상품수", "원부매칭상품수 (평균)", False),
             ("평균 최저가 상품수", "최저가상품수 (평균)", False),
@@ -2763,6 +2780,12 @@ if side["page"].startswith("4."):
             (_tot_vals["거래액"] / _tot_vals["구매객수"])
             if _tot_vals["구매객수"] else None
         )
+        _tot_vals["비용률"] = None
+        if "비용률" in tr_table_rows and _tot_vals["거래액"]:
+            _cp_rng = _cum_cp[(_cum_cp["날짜"] >= pd.Timestamp(cum_start)) & (_cum_cp["날짜"] <= pd.Timestamp(cum_end))]
+            _gmv_rng = _tot_cur_range[_tot_cur_range["날짜"] >= _cum_cp["날짜"].min()]["거래액"].sum()
+            if _gmv_rng:
+                _tot_vals["비용률"] = _cp_rng["쿠폰할인"].sum() / _gmv_rng * 100
         # 스냅샷 지표라 합계 행도 평균으로 — 원부매칭율/최저가율 계산은 두 값 다 같은
         # 기간의 평균이라 비율(분자평균/분모평균)이 합계 기반(분자합/분모합)과 동일함.
         for _m in ["평균 EP 전시 상품수", "평균 원부매칭 상품수", "평균 최저가 상품수"]:
