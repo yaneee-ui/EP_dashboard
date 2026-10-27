@@ -1528,8 +1528,24 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
         return None
     target_gmv = prev_actual * (1 + target_pct / 100)
     weeks = [(wn, v, c, start, end) for wn, v, c, start, end in weeks_raw]
-    # 목표 주차별 배분 = 작년 주차별 비중 그대로 목표 총액에 적용 (= 작년 주차 실적 × (1+목표%))
-    target_weeks = [(wn, v * (1 + target_pct / 100), c, start, end) for wn, v, c, start, end in weeks_raw]
+    # 목표 주차별 배분: 올해(ref_year+1) 달력월 일자마다 '전년 동요일'(364일 전)의 실적 흐름을
+    # 따라 목표 총액을 일별로 나눈 뒤 주차(월~일, 1일/말일은 짧을 수 있음)로 묶는다. 요일·행사
+    # 시점이 올해 날짜에 맞게 밀려서(예: 전년 블프 11/21~28 -> 올해 11/20~27) 행사 주간이 제자리에 온다.
+    tgt_start = pd.Timestamp(ref_year + 1, next_month, 1)
+    tgt_end = (tgt_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
+    tgt_days = pd.date_range(tgt_start, tgt_end)
+    base = pd.Series([s.get(d - pd.Timedelta(days=364), float("nan")) for d in tgt_days], index=tgt_days)
+    if base.notna().sum() == 0 or base.sum() <= 0:
+        base = pd.Series([float(v) for v in [prev_actual / len(tgt_days)] * len(tgt_days)], index=tgt_days)
+    base = base.fillna(base.mean())
+    daily_target = base / base.sum() * target_gmv
+    target_weeks = []
+    cur, wn = tgt_start, 1
+    while cur <= tgt_end:
+        chunk_end = min(cur + pd.Timedelta(days=6 - cur.weekday()), tgt_end)
+        chunk = daily_target[(daily_target.index >= cur) & (daily_target.index <= chunk_end)]
+        target_weeks.append((wn, float(chunk.sum()), chunk.size, cur, chunk_end))
+        cur, wn = chunk_end + pd.Timedelta(days=1), wn + 1
 
     ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
     if not df_category.empty and "브랜드" in df_category.columns:
@@ -1645,10 +1661,10 @@ def build_next_month_target_excel(result, ref_year, next_month, next_year):
     tc2.number_format = "#,##0"
     tc2.font, tc2.fill = BOLD, TOTAL_FILL
 
-    # 목표 주차별 배분 (작년 주차 비중 × 목표) — 위 작년 실적 표 아래에 같은 양식으로
+    # 목표 주차별 배분 (전년 동요일 흐름 × 목표, 올해 날짜 기준) — 위 작년 실적 표 아래에 같은 양식으로
     t_weeks = result["target_weeks"]
     t_hdr = header_row + 4
-    ws.cell(row=t_hdr - 1, column=1, value=f"{next_year}년 {next_month}월 목표 주차별 배분 (작년 주차별 비중 적용)").font = BOLD
+    ws.cell(row=t_hdr - 1, column=1, value=f"{next_year}년 {next_month}월 목표 주차별 배분 (전년 동요일 흐름 적용)").font = BOLD
     ws.cell(row=t_hdr, column=1, value="구분").fill = HEADER_FILL
     ws.cell(row=t_hdr, column=1).font = BOLD
     for i, (_, _, _, start, end) in enumerate(t_weeks, start=2):

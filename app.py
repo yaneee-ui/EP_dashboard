@@ -5014,7 +5014,7 @@ if side["page"].startswith("10."):
                     render_next_month_target_table(_nm_result, _nm_next_month, "target_weeks", "목표 거래액"),
                     unsafe_allow_html=True,
                 )
-                st.caption(f"ℹ️ {_nm_ref_year}년 {_nm_next_month}월 주차별 비중을 그대로 적용한 값이에요 — TOTAL이 위 '{_nm_next_year}년 {_nm_next_month}월 목표' 금액과 일치해요. 주차 열은 작년 주차 기준이에요.")
+                st.caption(f"ℹ️ 전년 동요일(364일 전) 일별 흐름을 따라 {_nm_next_year}년 {_nm_next_month}월 날짜별로 배분한 값이에요(1일·말일이 낀 주차는 짧아요) — TOTAL이 위 '{_nm_next_year}년 {_nm_next_month}월 목표' 금액과 일치해요.")
                 st.markdown(f"**{_nm_ref_year}년 {_nm_next_month}월 실제 주차별 실적** (단위: 백만원)")
                 st.markdown(render_next_month_target_table(_nm_result, _nm_next_month), unsafe_allow_html=True)
                 st.caption(f"ℹ️ 이 표는 목표 %와 무관한 {_nm_ref_year}년 {_nm_next_month}월 실제 실적이에요 — TOTAL이 위 '{_nm_ref_year}년 {_nm_next_month}월 마감' 금액과 항상 일치해요.")
