@@ -5071,6 +5071,11 @@ if side["page"].startswith("12."):
         if _sel_b_label is not None:
             _row_b = _event_cal.loc[_event_cal["표시"] == _sel_b_label].iloc[0]
             _match = _event_cal[(_event_cal["연도"] == _row_b["연도"] - 1) & (_event_cal["월"] == _row_b["월"])]
+            # 캘린더에 '전년비교행사'가 지정된 행사는 그 전년 행사를 우선 제안
+            if "전년비교행사" in _event_cal.columns and pd.notna(_row_b.get("전년비교행사")):
+                _pref = _event_cal[(_event_cal["연도"] == _row_b["연도"] - 1) & (_event_cal["행사명"] == _row_b["전년비교행사"])]
+                if not _pref.empty:
+                    _match = _pref
             if not _match.empty:
                 _default_a_idx = _match.index[0]
 

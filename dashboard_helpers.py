@@ -1534,7 +1534,25 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     tgt_start = pd.Timestamp(ref_year + 1, next_month, 1)
     tgt_end = (tgt_start + pd.offsets.MonthBegin(1)) - pd.Timedelta(days=1)
     tgt_days = pd.date_range(tgt_start, tgt_end)
-    base = pd.Series([s.get(d - pd.Timedelta(days=364), float("nan")) for d in tgt_days], index=tgt_days)
+    try:
+        _cal0 = load_event_calendar()
+    except Exception:
+        _cal0 = pd.DataFrame()
+
+    def _prev_day(d):
+        """올해 행사 기간의 날짜는 event_calendar.csv '전년비교행사'로 지정된 전년 행사의 같은
+        순번 날짜(행사 첫날=첫날)에, 그 외는 전년 동요일(364일 전)에 맞춘다."""
+        if not _cal0.empty and "전년비교행사" in _cal0.columns:
+            cur_ev = _cal0[(_cal0["시작일"] <= d) & (_cal0["종료일"] >= d) & _cal0["전년비교행사"].notna()]
+            if not cur_ev.empty:
+                ev = cur_ev.iloc[0]
+                prev_ev = _cal0[(_cal0["연도"] == ev["연도"] - 1) & (_cal0["행사명"] == ev["전년비교행사"])]
+                if not prev_ev.empty:
+                    pe = prev_ev.iloc[0]
+                    return min(pe["시작일"] + (d - ev["시작일"]), pe["종료일"])
+        return d - pd.Timedelta(days=364)
+
+    base = pd.Series([s.get(_prev_day(d), float("nan")) for d in tgt_days], index=tgt_days)
     if base.notna().sum() == 0 or base.sum() <= 0:
         base = pd.Series([float(v) for v in [prev_actual / len(tgt_days)] * len(tgt_days)], index=tgt_days)
     base = base.fillna(base.mean())
@@ -1560,10 +1578,14 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
         hit = _cal[(_cal["시작일"] <= hi) & (_cal["종료일"] >= lo)]
         return [str(n).split(" (")[0] for n in hit["행사명"]]
 
+    def _prev_span(lo, hi):
+        mapped = [_prev_day(d) for d in pd.date_range(lo, hi)]
+        return min(mapped), max(mapped)
+
     for _, _, _, ws_, we_ in target_weeks:
         week_events.append((
             _ev_names(ws_, we_),
-            _ev_names(ws_ - pd.Timedelta(days=364), we_ - pd.Timedelta(days=364)),
+            _ev_names(*_prev_span(ws_, we_)),
         ))
 
     ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
