@@ -1716,6 +1716,7 @@ def build_next_month_target_excel(result, ref_year, next_month, next_year):
 
     # 목표 주차별 배분 (전년 동요일 흐름 × 목표, 올해 날짜 기준) — 위 작년 실적 표 아래에 같은 양식으로
     t_weeks = result["target_weeks"]
+    _t_total_col = len(t_weeks) + 2
     t_hdr = header_row + 4
     ws.cell(row=t_hdr - 1, column=1, value=f"{next_year}년 {next_month}월 목표 주차별 배분 (전년 동요일 흐름 적용)").font = BOLD
     ws.cell(row=t_hdr, column=1, value="구분").fill = HEADER_FILL
@@ -1725,7 +1726,7 @@ def build_next_month_target_excel(result, ref_year, next_month, next_year):
         c.fill = HEADER_FILL
         c.font = BOLD
         c.alignment = Alignment(horizontal="center", wrap_text=True)
-    c = ws.cell(row=t_hdr, column=_total_col, value="TOTAL")
+    c = ws.cell(row=t_hdr, column=_t_total_col, value="TOTAL")
     c.fill = HEADER_FILL
     c.font = BOLD
     c.alignment = Alignment(horizontal="center")
@@ -1733,19 +1734,19 @@ def build_next_month_target_excel(result, ref_year, next_month, next_year):
     ws.cell(row=t_hdr + 1, column=1, value="목표 거래액").font = BOLD
     for i, (_, v, _, _, _) in enumerate(t_weeks, start=2):
         ws.cell(row=t_hdr + 1, column=i, value=round(v)).number_format = "#,##0"
-    tc = ws.cell(row=t_hdr + 1, column=_total_col, value=round(t_sum))
+    tc = ws.cell(row=t_hdr + 1, column=_t_total_col, value=round(t_sum))
     tc.number_format = "#,##0"
     tc.font, tc.fill = BOLD, TOTAL_FILL
     ws.cell(row=t_hdr + 2, column=1, value="일평균").font = BOLD
     for i, (_, v, cnt, _, _) in enumerate(t_weeks, start=2):
         ws.cell(row=t_hdr + 2, column=i, value=round(v / cnt) if cnt else None).number_format = "#,##0"
-    tc2 = ws.cell(row=t_hdr + 2, column=_total_col, value=round(t_sum / total_cnt) if total_cnt else None)
+    tc2 = ws.cell(row=t_hdr + 2, column=_t_total_col, value=round(t_sum / total_cnt) if total_cnt else None)
     tc2.number_format = "#,##0"
     tc2.font, tc2.fill = BOLD, TOTAL_FILL
     ws.row_dimensions[t_hdr].height = 30
 
     ws.column_dimensions["A"].width = 14
-    for i in range(2, _total_col + 1):
+    for i in range(2, max(_total_col, _t_total_col) + 1):
         ws.column_dimensions[chr(64 + i) if i <= 26 else "A"].width = 14
     ws.row_dimensions[header_row].height = 30
     ws.freeze_panes = "B6"
