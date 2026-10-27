@@ -5058,8 +5058,11 @@ if side["page"].startswith("12."):
         ec1, ec2 = st.columns(2)
         with ec1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>이번 행사</div>", unsafe_allow_html=True)
+            # 기본값은 이미 시작한 행사 중 가장 최근 것 (아직 시작 전인 예정 행사는 데이터가 없음)
+            _started = _event_cal.index[_event_cal["시작일"] <= df_traffic["날짜"].max()]
+            _sel_b_default = (list(_event_cal.index).index(_started[-1]) if len(_started) else len(_event_options) - 1) if _event_options else 0
             _sel_b_label = st.selectbox(
-                "이번 행사", _event_options, index=len(_event_options) - 1,
+                "이번 행사", _event_options, index=_sel_b_default,
                 key="event_b_select", label_visibility="collapsed",
             ) if _event_options else None
 

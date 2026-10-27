@@ -1547,6 +1547,25 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
         target_weeks.append((wn, float(chunk.sum()), chunk.size, cur, chunk_end))
         cur, wn = chunk_end + pd.Timedelta(days=1), wn + 1
 
+    # 주차별 행사 표기: 올해 행사 / 전년 동요일(364일 전) 구간에 걸친 행사
+    week_events = []
+    try:
+        _cal = load_event_calendar()
+    except Exception:
+        _cal = pd.DataFrame()
+
+    def _ev_names(lo, hi):
+        if _cal is None or _cal.empty:
+            return []
+        hit = _cal[(_cal["시작일"] <= hi) & (_cal["종료일"] >= lo)]
+        return [str(n).split(" (")[0] for n in hit["행사명"]]
+
+    for _, _, _, ws_, we_ in target_weeks:
+        week_events.append((
+            _ev_names(ws_, we_),
+            _ev_names(ws_ - pd.Timedelta(days=364), we_ - pd.Timedelta(days=364)),
+        ))
+
     ff_prev, prev_ex_ff, target_ex_ff, ex_ff_yoy_pct = 0.0, prev_actual, target_gmv, target_pct
     if not df_category.empty and "브랜드" in df_category.columns:
         m_start = pd.Timestamp(ref_year, next_month, 1)
@@ -1565,7 +1584,7 @@ def compute_next_month_target(df_traffic, df_category, ref_year, next_month, tar
     return {
         "prev_actual": prev_actual, "target_gmv": target_gmv, "yoy_pct": target_pct,
         "ff_prev": ff_prev, "prev_ex_ff": prev_ex_ff, "target_ex_ff": target_ex_ff,
-        "ex_ff_yoy_pct": ex_ff_yoy_pct, "weeks": weeks, "target_weeks": target_weeks,
+        "ex_ff_yoy_pct": ex_ff_yoy_pct, "weeks": weeks, "target_weeks": target_weeks, "week_events": week_events,
     }
 
 
@@ -1594,11 +1613,23 @@ def render_next_month_target_table(result, next_month, weeks_key="weeks", gmv_la
     avg_cells = "".join(f"<td style='text-align:right;'>{_eok_m(v / c) if c else '-'}</td>" for _, v, c, _, _ in weeks)
     avg_cells += f"<td style='text-align:right;font-weight:700;'>{_eok_m(total_sum / total_cnt) if total_cnt else '-'}</td>"
 
+    ev_rows = ""
+    if weeks_key == "target_weeks" and result.get("week_events"):
+        def _ev_cells(idx):
+            return "".join(
+                f"<td style='text-align:right;font-size:0.78rem;color:#b45309;'>{'<br>'.join(ev[idx]) or '-'}</td>"
+                for ev in result["week_events"]
+            ) + "<td></td>"
+        ev_rows = (
+            f"<tr><td class='m'>올해 행사</td>{_ev_cells(0)}</tr>"
+            f"<tr><td class='m'>전년 동요일 구간 행사</td>{_ev_cells(1)}</tr>"
+        )
     return (
         "<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>"
         f"<th>구분</th>{header_cells}</tr></thead><tbody>"
         f"<tr><td class='m'>{gmv_label}</td>{gmv_cells}</tr>"
         f"<tr><td class='m'>일평균</td>{avg_cells}</tr>"
+        f"{ev_rows}"
         "</tbody></table></div>"
     )
 
