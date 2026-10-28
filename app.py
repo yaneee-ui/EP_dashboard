@@ -5446,14 +5446,34 @@ if side["page"].startswith("13."):
             ])
             if not _bar_df.empty:
                 st.markdown(f"**채널별 거래액 추이 · {_lux_unit} · {_lux_agg} (백만원)**")
-                _bar = alt.Chart(_bar_df).mark_bar().encode(
-                    x=alt.X("기간:N", sort=_lab_chrono, title=None, axis=alt.Axis(labelAngle=-45, labelOverlap=True)),
-                    y=alt.Y("거래액(백만원):Q", stack=True, title="거래액(백만원)"),
-                    color=alt.Color("채널:N", sort=_ch_only, scale=alt.Scale(domain=_ch_only, range=[_LUX_COLORS.get(c, "#6b7280") for c in _ch_only]),
-                                    legend=alt.Legend(orient="top", title=None)),
-                    tooltip=["기간", "채널", alt.Tooltip("거래액(백만원):Q", format=",.1f")],
-                )
-                st.altair_chart(_bar.properties(height=300), use_container_width=True)
+                _bc1, _bc2 = st.columns([1, 3])
+                with _bc1:
+                    _bar_kind = st.radio("차트 형태", ["선", "묶음 막대", "누적 막대"], horizontal=True, key="lux_bar_kind", label_visibility="collapsed")
+                with _bc2:
+                    _bar_chs = st.multiselect("표시 채널", _ch_only, default=_ch_only, key="lux_bar_chs", label_visibility="collapsed")
+                _bdf = _bar_df[_bar_df["채널"].isin(_bar_chs)]
+                _ccolor = alt.Color("채널:N", sort=_ch_only, scale=alt.Scale(domain=_ch_only, range=[_LUX_COLORS.get(c, "#6b7280") for c in _ch_only]),
+                                    legend=alt.Legend(orient="top", title=None))
+                _xax = alt.X("기간:N", sort=_lab_chrono, title=None, axis=alt.Axis(labelAngle=-45, labelOverlap=True))
+                _tip = ["기간", "채널", alt.Tooltip("거래액(백만원):Q", format=",.1f")]
+                _zero_b = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#9ca3af").encode(y="y:Q")
+                if _bar_kind == "선":
+                    _big = alt.Chart(_bdf).mark_line(point=alt.OverlayMarkDef(size=60)).encode(
+                        x=_xax, y=alt.Y("거래액(백만원):Q", title="거래액(백만원)"), color=_ccolor,
+                        strokeWidth=alt.condition(alt.datum.채널 == "EP", alt.value(4.5), alt.value(2)), tooltip=_tip,
+                    )
+                    _fig = _zero_b + _big
+                elif _bar_kind == "묶음 막대":
+                    _fig = alt.Chart(_bdf).mark_bar().encode(
+                        x=_xax, xOffset=alt.XOffset("채널:N", sort=_ch_only), y=alt.Y("거래액(백만원):Q", title="거래액(백만원)"),
+                        color=_ccolor, tooltip=_tip,
+                    )
+                else:
+                    _fig = alt.Chart(_bdf).mark_bar().encode(
+                        x=_xax, y=alt.Y("거래액(백만원):Q", stack=True, title="거래액(백만원)"), color=_ccolor, tooltip=_tip,
+                    )
+                st.altair_chart(_fig.properties(height=340), use_container_width=True)
+                st.caption("EP를 굵은 선으로 강조했어요. 막대로 볼 때는 '묶음 막대'가 채널끼리 비교하기 좋아요. 취소가 먼저 잡힌 날은 값이 마이너스로 내려가요.")
 
             # 월별 전년비 (마감된 달은 전년 같은 달, 진행 중인 달은 전년 동요일)
             st.markdown(f"#### 월별 전년비 · {_lux_view} · {_lux_agg}")
