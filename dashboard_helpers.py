@@ -4278,7 +4278,7 @@ def channel_all_daily(df_ch, kinds=None, category="전체"):
     return pv
 
 
-def compute_channel_weekly_yoy(daily, last_date, n_weeks=20):
+def compute_channel_weekly_yoy(daily, last_date, n_weeks=20, per_day=False):
     """최근 n_weeks개 주(월~일)의 채널별 전년비. 진행 중인 주는 last_date까지만 쓰고 전년 동요일(364일 전)과
     같은 일수끼리 비교. 반환: [(주 시작일, {채널: (올해, 전년, 전년비%)}, 진행중여부)] (오래된 주 -> 최신 주)"""
     last_date = pd.Timestamp(last_date)
@@ -4291,6 +4291,8 @@ def compute_channel_weekly_yoy(daily, last_date, n_weeks=20):
         if ps < daily.index.min():
             continue
         cur, prev = daily.loc[s:e].sum(), daily.loc[ps:pe].sum()
+        if per_day:
+            cur, prev = cur / ((e - s).days + 1), prev / ((pe - ps).days + 1)
         out.append((s, {
             ch: (float(cur.get(ch, 0)), float(prev.get(ch, 0)),
                  ((cur.get(ch, 0) / prev.get(ch, 0) - 1) * 100) if prev.get(ch, 0) > 0 else None)
@@ -4299,7 +4301,7 @@ def compute_channel_weekly_yoy(daily, last_date, n_weeks=20):
     return out
 
 
-def generate_channel_page_insights(sum_rows, periods, unit_label, kind_label="전체", cat_label="전체"):
+def generate_channel_page_insights(sum_rows, periods, unit_label, kind_label="전체", cat_label="전체", per_day=False):
     """14번(전체 채널별 전년비) 규칙 기반 인사이트. sum_rows = compute_luxury_channel_compare() 결과(선택 기간),
     periods = [(라벨, {채널: 전년비%})] (오래된 -> 최신). 숫자는 모두 이미 계산된 값을 조립만 한다."""
     rows = {r["채널"]: r for r in sum_rows}
@@ -4313,13 +4315,19 @@ def generate_channel_page_insights(sum_rows, periods, unit_label, kind_label="�
     def _d(v):
         return format_delta_html(v) if v is not None else "-"
 
+    def _m(v, sign=False):
+        # 일평균은 금액이 작아 소수 첫째 자리까지, 단위 라벨도 '일평균'을 붙인다
+        dec = 1 if per_day else 0
+        return f"{v / 1e6:{'+' if sign else ''},.{dec}f}"
+    unit_txt = "백만원/일" if per_day else "백만원"
+
     # ① EP vs 전체 채널
     if ep["전년비"] is not None and tot["전년비"] is not None:
         gap = ep["전년비"] - tot["전년비"]
         ranked = sorted([r for r in sum_rows if r["채널"] != "합계" and r["전년비"] is not None], key=lambda r: -r["전년비"])
         rank = [r["채널"] for r in ranked].index("EP") + 1
         body = (
-            f"[{scope}] EP 거래액 {ep['올해'] / 1e6:,.0f}백만원, 전년비 {_d(ep['전년비'])}. 전체 채널 합계({_d(tot['전년비'])})보다 "
+            f"[{scope}] EP {'일평균 ' if per_day else ''}거래액 {_m(ep['올해'])}{unit_txt}, 전년비 {_d(ep['전년비'])}. 전체 채널 합계({_d(tot['전년비'])})보다 "
             f"{abs(gap):.1f}%p {'높아요(EP가 더 잘 버티는 중).' if gap >= 0 else '낮아요(EP가 전체보다 더 빠지는 중).'} "
             f"채널 {len(ranked)}개 중 전년비 {rank}위예요."
         )
@@ -4334,12 +4342,12 @@ def generate_channel_page_insights(sum_rows, periods, unit_label, kind_label="�
     if down or up:
         parts = []
         if down:
-            parts.append("가장 크게 빠진 채널은 " + ", ".join(f"{r['채널']} {r['증감'] / 1e6:+,.0f}백만원({_d(r['전년비'])})" for r in down))
+            parts.append("가장 크게 빠진 채널은 " + ", ".join(f"{r['채널']} {_m(r['증감'], True)}{unit_txt}({_d(r['전년비'])})" for r in down))
         if up:
-            parts.append("늘어난 채널은 " + ", ".join(f"{r['채널']} {r['증감'] / 1e6:+,.0f}백만원({_d(r['전년비'])})" for r in up))
+            parts.append("늘어난 채널은 " + ", ".join(f"{r['채널']} {_m(r['증감'], True)}{unit_txt}({_d(r['전년비'])})" for r in up))
         sections.append({
             "title": "② 어느 채널이 증감을 만들었나요?",
-            "body": f"합계 증감 {tot['증감'] / 1e6:+,.0f}백만원 중 " + " · ".join(parts) + "예요.",
+            "body": f"합계 {'일평균 ' if per_day else ''}증감 {_m(tot['증감'], True)}{unit_txt} 중 " + " · ".join(parts) + "예요.",
         })
 
     # ③ 전년비 흐름 (최근 4개 기간)

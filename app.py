@@ -583,11 +583,11 @@ with _sticky:
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
         )
-        _ch_kind, _ch_cat, _ch_unit, _ch_in = "전체", "전체", "월별", None
+        _ch_kind, _ch_cat, _ch_unit, _ch_in, _ch_agg = "전체", "전체", "월별", None, "누적"
         if not df_chall.empty:
             _ch_last_top = df_chall["날짜"].max().normalize()
             _ch_first_top = df_chall["날짜"].min().normalize()
-            _t1, _t2, _t3, _t4, _t_sp = st.columns([1, 1, 1, 2, 3])
+            _t1, _t2, _t3, _t3b, _t4, _t_sp = st.columns([1, 1, 1, 1, 2, 2])
             with _t1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
                 _ch_kind = st.selectbox("구분", ["전체", "정상", "이월", "입점"], label_visibility="collapsed", key="chall_kind")
@@ -597,6 +597,9 @@ with _sticky:
             with _t3:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>흐름 단위</div>", unsafe_allow_html=True)
                 _ch_unit = st.selectbox("흐름 단위", ["월별", "주차별"], label_visibility="collapsed", key="chall_unit")
+            with _t3b:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
+                _ch_agg = st.selectbox("집계 방식", ["누적", "일평균"], label_visibility="collapsed", key="chall_agg")
             with _t4:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 기간</div>", unsafe_allow_html=True)
                 follow_latest_range("chall_range", _ch_last_top.date())
@@ -5522,11 +5525,16 @@ if side["page"].startswith("14."):
 
             # --- ① 선택 기간 요약 ---
             _sum_rows = []
+            _ch_pd = _ch_agg == "일평균"
+
+            def _ch_m(v):
+                return f"{v / 1e6:,.1f}" if _ch_pd else f"{v / 1e6:,.0f}"
+
             if isinstance(_ch_in, tuple) and len(_ch_in) == 2:
                 _rc2 = (pd.Timestamp(_ch_in[0]), pd.Timestamp(_ch_in[1]))
                 _rp2 = (_rc2[0] - pd.Timedelta(days=364), _rc2[1] - pd.Timedelta(days=364))
-                st.caption(f"📅 {_rc2[0]:%Y-%m-%d}~{_rc2[1]:%Y-%m-%d} vs 전년 동요일 {_rp2[0]:%Y-%m-%d}~{_rp2[1]:%Y-%m-%d} · 단위: 백만원")
-                _sum_rows = compute_luxury_channel_compare(_ch_daily, _rc2, _rp2)
+                st.caption(f"📅 {_rc2[0]:%Y-%m-%d}~{_rc2[1]:%Y-%m-%d} vs 전년 동요일 {_rp2[0]:%Y-%m-%d}~{_rp2[1]:%Y-%m-%d} · 단위: 백만원" + (" (일평균)" if _ch_pd else " (누적)"))
+                _sum_rows = compute_luxury_channel_compare(_ch_daily, _rc2, _rp2, _ch_pd)
                 _ep_pct = next((r["전년비"] for r in _sum_rows if r["채널"] == "EP"), None)
                 _sb = ""
                 for r in _sum_rows:
@@ -5534,7 +5542,7 @@ if side["page"].startswith("14."):
                     _gap = None if (r["전년비"] is None or _ep_pct is None or r["채널"] == "EP") else r["전년비"] - _ep_pct
                     _sb += (
                         f"<tr style='{_bold}'><td class='m'>{r['채널']}</td>"
-                        f"<td style='text-align:right;'>{r['올해'] / 1e6:,.0f}</td><td style='text-align:right;'>{r['전년'] / 1e6:,.0f}</td>"
+                        f"<td style='text-align:right;'>{_ch_m(r['올해'])}</td><td style='text-align:right;'>{_ch_m(r['전년'])}</td>"
                         f"<td style='text-align:right;'>{_ch_delta(r['전년비'])}</td>"
                         f"<td style='text-align:right;'>{'-' if r['채널'] == 'EP' else _ch_gap(_gap)}</td>"
                         f"<td style='text-align:right;'>{'-' if r['비중'] is None else format(r['비중'], '.1f') + '%'}</td>"
@@ -5549,7 +5557,7 @@ if side["page"].startswith("14."):
 
             # --- ② 전년비 흐름 (월별/주별) ---
             if _ch_unit == "월별":
-                _mon14 = compute_luxury_monthly_yoy(_ch_daily, _ch_last.year, _ch_last)
+                _mon14 = compute_luxury_monthly_yoy(_ch_daily, _ch_last.year, _ch_last, _ch_pd)
                 _periods = [
                     (f"{m}월" + (f" (~{_ch_last.day}일)" if v["_partial"] else ""), {ch: v[ch][2] for ch in _ch_cols})
                     for m, v in _mon14.items()
@@ -5559,7 +5567,7 @@ if side["page"].startswith("14."):
                     for m, v in _mon14.items()
                 ]
             else:
-                _wk14 = compute_channel_weekly_yoy(_ch_daily, _ch_last, 20)
+                _wk14 = compute_channel_weekly_yoy(_ch_daily, _ch_last, 20, _ch_pd)
                 _periods = [
                     (week_start_label(_ws) + ("*" if part else ""), {ch: vals[ch][2] for ch in _ch_cols})
                     for _ws, vals, part in _wk14
@@ -5569,9 +5577,9 @@ if side["page"].startswith("14."):
                     for _ws, vals, part in _wk14
                 ]
             render_insight_panel(generate_channel_page_insights(
-                _sum_rows, _periods, "월" if _ch_unit == "월별" else "주", _ch_kind, _ch_cat,
+                _sum_rows, _periods, "월" if _ch_unit == "월별" else "주", _ch_kind, _ch_cat, _ch_pd,
             ))
-            st.markdown(f"#### 채널별 전년비 흐름 · {_ch_kind} · {_ch_cat} · {_ch_unit}")
+            st.markdown(f"#### 채널별 전년비 흐름 · {_ch_kind} · {_ch_cat} · {_ch_unit} · {_ch_agg}")
             if _ch_unit == "주차별":
                 st.caption("* 표시는 진행 중인 주(전년 동요일 같은 일수끼리 비교)예요.")
             _plot_rows = [
@@ -5618,11 +5626,11 @@ if side["page"].startswith("14."):
                 unsafe_allow_html=True,
             )
 
-            with st.expander(f"{_ch_unit} 거래액 (올해 / 전년, 단위: 백만원)"):
+            with st.expander(f"{_ch_unit} 거래액 · {_ch_agg} (올해 / 전년, 단위: 백만원)"):
                 _ab = "".join(
                     f"<tr><td class='m'>{ch}</td>" + "".join(
-                        f"<td style='text-align:right;'>{a[ch][0] / 1e6:,.0f}<br>"
-                        f"<span style='color:#9ca3af;font-size:0.72rem;'>{a[ch][1] / 1e6:,.0f}</span></td>"
+                        f"<td style='text-align:right;'>{_ch_m(a[ch][0])}<br>"
+                        f"<span style='color:#9ca3af;font-size:0.72rem;'>{_ch_m(a[ch][1])}</span></td>"
                         for _, a in _amt_periods
                     ) + "</tr>" for ch in _ch_cols
                 )
