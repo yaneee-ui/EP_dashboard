@@ -379,3 +379,18 @@ def load_luxury_channel() -> pd.DataFrame:
     df["날짜"] = pd.to_datetime(df["날짜"])
     df["거래액"] = pd.to_numeric(df["거래액"], errors="coerce").fillna(0)
     return df.sort_values("날짜").reset_index(drop=True)
+
+
+CHANNEL_ALL_PATH = "ep_channel_all.csv.gz"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_channel_all() -> pd.DataFrame:
+    """전체 유입채널 x 카테고리 x 정상/이월/입점 일자별 거래액 (convert_channel_all.py 결과)."""
+    import os
+    if not os.path.exists(CHANNEL_ALL_PATH):
+        return pd.DataFrame(columns=["날짜", "구분", "채널", "카테고리", "거래액"])
+    df = pd.read_csv(CHANNEL_ALL_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    df["거래액"] = pd.to_numeric(df["거래액"], errors="coerce").fillna(0)
+    return df.sort_values("날짜").reset_index(drop=True)

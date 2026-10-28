@@ -671,13 +671,16 @@ def _style_export_sheet(ws, df_export):
     for ci, col in enumerate(df_export.columns, start=1):
         name = str(col)
         is_pct = "(%)" in name or ("비용률" in name and "증감" not in name)
+        is_pp = "(%p)" in name
         for ri in range(2, ws.max_row + 1):
             cell = ws.cell(row=ri, column=ci)
             if ci == 1:
                 continue
             v = cell.value
             if isinstance(v, (int, float)) and not isinstance(v, bool):
-                if is_pct:
+                if is_pp:
+                    cell.number_format = "+0.0;-0.0;0.0"
+                elif is_pct:
                     cell.value = v / 100
                     cell.number_format = "0.0%"
                 else:
@@ -4254,4 +4257,43 @@ def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False):
             for ch in daily.columns
         }
         out[m]["_partial"] = partial
+    return out
+
+
+def channel_all_daily(df_ch, kinds=None, category="전체"):
+    """전체채널별 raw(ep_channel_all) -> 날짜 x 채널 거래액 표(EP 먼저, 마지막에 합계).
+    kinds: 정상/이월/입점 중 합칠 구분(None=전부), category: '전체'면 카테고리 전부 합산."""
+    sub = df_ch
+    if kinds:
+        sub = sub[sub["구분"].isin(kinds)]
+    if category != "전체":
+        sub = sub[sub["카테고리"] == category]
+    if sub.empty:
+        return pd.DataFrame()
+    pv = sub.pivot_table(index="날짜", columns="채널", values="거래액", aggfunc="sum").fillna(0)
+    pv = pv.reindex(pd.date_range(df_ch["날짜"].min(), df_ch["날짜"].max()), fill_value=0)
+    cols = [c for c in LUXURY_CHANNEL_ORDER if c in pv.columns] + [c for c in pv.columns if c not in LUXURY_CHANNEL_ORDER]
+    pv = pv[cols]
+    pv["합계"] = pv.sum(axis=1)
+    return pv
+
+
+def compute_channel_weekly_yoy(daily, last_date, n_weeks=20):
+    """최근 n_weeks개 주(월~일)의 채널별 전년비. 진행 중인 주는 last_date까지만 쓰고 전년 동요일(364일 전)과
+    같은 일수끼리 비교. 반환: [(주 시작일, {채널: (올해, 전년, 전년비%)}, 진행중여부)] (오래된 주 -> 최신 주)"""
+    last_date = pd.Timestamp(last_date)
+    cur_start = last_date - pd.Timedelta(days=last_date.weekday())
+    out = []
+    for k in range(n_weeks - 1, -1, -1):
+        s = cur_start - pd.Timedelta(weeks=k)
+        e = min(s + pd.Timedelta(days=6), last_date)
+        ps, pe = s - pd.Timedelta(days=364), e - pd.Timedelta(days=364)
+        if ps < daily.index.min():
+            continue
+        cur, prev = daily.loc[s:e].sum(), daily.loc[ps:pe].sum()
+        out.append((s, {
+            ch: (float(cur.get(ch, 0)), float(prev.get(ch, 0)),
+                 ((cur.get(ch, 0) / prev.get(ch, 0) - 1) * 100) if prev.get(ch, 0) > 0 else None)
+            for ch in daily.columns
+        }, e < s + pd.Timedelta(days=6)))
     return out
