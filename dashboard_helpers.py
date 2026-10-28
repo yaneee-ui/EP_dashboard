@@ -4204,12 +4204,18 @@ def luxury_daily_by_channel(df_lux, kinds):
     return pv
 
 
-def compute_luxury_channel_compare(daily, range_cur, range_prev):
+def compute_luxury_channel_compare(daily, range_cur, range_prev, per_day=False):
     """채널별 올해/전년 기간 합계, 증감, 전년비(%), 비중. daily = luxury_daily_by_channel() 결과.
     합계 행은 마지막. 전년 값이 0 이하면 전년비는 None."""
     rows = []
     cur = daily.loc[range_cur[0]:range_cur[1]].sum()
     prev = daily.loc[range_prev[0]:range_prev[1]].sum()
+    # 일평균이면 금액을 기간 일수로 나눈다(비중은 비율이라 그대로). 전년비도 일평균끼리 비교.
+    dc = (range_cur[1] - range_cur[0]).days + 1
+    dp = (range_prev[1] - range_prev[0]).days + 1
+    cur_tot, prev_tot = cur.get("합계", 0), prev.get("합계", 0)
+    if per_day:
+        cur, prev = cur / dc, prev / dp
     for ch in list(daily.columns):
         c, p = float(cur.get(ch, 0)), float(prev.get(ch, 0))
         rows.append({
@@ -4222,7 +4228,7 @@ def compute_luxury_channel_compare(daily, range_cur, range_prev):
     return [r for r in rows if r["채널"] != "합계"] + tot
 
 
-def compute_luxury_monthly_yoy(daily, year, last_date):
+def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False):
     """월별 전년비. 마감된 달은 작년 같은 달 전체와, 진행 중인 달은 1일~last_date를 전년 동요일
     (364일 전)과 비교. 채널별 + 합계의 (올해, 전년, 전년비%) 반환: {월: {채널: (c, p, pct)}}"""
     out = {}
@@ -4240,6 +4246,8 @@ def compute_luxury_monthly_yoy(daily, year, last_date):
             pb = pa + pd.offsets.MonthEnd(0)
         cur = daily.loc[a:b].sum()
         prev = daily.loc[pa:pb].sum()
+        if per_day:
+            cur, prev = cur / ((b - a).days + 1), prev / ((pb - pa).days + 1)
         out[m] = {
             ch: (float(cur.get(ch, 0)), float(prev.get(ch, 0)),
                  ((cur.get(ch, 0) / prev.get(ch, 0) - 1) * 100) if prev.get(ch, 0) > 0 else None)

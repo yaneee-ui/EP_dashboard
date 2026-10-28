@@ -5272,9 +5272,12 @@ if side["page"].startswith("13."):
         _lux_last = df_lux["날짜"].max().normalize()
         _lux_first = df_lux["날짜"].min().normalize()
         follow_latest_range("lux_range", _lux_last.date())
-        _lx1, _lx2 = st.columns([3, 2])
+        _lx1, _lx1b, _lx2 = st.columns([3, 1.4, 2])
         with _lx1:
             _lux_view = st.radio("구분", list(LUXURY_KIND_OPTIONS), horizontal=True, key="lux_kind")
+        with _lx1b:
+            _lux_agg = st.radio("집계 방식", ["누적", "일평균"], horizontal=True, key="lux_agg")
+        _lux_pd = _lux_agg == "일평균"
         with _lx2:
             _lux_in = st.date_input(
                 "조회 기간", value=(_lux_last.replace(day=1).date(), _lux_last.date()),
@@ -5291,17 +5294,20 @@ if side["page"].startswith("13."):
             _d_ex = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["순금+실버 제외"])
             _d_sel = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS[_lux_view])
 
+            def _lux_m(v):
+                return f"{v / 1e6:,.1f}" if _lux_pd else f"{v / 1e6:,.0f}"
+
             def _lux_delta(v):
                 return format_delta_html(v) if v is not None else "-"
 
             def _lux_card(title, daily):
-                rows = {r["채널"]: r for r in compute_luxury_channel_compare(daily, _rc, _rp)}
+                rows = {r["채널"]: r for r in compute_luxury_channel_compare(daily, _rc, _rp, _lux_pd)}
 
                 def _line(label, r):
                     return (
                         "<div style='display:flex;justify-content:space-between;font-size:0.85rem;margin-top:3px;'>"
-                        f"<span>{label}</span><span>{r['올해'] / 1e6:,.0f} "
-                        f"<span style='color:#9ca3af;'>(전년 {r['전년'] / 1e6:,.0f})</span> {_lux_delta(r['전년비'])}</span></div>"
+                        f"<span>{label}</span><span>{_lux_m(r['올해'])} "
+                        f"<span style='color:#9ca3af;'>(전년 {_lux_m(r['전년'])})</span> {_lux_delta(r['전년비'])}</span></div>"
                     )
                 ep_line = _line("EP 채널", rows["EP"]) if "EP" in rows else ""
                 return (
@@ -5318,9 +5324,17 @@ if side["page"].startswith("13."):
                 st.markdown(_lux_card("② 순금+실버 제외", _d_ex), unsafe_allow_html=True)
 
             # 채널별 비교표 (선택한 구분)
-            st.markdown(f"#### 채널별 비교 · {_lux_view}")
-            _ch_rows = compute_luxury_channel_compare(_d_sel, _rc, _rp)
+            st.markdown(f"#### 채널별 비교 · {_lux_view} · {_lux_agg}")
+            _ch_rows = compute_luxury_channel_compare(_d_sel, _rc, _rp, _lux_pd)
             _hdr = "".join(f"<th style='text-align:right;'>{h}</th>" for h in ["올해", "전년", "증감", "전년비", "올해 비중", "전년 비중"])
+
+            def _lux_diff(v):
+                # 증감 금액: 감소(-)는 빨강, 증가(+)는 초록 — 전년비와 같은 색 규칙
+                m = v / 1e6
+                txt = f"{m:+,.1f}" if _lux_pd else f"{m:+,.0f}"
+                if float(txt.replace(",", "")) == 0:
+                    return "0"
+                return f"<span class='delta {'up' if m > 0 else 'down'}'>{txt}</span>"
 
             def _lux_pct(v):
                 return "-" if v is None else f"{v:.1f}%"
@@ -5330,8 +5344,8 @@ if side["page"].startswith("13."):
                 _bold = "font-weight:700;background:#f3f4f6;" if r["채널"] == "합계" else ""
                 _body += (
                     f"<tr style='{_bold}'><td class='m'>{r['채널']}</td>"
-                    f"<td style='text-align:right;'>{r['올해'] / 1e6:,.0f}</td><td style='text-align:right;'>{r['전년'] / 1e6:,.0f}</td>"
-                    f"<td style='text-align:right;'>{r['증감'] / 1e6:+,.0f}</td>"
+                    f"<td style='text-align:right;'>{_lux_m(r['올해'])}</td><td style='text-align:right;'>{_lux_m(r['전년'])}</td>"
+                    f"<td style='text-align:right;'>{_lux_diff(r['증감'])}</td>"
                     f"<td style='text-align:right;'>{_lux_delta(r['전년비'])}</td>"
                     f"<td style='text-align:right;'>{_lux_pct(r['비중'])}</td><td style='text-align:right;'>{_lux_pct(r['전년비중'])}</td></tr>"
                 )
@@ -5341,8 +5355,8 @@ if side["page"].startswith("13."):
             )
 
             # 월별 전년비 (마감된 달은 전년 같은 달, 진행 중인 달은 전년 동요일)
-            st.markdown(f"#### 월별 전년비 · {_lux_view}")
-            _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last)
+            st.markdown(f"#### 월별 전년비 · {_lux_view} · {_lux_agg}")
+            _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last, _lux_pd)
             _cols = list(_d_sel.columns)
             _partial_note = f"<br><span style='font-weight:400;color:#9ca3af;font-size:0.72rem;'>(~{_lux_last.day}일 누계)</span>"
             _mh = "".join(
@@ -5357,11 +5371,11 @@ if side["page"].startswith("13."):
                 f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_mh}</tr></thead><tbody>{_mb}</tbody></table></div>",
                 unsafe_allow_html=True,
             )
-            with st.expander("월별 거래액 (올해 / 전년, 단위: 백만원)"):
+            with st.expander(f"월별 거래액 · {_lux_agg} (올해 / 전년, 단위: 백만원)"):
                 _mv = "".join(
                     f"<tr><td class='m'>{ch}</td>" + "".join(
-                        f"<td style='text-align:right;'>{v[ch][0] / 1e6:,.0f}<br>"
-                        f"<span style='color:#9ca3af;font-size:0.72rem;'>{v[ch][1] / 1e6:,.0f}</span></td>"
+                        f"<td style='text-align:right;'>{_lux_m(v[ch][0])}<br>"
+                        f"<span style='color:#9ca3af;font-size:0.72rem;'>{_lux_m(v[ch][1])}</span></td>"
                         for v in _mon.values()
                     ) + "</tr>"
                     for ch in _cols
@@ -5380,7 +5394,7 @@ if side["page"].startswith("13."):
                 {"월": f"{m}월", **{f"{ch} 올해": v[ch][0] for ch in _cols}, **{f"{ch} 전년": v[ch][1] for ch in _cols},
                  **{f"{ch} 전년비(%)": v[ch][2] for ch in _cols}} for m, v in _mon.items()
             ])
-            _kind_name = _lux_view.split(" ")[0]
+            _kind_name = _lux_view.split(" ")[0] + ("_일평균" if _lux_pd else "_누적")
             _xc1, _xc2, _ = st.columns([1, 1, 4])
             with _xc1:
                 render_excel_download(_xl_ch, f"명품채널_{_kind_name}_{_rc[0]:%Y%m%d}_{_rc[1]:%Y%m%d}.xlsx", label="⬇️ 채널별 엑셀")
