@@ -363,3 +363,19 @@ def load_coupon_daily() -> pd.DataFrame:
             df[col] = df[col].astype("category")
     df["쿠폰할인"] = pd.to_numeric(df["쿠폰할인"], errors="coerce").astype("float32")
     return df.sort_values("날짜").reset_index(drop=True)
+
+
+LUXURY_CHANNEL_PATH = "ep_luxury_channel.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_luxury_channel() -> pd.DataFrame:
+    """명품 유입채널별 일자별 거래액 (convert_luxury.py 결과: 날짜/구분/채널/거래액).
+    구분 = '순금제외'(25년 명품 기준) / '순금+실버'(쥬얼리). 없으면 빈 DF."""
+    import os
+    if not os.path.exists(LUXURY_CHANNEL_PATH):
+        return pd.DataFrame(columns=["날짜", "구분", "채널", "거래액"])
+    df = pd.read_csv(LUXURY_CHANNEL_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    df["거래액"] = pd.to_numeric(df["거래액"], errors="coerce").fillna(0)
+    return df.sort_values("날짜").reset_index(drop=True)

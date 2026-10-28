@@ -4181,3 +4181,69 @@ def add_event_category_sheet(xlsx_bytes, result, title_prefix, year_a, year_b):
     buf = io.BytesIO()
     wb.save(buf)
     return buf.getvalue()
+
+
+LUXURY_CHANNEL_ORDER = ["EP", "직접", "광고", "제휴", "PUSH"]
+LUXURY_KIND_OPTIONS = {
+    "전체 (순금+실버 포함)": ["순금제외", "순금+실버"],
+    "순금+실버 제외": ["순금제외"],
+    "순금+실버만": ["순금+실버"],
+}
+
+
+def luxury_daily_by_channel(df_lux, kinds):
+    """날짜 x 채널 거래액 표 (kinds에 든 구분들을 합산, 없는 날은 0)."""
+    sub = df_lux[df_lux["구분"].isin(kinds)]
+    if sub.empty:
+        return pd.DataFrame()
+    pv = sub.pivot_table(index="날짜", columns="채널", values="거래액", aggfunc="sum").fillna(0)
+    pv = pv.reindex(pd.date_range(pv.index.min(), pv.index.max()), fill_value=0)
+    cols = [c for c in LUXURY_CHANNEL_ORDER if c in pv.columns] + [c for c in pv.columns if c not in LUXURY_CHANNEL_ORDER]
+    pv = pv[cols]
+    pv["합계"] = pv.sum(axis=1)
+    return pv
+
+
+def compute_luxury_channel_compare(daily, range_cur, range_prev):
+    """채널별 올해/전년 기간 합계, 증감, 전년비(%), 비중. daily = luxury_daily_by_channel() 결과.
+    합계 행은 마지막. 전년 값이 0 이하면 전년비는 None."""
+    rows = []
+    cur = daily.loc[range_cur[0]:range_cur[1]].sum()
+    prev = daily.loc[range_prev[0]:range_prev[1]].sum()
+    for ch in list(daily.columns):
+        c, p = float(cur.get(ch, 0)), float(prev.get(ch, 0))
+        rows.append({
+            "채널": ch, "올해": c, "전년": p, "증감": c - p,
+            "전년비": ((c / p - 1) * 100) if p > 0 else None,
+            "비중": (c / cur["합계"] * 100) if cur["합계"] else None,
+            "전년비중": (p / prev["합계"] * 100) if prev["합계"] else None,
+        })
+    tot = [r for r in rows if r["채널"] == "합계"]
+    return [r for r in rows if r["채널"] != "합계"] + tot
+
+
+def compute_luxury_monthly_yoy(daily, year, last_date):
+    """월별 전년비. 마감된 달은 작년 같은 달 전체와, 진행 중인 달은 1일~last_date를 전년 동요일
+    (364일 전)과 비교. 채널별 + 합계의 (올해, 전년, 전년비%) 반환: {월: {채널: (c, p, pct)}}"""
+    out = {}
+    for m in range(1, 13):
+        a = pd.Timestamp(year, m, 1)
+        if a > last_date:
+            break
+        full_end = a + pd.offsets.MonthEnd(0)
+        partial = full_end > last_date
+        b = last_date if partial else full_end
+        if partial:
+            pa, pb = a - pd.Timedelta(days=364), b - pd.Timedelta(days=364)
+        else:
+            pa = pd.Timestamp(year - 1, m, 1)
+            pb = pa + pd.offsets.MonthEnd(0)
+        cur = daily.loc[a:b].sum()
+        prev = daily.loc[pa:pb].sum()
+        out[m] = {
+            ch: (float(cur.get(ch, 0)), float(prev.get(ch, 0)),
+                 ((cur.get(ch, 0) / prev.get(ch, 0) - 1) * 100) if prev.get(ch, 0) > 0 else None)
+            for ch in daily.columns
+        }
+        out[m]["_partial"] = partial
+    return out

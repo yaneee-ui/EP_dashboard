@@ -11,7 +11,7 @@ import io
 
 from data_loader import (
     load_data, load_traffic_data, load_category_data, load_product_data, load_brand_names,
-    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily,
+    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_luxury_channel,
 )
 from ai_insights import (
     render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
@@ -36,6 +36,7 @@ from dashboard_helpers import (
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
+    LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
@@ -69,6 +70,7 @@ if side["refresh"]:
     load_traffic_data.clear()
     load_category_data.clear()
     load_coupon_daily.clear()
+    load_luxury_channel.clear()
 
 # --- 데이터 로드 ---
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
@@ -76,6 +78,7 @@ df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
 df_product = load_product_data()  # 상품(SKU)별 거래액 데이터 (카테고리별 상위 상품 랭킹용)
 df_total_daily = load_total_daily()  # 전사 vs EP 일자별 트래픽/거래액 (월별 실적 추이용)
+df_lux = load_luxury_channel()  # 명품 유입채널별 일자별 거래액 (13번 화면 전용)
 df_coupon_daily = load_coupon_daily()  # 쿠폰명별 일자별 상세 할인 데이터 (BPU: e-영업1~4)
 df_coupon = build_coupon_monthly(df_coupon_daily)  # 월별 BPU 집계(Total/자사/입점/e-영업1~4) - daily에서 파생
 df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)  # 월별 쿠폰명별 상세 - daily에서 파생
@@ -246,7 +249,7 @@ with _sticky:
         "4": "📋 누적 데이터", "5": "🏷️ 누적 데이터 (카테고리)",
         "6": "📅 전체 실적 (주차별)", "7": "👤 회원 실적 (주차별)", "8": "✨ 신규 실적 (주차별)",
         "9": "🎟️ 쿠폰 비용 분석", "10": "📈 마감 예상 실적", "11": "📑 주간보고용",
-        "12": "🎉 행사 기간 비교",
+        "12": "🎉 행사 기간 비교", "13": "💎 명품 채널별 실적",
     }
 
     # ========================================================
@@ -5249,3 +5252,144 @@ if side["page"].startswith("12."):
                 )
             except Exception as _e:
                 st.error(f"비교표 생성 중 문제가 발생했어요: {_e}")
+
+
+# ============================================================
+# 페이지 13: 명품 채널별 실적 — 유입채널(EP/직접/광고/제휴/PUSH)별 명품 거래액을 전년 동요일과 비교.
+# 26년 9월부로 쥬얼리(순금+실버)가 잡화>명품으로 옮겨져 기존 카테고리 실적과 범위가 달라서, 별도
+# raw(명품실적(순금제외)/(순금+실버).csv -> ep_luxury_channel.csv)로 '전체'와 '순금+실버 제외'를 나눠 본다.
+# ============================================================
+if side["page"].startswith("13."):
+    st.markdown("---")
+    st.markdown("### 💎 명품 채널별 실적")
+    st.caption(
+        "26년 9월부로 쥬얼리(순금+실버)가 잡화 > 명품 카테고리로 바뀌었어요. 여기 데이터는 25년 명품 기준으로 집계한 raw라 "
+        "카테고리 실적과 조금 다를 수 있어요(단위: 백만원, 전년비는 전년 동요일 364일 전 기준)."
+    )
+    if df_lux.empty:
+        st.info("명품 채널 데이터가 없어요. 명품실적 CSV 2개를 올리고 convert_luxury.py를 실행하면 나와요.")
+    else:
+        _lux_last = df_lux["날짜"].max().normalize()
+        _lux_first = df_lux["날짜"].min().normalize()
+        follow_latest_range("lux_range", _lux_last.date())
+        _lx1, _lx2 = st.columns([3, 2])
+        with _lx1:
+            _lux_view = st.radio("구분", list(LUXURY_KIND_OPTIONS), horizontal=True, key="lux_kind")
+        with _lx2:
+            _lux_in = st.date_input(
+                "조회 기간", value=(_lux_last.replace(day=1).date(), _lux_last.date()),
+                min_value=(_lux_first + pd.Timedelta(days=364)).date(), max_value=_lux_last.date(), key="lux_range",
+            )
+        if not (isinstance(_lux_in, tuple) and len(_lux_in) == 2):
+            st.info("시작일~종료일을 선택해주세요.")
+        else:
+            _rc = (pd.Timestamp(_lux_in[0]), pd.Timestamp(_lux_in[1]))
+            _rp = (_rc[0] - pd.Timedelta(days=364), _rc[1] - pd.Timedelta(days=364))
+            st.caption(f"📅 {_rc[0]:%Y-%m-%d}~{_rc[1]:%Y-%m-%d} vs 전년 동요일 {_rp[0]:%Y-%m-%d}~{_rp[1]:%Y-%m-%d}")
+
+            _d_all = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["전체 (순금+실버 포함)"])
+            _d_ex = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["순금+실버 제외"])
+            _d_sel = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS[_lux_view])
+
+            def _lux_delta(v):
+                return format_delta_html(v) if v is not None else "-"
+
+            def _lux_card(title, daily):
+                rows = {r["채널"]: r for r in compute_luxury_channel_compare(daily, _rc, _rp)}
+
+                def _line(label, r):
+                    return (
+                        "<div style='display:flex;justify-content:space-between;font-size:0.85rem;margin-top:3px;'>"
+                        f"<span>{label}</span><span>{r['올해'] / 1e6:,.0f} "
+                        f"<span style='color:#9ca3af;'>(전년 {r['전년'] / 1e6:,.0f})</span> {_lux_delta(r['전년비'])}</span></div>"
+                    )
+                ep_line = _line("EP 채널", rows["EP"]) if "EP" in rows else ""
+                return (
+                    "<div style='border:1px solid #e5e7eb;border-radius:8px;padding:12px 14px;background:#fafafa;'>"
+                    f"<div style='font-weight:700;margin-bottom:4px;'>{title}</div>"
+                    + _line("명품 합계", rows["합계"]) + ep_line + "</div>"
+                )
+
+            # 핵심 두 가지: ① 전체가 느는가 ② 순금+실버 빼고도 느는가
+            _kc1, _kc2 = st.columns(2)
+            with _kc1:
+                st.markdown(_lux_card("① 전체 (순금+실버 포함)", _d_all), unsafe_allow_html=True)
+            with _kc2:
+                st.markdown(_lux_card("② 순금+실버 제외", _d_ex), unsafe_allow_html=True)
+
+            # 채널별 비교표 (선택한 구분)
+            st.markdown(f"#### 채널별 비교 · {_lux_view}")
+            _ch_rows = compute_luxury_channel_compare(_d_sel, _rc, _rp)
+            _hdr = "".join(f"<th style='text-align:right;'>{h}</th>" for h in ["올해", "전년", "증감", "전년비", "올해 비중", "전년 비중"])
+
+            def _lux_pct(v):
+                return "-" if v is None else f"{v:.1f}%"
+
+            _body = ""
+            for r in _ch_rows:
+                _bold = "font-weight:700;background:#f3f4f6;" if r["채널"] == "합계" else ""
+                _body += (
+                    f"<tr style='{_bold}'><td class='m'>{r['채널']}</td>"
+                    f"<td style='text-align:right;'>{r['올해'] / 1e6:,.0f}</td><td style='text-align:right;'>{r['전년'] / 1e6:,.0f}</td>"
+                    f"<td style='text-align:right;'>{r['증감'] / 1e6:+,.0f}</td>"
+                    f"<td style='text-align:right;'>{_lux_delta(r['전년비'])}</td>"
+                    f"<td style='text-align:right;'>{_lux_pct(r['비중'])}</td><td style='text-align:right;'>{_lux_pct(r['전년비중'])}</td></tr>"
+                )
+            st.markdown(
+                f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_hdr}</tr></thead><tbody>{_body}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+
+            # 월별 전년비 (마감된 달은 전년 같은 달, 진행 중인 달은 전년 동요일)
+            st.markdown(f"#### 월별 전년비 · {_lux_view}")
+            _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last)
+            _cols = list(_d_sel.columns)
+            _partial_note = f"<br><span style='font-weight:400;color:#9ca3af;font-size:0.72rem;'>(~{_lux_last.day}일 누계)</span>"
+            _mh = "".join(
+                f"<th style='text-align:right;'>{m}월{_partial_note if v['_partial'] else ''}</th>" for m, v in _mon.items()
+            )
+            _mb = ""
+            for ch in _cols:
+                _bold = "font-weight:700;background:#f3f4f6;" if ch == "합계" else ""
+                _cells = "".join(f"<td style='text-align:right;'>{_lux_delta(v[ch][2])}</td>" for v in _mon.values())
+                _mb += f"<tr style='{_bold}'><td class='m'>{ch}</td>{_cells}</tr>"
+            st.markdown(
+                f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_mh}</tr></thead><tbody>{_mb}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            with st.expander("월별 거래액 (올해 / 전년, 단위: 백만원)"):
+                _mv = "".join(
+                    f"<tr><td class='m'>{ch}</td>" + "".join(
+                        f"<td style='text-align:right;'>{v[ch][0] / 1e6:,.0f}<br>"
+                        f"<span style='color:#9ca3af;font-size:0.72rem;'>{v[ch][1] / 1e6:,.0f}</span></td>"
+                        for v in _mon.values()
+                    ) + "</tr>"
+                    for ch in _cols
+                )
+                st.markdown(
+                    f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_mh}</tr></thead><tbody>{_mv}</tbody></table></div>",
+                    unsafe_allow_html=True,
+                )
+
+            # 엑셀
+            _xl_ch = pd.DataFrame([
+                {"채널": r["채널"], "올해": r["올해"], "전년": r["전년"], "증감": r["증감"], "전년비(%)": r["전년비"],
+                 "올해 비중(%)": r["비중"], "전년 비중(%)": r["전년비중"]} for r in _ch_rows
+            ])
+            _xl_mon = pd.DataFrame([
+                {"월": f"{m}월", **{f"{ch} 올해": v[ch][0] for ch in _cols}, **{f"{ch} 전년": v[ch][1] for ch in _cols},
+                 **{f"{ch} 전년비(%)": v[ch][2] for ch in _cols}} for m, v in _mon.items()
+            ])
+            _kind_name = _lux_view.split(" ")[0]
+            _xc1, _xc2, _ = st.columns([1, 1, 4])
+            with _xc1:
+                render_excel_download(_xl_ch, f"명품채널_{_kind_name}_{_rc[0]:%Y%m%d}_{_rc[1]:%Y%m%d}.xlsx", label="⬇️ 채널별 엑셀")
+            with _xc2:
+                render_excel_download(_xl_mon, f"명품채널_월별_{_kind_name}.xlsx", label="⬇️ 월별 엑셀")
+
+            _missing = pd.date_range(_lux_first, _lux_last).difference(df_lux[df_lux["구분"] == "순금+실버"]["날짜"])
+            if len(_missing):
+                st.caption(
+                    f"ℹ️ 순금+실버 원본에 없는 날짜({', '.join(d.strftime('%m/%d') for d in _missing[:5])})는 0으로 처리했어요. "
+                    "일부 일자는 취소가 먼저 잡혀 마이너스일 수 있어요."
+                )
