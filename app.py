@@ -583,7 +583,7 @@ with _sticky:
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
         )
-        _ch_kind, _ch_cat, _ch_unit, _ch_in, _ch_agg = "전체", "전체", "월별", None, "누적"
+        _ch_kind, _ch_cat, _ch_unit, _ch_in, _ch_agg = "전체", "전체", "월별", None, "일평균"
         if not df_chall.empty:
             _ch_last_top = df_chall["날짜"].max().normalize()
             _ch_first_top = df_chall["날짜"].min().normalize()
@@ -599,7 +599,7 @@ with _sticky:
                 _ch_unit = st.selectbox("흐름 단위", ["월별", "주차별"], label_visibility="collapsed", key="chall_unit")
             with _t3b:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
-                _ch_agg = st.selectbox("집계 방식", ["누적", "일평균"], label_visibility="collapsed", key="chall_agg")
+                _ch_agg = st.selectbox("집계 방식", ["일평균", "누적"], label_visibility="collapsed", key="chall_agg")
             with _t4:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 기간</div>", unsafe_allow_html=True)
                 follow_latest_range("chall_range", _ch_last_top.date())
@@ -614,7 +614,7 @@ with _sticky:
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
         )
-        _lux_view, _lux_agg, _lux_unit, _lux_sort, _lux_in = list(LUXURY_KIND_OPTIONS)[0], "누적", "일자별", "최신순", None
+        _lux_view, _lux_agg, _lux_unit, _lux_sort, _lux_in = list(LUXURY_KIND_OPTIONS)[0], "일평균", "일자별", "최신순", None
         if not df_lux.empty:
             _lux_last_top = df_lux["날짜"].max().normalize()
             _lux_first_top = df_lux["날짜"].min().normalize()
@@ -624,7 +624,7 @@ with _sticky:
                 _lux_view = st.selectbox("구분", list(LUXURY_KIND_OPTIONS), label_visibility="collapsed", key="lux_kind")
             with _u2:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
-                _lux_agg = st.selectbox("집계 방식", ["누적", "일평균"], label_visibility="collapsed", key="lux_agg")
+                _lux_agg = st.selectbox("집계 방식", ["일평균", "누적"], label_visibility="collapsed", key="lux_agg")
             with _u3:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간 유형</div>", unsafe_allow_html=True)
                 _lux_unit = st.selectbox("기간 유형", ["일자별", "주차별", "월별"], label_visibility="collapsed", key="lux_unit")
@@ -5436,6 +5436,25 @@ if side["page"].startswith("13."):
             )
             render_excel_download(pd.DataFrame(_per_export), f"명품채널_기간별_{_lux_view.split(' ')[0]}_{_lux_unit}_{_lux_agg}.xlsx", label="⬇️ 기간별 엑셀")
 
+            import altair as alt
+            _LUX_COLORS = {"EP": "#2563eb", "직접": "#9ca3af", "광고": "#f59e0b", "제휴": "#10b981", "PUSH": "#a78bfa"}
+            _ch_only = [c for c in _d_sel.columns if c != "합계"]
+            _lab_chrono = [make_period_label(_i - pd.Timedelta(days=6) if _lux_unit == "주차별" else _i, _unit_key) for _i in _per_res.index]
+            _bar_df = pd.DataFrame([
+                {"기간": _lab_chrono[_k], "채널": c, "거래액(백만원)": float(_per_res.iloc[_k][c]) / 1e6}
+                for _k in range(len(_per_res)) for c in _ch_only
+            ])
+            if not _bar_df.empty:
+                st.markdown(f"**채널별 거래액 추이 · {_lux_unit} · {_lux_agg} (백만원)**")
+                _bar = alt.Chart(_bar_df).mark_bar().encode(
+                    x=alt.X("기간:N", sort=_lab_chrono, title=None, axis=alt.Axis(labelAngle=-45, labelOverlap=True)),
+                    y=alt.Y("거래액(백만원):Q", stack=True, title="거래액(백만원)"),
+                    color=alt.Color("채널:N", sort=_ch_only, scale=alt.Scale(domain=_ch_only, range=[_LUX_COLORS.get(c, "#6b7280") for c in _ch_only]),
+                                    legend=alt.Legend(orient="top", title=None)),
+                    tooltip=["기간", "채널", alt.Tooltip("거래액(백만원):Q", format=",.1f")],
+                )
+                st.altair_chart(_bar.properties(height=300), use_container_width=True)
+
             # 월별 전년비 (마감된 달은 전년 같은 달, 진행 중인 달은 전년 동요일)
             st.markdown(f"#### 월별 전년비 · {_lux_view} · {_lux_agg}")
             _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last, _lux_pd)
@@ -5453,6 +5472,47 @@ if side["page"].startswith("13."):
                 f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_mh}</tr></thead><tbody>{_mb}</tbody></table></div>",
                 unsafe_allow_html=True,
             )
+            _z = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#9ca3af", strokeDash=[4, 4]).encode(y="y:Q")
+            _mon_rows = [
+                {"월": f"{m}월", "채널": ch, "전년비(%)": v[ch][2]}
+                for m, v in _mon.items() for ch in _cols if v[ch][2] is not None
+            ]
+            if _mon_rows:
+                _mon_order = [f"{m}월" for m in _mon]
+                st.markdown(f"**채널별 월별 전년비 · {_lux_view}** (EP 굵은 선)")
+                _ln = alt.Chart(pd.DataFrame(_mon_rows)).mark_line(point=True).encode(
+                    x=alt.X("월:N", sort=_mon_order, title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("전년비(%):Q", title="전년비(%)"),
+                    color=alt.Color("채널:N", sort=_cols, legend=alt.Legend(orient="top", title=None),
+                                    scale=alt.Scale(domain=_cols, range=[_LUX_COLORS.get(c, "#111827") for c in _cols])),
+                    strokeWidth=alt.condition(alt.datum.채널 == "EP", alt.value(4), alt.value(1.8)),
+                    tooltip=["월", "채널", alt.Tooltip("전년비(%):Q", format=".1f")],
+                )
+                st.altair_chart((_z + _ln).properties(height=300), use_container_width=True)
+
+            # 핵심 질문: 전체(순금+실버 포함) vs 순금+실버 제외 — 합계와 EP의 월별 전년비
+            _mon_all = compute_luxury_monthly_yoy(_d_all, _lux_last.year, _lux_last, _lux_pd)
+            _mon_ex = compute_luxury_monthly_yoy(_d_ex, _lux_last.year, _lux_last, _lux_pd)
+            _cmp_rows = []
+            for _m in _mon_all:
+                for _lbl, _src, _ch in [("전체 합계", _mon_all, "합계"), ("순금+실버 제외 합계", _mon_ex, "합계"),
+                                        ("전체 EP", _mon_all, "EP"), ("순금+실버 제외 EP", _mon_ex, "EP")]:
+                    _v = _src.get(_m, {}).get(_ch)
+                    if _v is not None and _v[2] is not None:
+                        _cmp_rows.append({"월": f"{_m}월", "구분": _lbl, "전년비(%)": _v[2]})
+            if _cmp_rows:
+                st.markdown("**전체 vs 순금+실버 제외 · 월별 전년비 (합계 / EP)**")
+                _cmp_dom = ["전체 합계", "순금+실버 제외 합계", "전체 EP", "순금+실버 제외 EP"]
+                _cmp = alt.Chart(pd.DataFrame(_cmp_rows)).mark_line(point=True).encode(
+                    x=alt.X("월:N", sort=[f"{m}월" for m in _mon_all], title=None, axis=alt.Axis(labelAngle=0)),
+                    y=alt.Y("전년비(%):Q", title="전년비(%)"),
+                    color=alt.Color("구분:N", sort=_cmp_dom, legend=alt.Legend(orient="top", title=None),
+                                    scale=alt.Scale(domain=_cmp_dom, range=["#111827", "#6b7280", "#2563eb", "#93c5fd"])),
+                    strokeDash=alt.StrokeDash("구분:N", scale=alt.Scale(domain=_cmp_dom, range=[[1, 0], [5, 4], [1, 0], [5, 4]]), legend=None),
+                    tooltip=["월", "구분", alt.Tooltip("전년비(%):Q", format=".1f")],
+                )
+                st.altair_chart((_z + _cmp).properties(height=300), use_container_width=True)
+
             with st.expander(f"월별 거래액 · {_lux_agg} (올해 / 전년, 단위: 백만원)"):
                 _mv = "".join(
                     f"<tr><td class='m'>{ch}</td>" + "".join(
