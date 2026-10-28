@@ -37,7 +37,7 @@ from dashboard_helpers import (
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
     LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
-    channel_all_daily, compute_channel_weekly_yoy,
+    channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
@@ -578,7 +578,66 @@ with _sticky:
     # 처리하므로, 여기서는 간단한 제목만 표시 (안 그러면 4/5번 페이지용 매체/기간유형/
     # 집계방식 필터가 여기에도 딸려나옴 - 이 페이지엔 의미 없는 필터라서).
     # ========================================================
-    elif _page_num in ("12", "13", "14"):
+    elif _page_num == "14":
+        st.markdown(
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            unsafe_allow_html=True,
+        )
+        _ch_kind, _ch_cat, _ch_unit, _ch_in = "전체", "전체", "월별", None
+        if not df_chall.empty:
+            _ch_last_top = df_chall["날짜"].max().normalize()
+            _ch_first_top = df_chall["날짜"].min().normalize()
+            _t1, _t2, _t3, _t4, _t_sp = st.columns([1, 1, 1, 2, 3])
+            with _t1:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
+                _ch_kind = st.selectbox("구분", ["전체", "정상", "이월", "입점"], label_visibility="collapsed", key="chall_kind")
+            with _t2:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>카테고리</div>", unsafe_allow_html=True)
+                _ch_cat = st.selectbox("카테고리", ["전체"] + sorted(df_chall["카테고리"].unique()), label_visibility="collapsed", key="chall_cat")
+            with _t3:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>흐름 단위</div>", unsafe_allow_html=True)
+                _ch_unit = st.selectbox("흐름 단위", ["월별", "주차별"], label_visibility="collapsed", key="chall_unit")
+            with _t4:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 기간</div>", unsafe_allow_html=True)
+                follow_latest_range("chall_range", _ch_last_top.date())
+                _ch_in = st.date_input(
+                    "조회 기간", value=(_ch_last_top.replace(day=1).date(), _ch_last_top.date()),
+                    min_value=(_ch_first_top + pd.Timedelta(days=364)).date(), max_value=_ch_last_top.date(),
+                    label_visibility="collapsed", key="chall_range",
+                )
+
+    elif _page_num == "13":
+        st.markdown(
+            f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
+            unsafe_allow_html=True,
+        )
+        _lux_view, _lux_agg, _lux_unit, _lux_sort, _lux_in = list(LUXURY_KIND_OPTIONS)[0], "누적", "일자별", "최신순", None
+        if not df_lux.empty:
+            _lux_last_top = df_lux["날짜"].max().normalize()
+            _lux_first_top = df_lux["날짜"].min().normalize()
+            _u1, _u2, _u3, _u4, _u5, _u_sp = st.columns([1.6, 1, 1, 1, 2, 2])
+            with _u1:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
+                _lux_view = st.selectbox("구분", list(LUXURY_KIND_OPTIONS), label_visibility="collapsed", key="lux_kind")
+            with _u2:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
+                _lux_agg = st.selectbox("집계 방식", ["누적", "일평균"], label_visibility="collapsed", key="lux_agg")
+            with _u3:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기간 유형</div>", unsafe_allow_html=True)
+                _lux_unit = st.selectbox("기간 유형", ["일자별", "주차별", "월별"], label_visibility="collapsed", key="lux_unit")
+            with _u4:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>정렬</div>", unsafe_allow_html=True)
+                _lux_sort = st.selectbox("정렬", ["최신순", "오래된순"], label_visibility="collapsed", key="lux_sort")
+            with _u5:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 기간</div>", unsafe_allow_html=True)
+                follow_latest_range("lux_range", _lux_last_top.date())
+                _lux_in = st.date_input(
+                    "조회 기간", value=(_lux_last_top.replace(day=1).date(), _lux_last_top.date()),
+                    min_value=_lux_first_top.date(), max_value=_lux_last_top.date(),
+                    label_visibility="collapsed", key="lux_range",
+                )
+
+    elif _page_num == "12":
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -5274,18 +5333,7 @@ if side["page"].startswith("13."):
     else:
         _lux_last = df_lux["날짜"].max().normalize()
         _lux_first = df_lux["날짜"].min().normalize()
-        follow_latest_range("lux_range", _lux_last.date())
-        _lx1, _lx1b, _lx2 = st.columns([3, 1.4, 2])
-        with _lx1:
-            _lux_view = st.radio("구분", list(LUXURY_KIND_OPTIONS), horizontal=True, key="lux_kind")
-        with _lx1b:
-            _lux_agg = st.radio("집계 방식", ["누적", "일평균"], horizontal=True, key="lux_agg")
         _lux_pd = _lux_agg == "일평균"
-        with _lx2:
-            _lux_in = st.date_input(
-                "조회 기간", value=(_lux_last.replace(day=1).date(), _lux_last.date()),
-                min_value=(_lux_first + pd.Timedelta(days=364)).date(), max_value=_lux_last.date(), key="lux_range",
-            )
         if not (isinstance(_lux_in, tuple) and len(_lux_in) == 2):
             st.info("시작일~종료일을 선택해주세요.")
         else:
@@ -5359,11 +5407,6 @@ if side["page"].startswith("13."):
 
             # 기간별 채널 거래액 (일자별/주차별/월별, 누적·일평균, 정렬) — 누적 데이터 화면과 같은 방식
             st.markdown(f"#### 기간별 채널 거래액 · {_lux_view} · {_lux_agg}")
-            _pu1, _pu2, _ = st.columns([2, 2, 4])
-            with _pu1:
-                _lux_unit = st.radio("기간 유형", ["일자별", "주차별", "월별"], horizontal=True, key="lux_unit")
-            with _pu2:
-                _lux_sort = st.radio("정렬", ["최신순", "오래된순"], horizontal=True, key="lux_sort")
             _rule = {"일자별": "D", "주차별": "W-SUN", "월별": "ME"}[_lux_unit]
             _per = _d_sel.loc[_rc[0]:_rc[1]]
             _per_res = _per.resample(_rule).agg("mean" if _lux_pd else "sum")
@@ -5463,14 +5506,6 @@ if side["page"].startswith("14."):
         import altair as alt
         _ch_last = df_chall["날짜"].max().normalize()
         _ch_first = df_chall["날짜"].min().normalize()
-        _cf1, _cf2, _cf3 = st.columns([3, 2, 2])
-        with _cf1:
-            _ch_kind = st.radio("구분", ["전체", "정상", "이월", "입점"], horizontal=True, key="chall_kind")
-        with _cf2:
-            _ch_cat = st.selectbox("카테고리", ["전체"] + sorted(df_chall["카테고리"].unique()), key="chall_cat")
-        with _cf3:
-            _ch_unit = st.radio("흐름 단위", ["월별", "주별"], horizontal=True, key="chall_unit")
-
         _ch_daily = channel_all_daily(df_chall, None if _ch_kind == "전체" else [_ch_kind], _ch_cat)
         if _ch_daily.empty:
             st.info("선택한 조건에 데이터가 없어요.")
@@ -5486,11 +5521,7 @@ if side["page"].startswith("14."):
                 return f"<span class='delta {'up' if v >= 0 else 'down'}'>{v:+.1f}%p</span>"
 
             # --- ① 선택 기간 요약 ---
-            follow_latest_range("chall_range", _ch_last.date())
-            _ch_in = st.date_input(
-                "조회 기간", value=(_ch_last.replace(day=1).date(), _ch_last.date()),
-                min_value=(_ch_first + pd.Timedelta(days=364)).date(), max_value=_ch_last.date(), key="chall_range",
-            )
+            _sum_rows = []
             if isinstance(_ch_in, tuple) and len(_ch_in) == 2:
                 _rc2 = (pd.Timestamp(_ch_in[0]), pd.Timestamp(_ch_in[1]))
                 _rp2 = (_rc2[0] - pd.Timedelta(days=364), _rc2[1] - pd.Timedelta(days=364))
@@ -5523,14 +5554,25 @@ if side["page"].startswith("14."):
                     (f"{m}월" + (f" (~{_ch_last.day}일)" if v["_partial"] else ""), {ch: v[ch][2] for ch in _ch_cols})
                     for m, v in _mon14.items()
                 ]
+                _amt_periods = [
+                    (f"{m}월" + (f" (~{_ch_last.day}일)" if v["_partial"] else ""), {ch: (v[ch][0], v[ch][1]) for ch in _ch_cols})
+                    for m, v in _mon14.items()
+                ]
             else:
                 _wk14 = compute_channel_weekly_yoy(_ch_daily, _ch_last, 20)
                 _periods = [
-                    (week_start_label(s) + ("*" if part else ""), {ch: vals[ch][2] for ch in _ch_cols})
-                    for s, vals, part in _wk14
+                    (week_start_label(_ws) + ("*" if part else ""), {ch: vals[ch][2] for ch in _ch_cols})
+                    for _ws, vals, part in _wk14
                 ]
+                _amt_periods = [
+                    (week_start_label(_ws) + ("*" if part else ""), {ch: (vals[ch][0], vals[ch][1]) for ch in _ch_cols})
+                    for _ws, vals, part in _wk14
+                ]
+            render_insight_panel(generate_channel_page_insights(
+                _sum_rows, _periods, "월" if _ch_unit == "월별" else "주", _ch_kind, _ch_cat,
+            ))
             st.markdown(f"#### 채널별 전년비 흐름 · {_ch_kind} · {_ch_cat} · {_ch_unit}")
-            if _ch_unit == "주별":
+            if _ch_unit == "주차별":
                 st.caption("* 표시는 진행 중인 주(전년 동요일 같은 일수끼리 비교)예요.")
             _plot_rows = [
                 {"기간": lbl, "채널": ch, "전년비(%)": pcts[ch]}
@@ -5542,7 +5584,7 @@ if side["page"].startswith("14."):
                 _pdf = pd.DataFrame(_plot_rows)
                 _pdf = _pdf[_pdf["채널"].isin(_sel_chs)]
                 _line = alt.Chart(_pdf).mark_line(point=True).encode(
-                    x=alt.X("기간:N", sort=_order, title=None, axis=alt.Axis(labelAngle=-45 if _ch_unit == "주별" else 0)),
+                    x=alt.X("기간:N", sort=_order, title=None, axis=alt.Axis(labelAngle=-45 if _ch_unit == "주차별" else 0)),
                     y=alt.Y("전년비(%):Q", title="전년비(%)"),
                     color=alt.Color("채널:N", sort=_ch_cols, legend=alt.Legend(orient="top", title=None)),
                     strokeWidth=alt.condition(alt.datum.채널 == "EP", alt.value(4), alt.value(1.8)),
@@ -5575,6 +5617,19 @@ if side["page"].startswith("14."):
                 f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_th}</tr></thead><tbody>{_gb}</tbody></table></div>",
                 unsafe_allow_html=True,
             )
+
+            with st.expander(f"{_ch_unit} 거래액 (올해 / 전년, 단위: 백만원)"):
+                _ab = "".join(
+                    f"<tr><td class='m'>{ch}</td>" + "".join(
+                        f"<td style='text-align:right;'>{a[ch][0] / 1e6:,.0f}<br>"
+                        f"<span style='color:#9ca3af;font-size:0.72rem;'>{a[ch][1] / 1e6:,.0f}</span></td>"
+                        for _, a in _amt_periods
+                    ) + "</tr>" for ch in _ch_cols
+                )
+                st.markdown(
+                    f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr><th>채널</th>{_th}</tr></thead><tbody>{_ab}</tbody></table></div>",
+                    unsafe_allow_html=True,
+                )
 
             # --- 엑셀 ---
             _xl14 = pd.DataFrame([{"채널": ch, **{lbl: p.get(ch) for lbl, p in _periods}} for ch in _ch_cols])
