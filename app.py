@@ -5440,8 +5440,20 @@ if side["page"].startswith("13."):
             _LUX_COLORS = {"EP": "#2563eb", "직접": "#9ca3af", "광고": "#f59e0b", "제휴": "#10b981", "PUSH": "#a78bfa"}
             _ch_only = [c for c in _d_sel.columns if c != "합계"]
             _lab_chrono = [make_period_label(_i - pd.Timedelta(days=6) if _lux_unit == "주차별" else _i, _unit_key) for _i in _per_res.index]
+            # 툴팁용 전년 값: 같은 기간을 전년 동요일(364일 전)로 옮겨서 같은 방식으로 집계
+            _prev_sh = _d_sel.copy()
+            _prev_sh.index = _prev_sh.index + pd.Timedelta(days=364)
+            _prev_res = _prev_sh.loc[_rc[0]:_rc[1]].resample(_rule).agg("mean" if _lux_pd else "sum").reindex(_per_res.index)
+
+            def _yoy_pct(c_v, p_v):
+                return ((c_v / p_v - 1) * 100) if (pd.notna(p_v) and p_v > 0) else None
+
             _bar_df = pd.DataFrame([
-                {"기간": _lab_chrono[_k], "채널": c, "거래액(백만원)": float(_per_res.iloc[_k][c]) / 1e6}
+                {
+                    "기간": _lab_chrono[_k], "채널": c, "거래액(백만원)": float(_per_res.iloc[_k][c]) / 1e6,
+                    "전년(백만원)": (float(_prev_res.iloc[_k][c]) / 1e6) if pd.notna(_prev_res.iloc[_k][c]) else None,
+                    "전년비(%)": _yoy_pct(float(_per_res.iloc[_k][c]), _prev_res.iloc[_k][c]),
+                }
                 for _k in range(len(_per_res)) for c in _ch_only
             ])
             if not _bar_df.empty:
@@ -5455,7 +5467,8 @@ if side["page"].startswith("13."):
                 _ccolor = alt.Color("채널:N", sort=_ch_only, scale=alt.Scale(domain=_ch_only, range=[_LUX_COLORS.get(c, "#6b7280") for c in _ch_only]),
                                     legend=alt.Legend(orient="top", title=None))
                 _xax = alt.X("기간:N", sort=_lab_chrono, title=None, axis=alt.Axis(labelAngle=-45, labelOverlap=True))
-                _tip = ["기간", "채널", alt.Tooltip("거래액(백만원):Q", format=",.1f")]
+                _tip = ["기간", "채널", alt.Tooltip("거래액(백만원):Q", format=",.1f"),
+                        alt.Tooltip("전년(백만원):Q", format=",.1f"), alt.Tooltip("전년비(%):Q", format="+.1f")]
                 _zero_b = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#9ca3af").encode(y="y:Q")
                 if _bar_kind == "선":
                     _big = alt.Chart(_bdf).mark_line(point=alt.OverlayMarkDef(size=60)).encode(
