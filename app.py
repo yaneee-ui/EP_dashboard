@@ -37,7 +37,7 @@ from dashboard_helpers import (
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
     LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
-    channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights,
+    channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
@@ -3264,6 +3264,7 @@ if side["page"].startswith("9."):
                             "🔄 최근으로", key=f"{_cp_chart_key}_reset", use_container_width=True,
                             on_click=_reset_date_range, args=(_cp_chart_key, (_cp_chart_default_start, _combined.index.max().date())),
                         )
+                    _cp_chart_dr = stable_range(_cp_chart_key, _cp_chart_dr, (_cp_chart_default_start, _combined.index.max().date()))
                     if isinstance(_cp_chart_dr, tuple) and len(_cp_chart_dr) == 2:
                         _chart_series = _combined[
                             (_combined.index >= max(pd.Timestamp(_cp_chart_dr[0]), _CP_CHART_MIN))
@@ -3289,7 +3290,10 @@ if side["page"].startswith("9."):
                 # 선택(click selection)을 막대에 건다. 선택된 막대는 진하게, 나머지는
                 # 흐리게 표시해서 "지금 뭘 클릭했는지" 눈에 보이게 한다.
                 _click_sel = alt.selection_point(fields=["연월_label"], on="click", empty=True, name="clicked")
-                _bar = _base.mark_bar(color="#93c5fd", size=18).encode(
+                # 막대 폭은 기간 수에 맞춰 줄인다 — 일별처럼 점이 많은데 폭을 18px로 고정하면 막대끼리 겹쳐서,
+                # 클릭으로 나머지가 반투명해질 때 겹친 부분이 겹겹이 비쳐 보였다.
+                _bar_px = max(2, min(18, int(900 / max(len(_trend_df), 1) * 0.75)))
+                _bar = _base.mark_bar(color="#93c5fd", size=_bar_px).encode(
                     y=alt.Y("쿠폰할인:Q", title="쿠폰할인", axis=alt.Axis(format="~s")),
                     opacity=alt.condition(_click_sel, alt.value(1.0), alt.value(0.55)),
                     tooltip=[alt.Tooltip("연월_label:N", title="기간"), alt.Tooltip("쿠폰할인:Q", title="쿠폰할인", format=",.0f")],
@@ -5337,6 +5341,7 @@ if side["page"].startswith("13."):
         _lux_last = df_lux["날짜"].max().normalize()
         _lux_first = df_lux["날짜"].min().normalize()
         _lux_pd = _lux_agg == "일평균"
+        _lux_in = stable_range("lux_range", _lux_in, (_lux_last.replace(day=1).date(), _lux_last.date()))
         if not (isinstance(_lux_in, tuple) and len(_lux_in) == 2):
             st.info("시작일~종료일을 선택해주세요.")
         else:
@@ -5619,6 +5624,7 @@ if side["page"].startswith("14."):
             # --- ① 선택 기간 요약 ---
             _sum_rows = []
             _ch_pd = _ch_agg == "일평균"
+            _ch_in = stable_range("chall_range", _ch_in, (_ch_last.replace(day=1).date(), _ch_last.date()))
 
             def _ch_m(v):
                 return f"{v / 1e6:,.1f}" if _ch_pd else f"{v / 1e6:,.0f}"

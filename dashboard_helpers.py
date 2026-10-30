@@ -4379,3 +4379,14 @@ def generate_channel_page_insights(sum_rows, periods, unit_label, kind_label="�
         note = f" ({', '.join(small)}는 비중 3% 미만이라 전년비 변동이 커서 제외했어요.)" if small else ""
         sections.append({"title": "④ EP와 비교한 다른 채널", "body": " / ".join(parts) + "." + note})
     return sections
+
+
+def stable_range(state_key, picked, default):
+    """date_input 범위 위젯은 시작일만 눌렀을 때(1개짜리 튜플) 값이 불완전한 채로 화면이 다시 그려진다.
+    그때 기본값/전체기간으로 되돌아가면 그래프나 화면 높이가 확 바뀌어서 달력이 밀리고 두 번째 날짜 클릭이
+    엉뚱한 곳에 들어갔다. 마지막으로 완성된 (시작, 끝)을 기억해 두었다가 불완전한 동안엔 그 값을 그대로 쓴다."""
+    marker = f"{state_key}__ok"
+    if isinstance(picked, (tuple, list)) and len(picked) == 2:
+        st.session_state[marker] = (picked[0], picked[1])
+        return (picked[0], picked[1])
+    return st.session_state.get(marker, default)
