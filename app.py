@@ -5261,8 +5261,8 @@ if side["page"].startswith("12."):
                     _ev_ya, _ev_yb = _ev_detail["prev"][0].year, _ev_detail["cur"][0].year
                     _ev_title = f"{_ev_name} 상세 실적"
                     st.caption(
-                        f"{_ev_yb}년 {_ev_detail['cur'][0].strftime('%m/%d')}~{_ev_detail['cur'][1].strftime('%m/%d')} vs "
-                        f"{_ev_ya}년 행사 기간 {_ev_detail['prev'][0].strftime('%m/%d')}~{_ev_detail['prev'][1].strftime('%m/%d')} "
+                        f"{_ev_yb}년 {_ev_detail['cur'][0].strftime('%m/%d')} – {_ev_detail['cur'][1].strftime('%m/%d')} vs "
+                        f"{_ev_ya}년 행사 기간 {_ev_detail['prev'][0].strftime('%m/%d')} – {_ev_detail['prev'][1].strftime('%m/%d')} "
                         f"({_ev_detail['n']}일) · 거래액 단위 백만원 · CR/객단가는 합계 기준 재계산 · "
                         "비교 기간은 위에서 고른 '비교 기간'(작년 행사)을 그대로 써요"
                     )
