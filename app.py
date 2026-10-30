@@ -5342,7 +5342,7 @@ if side["page"].startswith("13."):
         else:
             _rc = (pd.Timestamp(_lux_in[0]), pd.Timestamp(_lux_in[1]))
             _rp = (_rc[0] - pd.Timedelta(days=364), _rc[1] - pd.Timedelta(days=364))
-            st.caption(f"📅 {_rc[0]:%Y-%m-%d}~{_rc[1]:%Y-%m-%d} vs 전년 동요일 {_rp[0]:%Y-%m-%d}~{_rp[1]:%Y-%m-%d}")
+            st.caption(f"📅 올해 {_rc[0]:%Y-%m-%d} – {_rc[1]:%Y-%m-%d} vs 전년 동요일 {_rp[0]:%Y-%m-%d} – {_rp[1]:%Y-%m-%d} (364일 전, 같은 요일끼리 비교)")
 
             _d_all = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["전체 (순금+실버 포함)"])
             _d_ex = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["순금+실버 제외"])
@@ -5626,7 +5626,7 @@ if side["page"].startswith("14."):
             if isinstance(_ch_in, tuple) and len(_ch_in) == 2:
                 _rc2 = (pd.Timestamp(_ch_in[0]), pd.Timestamp(_ch_in[1]))
                 _rp2 = (_rc2[0] - pd.Timedelta(days=364), _rc2[1] - pd.Timedelta(days=364))
-                st.caption(f"📅 {_rc2[0]:%Y-%m-%d}~{_rc2[1]:%Y-%m-%d} vs 전년 동요일 {_rp2[0]:%Y-%m-%d}~{_rp2[1]:%Y-%m-%d} · 단위: 백만원" + (" (일평균)" if _ch_pd else " (누적)"))
+                st.caption(f"📅 올해 {_rc2[0]:%Y-%m-%d} – {_rc2[1]:%Y-%m-%d} vs 전년 동요일 {_rp2[0]:%Y-%m-%d} – {_rp2[1]:%Y-%m-%d} (364일 전, 같은 요일끼리 비교) · 단위: 백만원" + (" (일평균)" if _ch_pd else " (누적)"))
                 _sum_rows = compute_luxury_channel_compare(_ch_daily, _rc2, _rp2, _ch_pd)
                 _ep_pct = next((r["전년비"] for r in _sum_rows if r["채널"] == "EP"), None)
                 _sb = ""
