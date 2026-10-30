@@ -2093,7 +2093,7 @@ def render_insight_panel(sections, key_prefix=""):
     )
 
 
-def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=False):
+def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=False, cmp=None, cmp_labels=None):
     """트래픽(UV) -> 구매전환 2단계 퍼널 카드. 사용자가 보여준 '노출→클릭→전환' 예시와
     같은 형태로 만들고 싶었지만, 이 대시보드 데이터엔 노출수·클릭수가 없어서(EP실적/
     카테고리 원본 둘 다 트래픽(UV)과 구매객수까지만 있음) 실제로 있는 2단계로 구성했다.
@@ -2125,6 +2125,20 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
     _min_bar_w = "56px" if compact else "70px"
     _final_sub = "" if compact else "<span style='color:#9ca3af;font-size:0.8rem;'>트래픽 대비 구매 비율</span>"
 
+    # 전일비/전주(평균)비/전년(동요일)비: KPI 카드와 같은 계산(metric_kpi_stats) 결과를 호출부에서 받아 그대로 표시
+    def _cmp_html(key, indent=_indent):
+        stats = (cmp or {}).get(key)
+        if not stats or not cmp_labels:
+            return ""
+        parts = [
+            f"{lab} {format_delta_html(stats.get(k))}"
+            for lab, k in zip(cmp_labels, ("prev_delta", "avg_delta", "yoy_delta"))
+        ]
+        return (
+            f"<div style='padding-left:{indent};margin:5px 0 2px;font-size:0.74rem;color:#6b7280;line-height:1.5;'>"
+            + " · ".join(parts) + "</div>"
+        )
+
     st.markdown(
         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:14px;padding:{_pad};'>"
         f"<div style='font-size:{_title_size};font-weight:700;color:#111827;'>전환 퍼널</div>"
@@ -2141,6 +2155,7 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
         f"<div style='width:{_pct_w};flex:0 0 {_pct_w};text-align:right;font-size:0.78rem;color:#6b7280;'>"
         "통과율 <span style='color:#0d9488;font-weight:700;'>100%</span></div>"
         "</div>"
+        f"{_cmp_html('트래픽')}"
 
         f"<div style='padding-left:{_indent};margin:6px 0;font-size:0.78rem;color:#9ca3af;'>"
         f"┊ 이탈 {drop_pct:.1f}% ({drop_n:,.0f})</div>"
@@ -2155,28 +2170,33 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
         f"<div style='width:{_pct_w};flex:0 0 {_pct_w};text-align:right;font-size:0.78rem;color:#6b7280;'>"
         f"통과율 <span style='color:#ef4444;font-weight:700;'>{cr:.2f}%</span></div>"
         "</div>"
+        f"{_cmp_html('구매')}"
 
         "<div style='margin-top:14px;padding-top:12px;border-top:1px solid #f1f2f4;"
         "display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:6px;'>"
         f"<div><span style='font-weight:600;font-size:0.85rem;'>최종 전환율</span> {_final_sub}</div>"
         f"<div style='font-size:{_final_pct_size};font-weight:800;color:#2563eb;'>{cr:.2f}% "
         f"<span style='font-size:0.72rem;font-weight:400;color:#9ca3af;'>({purchase_val:,.0f} / {traffic_val:,.0f})</span></div>"
-        "</div></div>",
+        "</div>"
+        f"{_cmp_html('전환율', '0')}"
+        "</div>",
         unsafe_allow_html=True,
     )
 
 
-def render_conversion_funnel_row(segments, subtitle=None):
+def render_conversion_funnel_row(segments, subtitle=None, cmp_labels=None):
     """전환 퍼널을 세그먼트별(보통 전체/회원/신규)로 나란히 st.columns에 배치해서
     한눈에 비교할 수 있게 한다. segments: [(라벨, 트래픽값, 구매값), ...]."""
     if not segments:
         st.info("표시할 데이터가 없습니다.")
         return
     cols = st.columns(len(segments))
-    for col, (label, tv, pv) in zip(cols, segments):
+    for col, seg in zip(cols, segments):
+        label, tv, pv = seg[0], seg[1], seg[2]
+        cmp = seg[3] if len(seg) > 3 else None
         with col:
             st.markdown(f"<div style='font-weight:700;margin-bottom:4px;color:#374151;'>{label}</div>", unsafe_allow_html=True)
-            render_conversion_funnel(tv, pv, subtitle=subtitle, compact=True)
+            render_conversion_funnel(tv, pv, subtitle=subtitle, compact=True, cmp=cmp, cmp_labels=cmp_labels)
 
 
 def render_donut_chart(labels, values, colors=None, center_title="", center_value="", size=300,

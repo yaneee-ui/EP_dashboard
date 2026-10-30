@@ -1229,8 +1229,15 @@ if side["page"].startswith("1."):
                 _fseg_df = df_traffic[(df_traffic["BPU"] == bpu) & (df_traffic["회원구분"] == _fseg)]
             _f_tr, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="트래픽")
             _f_pur, _ = compute_official_total(_fseg_df, unit, selected_period_date, metric_col="구매객수")
-            _funnel_segments.append((_fseg, _f_tr, _f_pur))
-        render_conversion_funnel_row(_funnel_segments)
+            _f_cmp = {
+                "트래픽": metric_kpi_stats(_fseg_df, "트래픽", unit, selected_period_date),
+                "구매": metric_kpi_stats(_fseg_df, "구매객수", unit, selected_period_date),
+                "전환율": metric_kpi_stats(_fseg_df, "CR", unit, selected_period_date),
+            }
+            _funnel_segments.append((_fseg, _f_tr, _f_pur, _f_cmp))
+        render_conversion_funnel_row(
+            _funnel_segments, cmp_labels=[UNIT_CONFIG[unit]["prev_label"], UNIT_CONFIG[unit]["avg_label"], UNIT_CONFIG[unit]["yoy_label"]],
+        )
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
         # --- 카테고리별 거래액 (같은 매체·세그먼트·기간 기준) ---
