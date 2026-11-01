@@ -620,11 +620,11 @@ with _sticky:
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
         )
-        _lux_view, _lux_agg, _lux_unit, _lux_sort, _lux_in = list(LUXURY_KIND_OPTIONS)[0], "일평균", "일자별", "최신순", None
+        _lux_view, _lux_agg, _lux_unit, _lux_sort, _lux_in, _lux_basis = list(LUXURY_KIND_OPTIONS)[0], "일평균", "일자별", "최신순", None, "동요일"
         if not df_lux.empty:
             _lux_last_top = df_lux["날짜"].max().normalize()
             _lux_first_top = df_lux["날짜"].min().normalize()
-            _u1, _u2, _u3, _u4, _u5, _u_sp = st.columns([1.6, 1, 1, 1, 2, 2])
+            _u1, _u2, _u3, _u4, _u4b, _u5, _u_sp = st.columns([1.6, 1, 1, 1, 1, 2, 1])
             with _u1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
                 _lux_view = st.selectbox("구분", list(LUXURY_KIND_OPTIONS), label_visibility="collapsed", key="lux_kind")
@@ -637,6 +637,12 @@ with _sticky:
             with _u4:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>정렬</div>", unsafe_allow_html=True)
                 _lux_sort = st.selectbox("정렬", ["최신순", "오래된순"], label_visibility="collapsed", key="lux_sort")
+            with _u4b:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교 기준</div>", unsafe_allow_html=True)
+                _lux_basis = st.selectbox(
+                    "비교 기준", ["동요일", "동일"], label_visibility="collapsed", key="lux_basis",
+                    help="동요일: 364일 전(같은 요일끼리) / 동일: 작년 같은 월·일(요일은 달라질 수 있어요)",
+                )
             with _u5:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 기간</div>", unsafe_allow_html=True)
                 follow_latest_range("lux_range", _lux_last_top.date())
@@ -5346,7 +5352,7 @@ if side["page"].startswith("13."):
     st.markdown("### 💎 명품 채널별 실적")
     st.caption(
         "26년 9월부로 쥬얼리(순금+실버)가 잡화 > 명품 카테고리로 바뀌었어요. 여기 데이터는 25년 명품 기준으로 집계한 raw라 "
-        "카테고리 실적과 조금 다를 수 있어요(단위: 백만원, 전년비는 전년 동요일 364일 전 기준)."
+        "카테고리 실적과 조금 다를 수 있어요(단위: 백만원, 전년비는 위 '비교 기준'을 따라요: 동요일 = 364일 전 같은 요일, 동일 = 작년 같은 월·일)."
     )
     if df_lux.empty:
         st.info("명품 채널 데이터가 없어요. 명품실적 CSV 2개를 올리고 convert_luxury.py를 실행하면 나와요.")
@@ -5359,8 +5365,8 @@ if side["page"].startswith("13."):
             st.info("시작일~종료일을 선택해주세요.")
         else:
             _rc = (pd.Timestamp(_lux_in[0]), pd.Timestamp(_lux_in[1]))
-            _rp = (_rc[0] - pd.Timedelta(days=364), _rc[1] - pd.Timedelta(days=364))
-            st.caption(f"📅 올해 {_rc[0]:%Y-%m-%d} – {_rc[1]:%Y-%m-%d} vs 전년 동요일 {_rp[0]:%Y-%m-%d} – {_rp[1]:%Y-%m-%d} (364일 전, 같은 요일끼리 비교)")
+            _rp = (shift_prev_year(_rc[0], _lux_basis), shift_prev_year(_rc[1], _lux_basis))
+            st.caption(f"📅 올해 {_rc[0]:%Y-%m-%d} – {_rc[1]:%Y-%m-%d} vs 전년 {_lux_basis} {_rp[0]:%Y-%m-%d} – {_rp[1]:%Y-%m-%d} ({"364일 전, 같은 요일끼리 비교" if _lux_basis == "동요일" else "작년 같은 월·일 비교"})")
 
             _d_all = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["전체 (순금+실버 포함)"])
             _d_ex = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["순금+실버 제외"])
@@ -5458,9 +5464,9 @@ if side["page"].startswith("13."):
             _LUX_COLORS = {"EP": "#2563eb", "직접": "#9ca3af", "광고": "#f59e0b", "제휴": "#10b981", "PUSH": "#a78bfa"}
             _ch_only = [c for c in _d_sel.columns if c != "합계"]
             _lab_chrono = [make_period_label(_i - pd.Timedelta(days=6) if _lux_unit == "주차별" else _i, _unit_key) for _i in _per_res.index]
-            # 툴팁용 전년 값: 같은 기간을 전년 동요일(364일 전)로 옮겨서 같은 방식으로 집계
+            # 툴팁용 전년 값: 같은 기간을 선택한 비교 기준(동요일 364일 전 / 동일 1년 전)으로 옮겨서 같은 방식으로 집계
             _prev_sh = _d_sel.copy()
-            _prev_sh.index = _prev_sh.index + pd.Timedelta(days=364)
+            _prev_sh.index = _prev_sh.index + (pd.Timedelta(days=364) if _lux_basis == "동요일" else pd.DateOffset(years=1))
             _prev_res = _prev_sh.loc[_rc[0]:_rc[1]].resample(_rule).agg("mean" if _lux_pd else "sum").reindex(_per_res.index)
 
             def _yoy_pct(c_v, p_v):
@@ -5508,7 +5514,7 @@ if side["page"].startswith("13."):
 
             # 월별 전년비 (마감된 달은 전년 같은 달, 진행 중인 달은 전년 동요일)
             st.markdown(f"#### 월별 전년비 · {_lux_view} · {_lux_agg}")
-            _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last, _lux_pd)
+            _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last, _lux_pd, _lux_basis)
             _cols = list(_d_sel.columns)
             _partial_note = f"<br><span style='font-weight:400;color:#9ca3af;font-size:0.72rem;'>(~{_lux_last.day}일 누계)</span>"
             _mh = "".join(
@@ -5542,8 +5548,8 @@ if side["page"].startswith("13."):
                 st.altair_chart((_z + _ln).properties(height=300), use_container_width=True)
 
             # 핵심 질문: 전체(순금+실버 포함) vs 순금+실버 제외 — 합계와 EP의 월별 전년비
-            _mon_all = compute_luxury_monthly_yoy(_d_all, _lux_last.year, _lux_last, _lux_pd)
-            _mon_ex = compute_luxury_monthly_yoy(_d_ex, _lux_last.year, _lux_last, _lux_pd)
+            _mon_all = compute_luxury_monthly_yoy(_d_all, _lux_last.year, _lux_last, _lux_pd, _lux_basis)
+            _mon_ex = compute_luxury_monthly_yoy(_d_ex, _lux_last.year, _lux_last, _lux_pd, _lux_basis)
             _cmp_rows = []
             for _m in _mon_all:
                 for _lbl, _src, _ch in [("전체 합계", _mon_all, "합계"), ("순금+실버 제외 합계", _mon_ex, "합계"),
