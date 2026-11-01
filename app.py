@@ -37,7 +37,7 @@ from dashboard_helpers import (
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
     LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
-    channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range,
+    channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
     DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
@@ -583,11 +583,11 @@ with _sticky:
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
         )
-        _ch_kind, _ch_cat, _ch_unit, _ch_in, _ch_agg = "전체", "전체", "월별", None, "일평균"
+        _ch_kind, _ch_cat, _ch_unit, _ch_in, _ch_agg, _ch_basis = "전체", "전체", "월별", None, "일평균", "동요일"
         if not df_chall.empty:
             _ch_last_top = df_chall["날짜"].max().normalize()
             _ch_first_top = df_chall["날짜"].min().normalize()
-            _t1, _t2, _t3, _t3b, _t4, _t_sp = st.columns([1, 1, 1, 1, 2, 2])
+            _t1, _t2, _t3, _t3b, _t3c, _t4, _t_sp = st.columns([1, 1, 1, 1, 1.2, 2, 1])
             with _t1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
                 _ch_kind = st.selectbox("구분", ["전체", "정상", "이월", "입점"], label_visibility="collapsed", key="chall_kind")
@@ -600,6 +600,12 @@ with _sticky:
             with _t3b:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
                 _ch_agg = st.selectbox("집계 방식", ["일평균", "누적"], label_visibility="collapsed", key="chall_agg")
+            with _t3c:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교 기준</div>", unsafe_allow_html=True)
+                _ch_basis = st.selectbox(
+                    "비교 기준", ["동요일", "동일"], label_visibility="collapsed", key="chall_basis",
+                    help="동요일: 364일 전(같은 요일끼리) / 동일: 작년 같은 월·일(요일은 달라질 수 있어요)",
+                )
             with _t4:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>조회 기간</div>", unsafe_allow_html=True)
                 follow_latest_range("chall_range", _ch_last_top.date())
@@ -5606,7 +5612,7 @@ if side["page"].startswith("14."):
     st.markdown("### 📡 전체 채널별 전년비")
     st.caption(
         "채널별 거래액 전년비 흐름을 EP와 비교해요. 'EP 대비'는 그 채널 전년비에서 EP 전년비를 뺀 %p 차이예요 "
-        "(플러스면 EP보다 잘 가는 채널, 마이너스면 EP보다 더 빠지는 채널). 전년비는 전년 동요일(364일 전) 기준이에요."
+        "(플러스면 EP보다 잘 가는 채널, 마이너스면 EP보다 더 빠지는 채널). 전년비는 위 '비교 기준'을 따라요(동요일 = 364일 전 같은 요일, 동일 = 작년 같은 월·일)."
     )
     if df_chall.empty:
         st.info("전체 채널별 데이터가 없어요. 전체채널별실적.csv를 올리고 convert_channel_all.py를 실행하면 나와요.")
@@ -5638,8 +5644,8 @@ if side["page"].startswith("14."):
 
             if isinstance(_ch_in, tuple) and len(_ch_in) == 2:
                 _rc2 = (pd.Timestamp(_ch_in[0]), pd.Timestamp(_ch_in[1]))
-                _rp2 = (_rc2[0] - pd.Timedelta(days=364), _rc2[1] - pd.Timedelta(days=364))
-                st.caption(f"📅 올해 {_rc2[0]:%Y-%m-%d} – {_rc2[1]:%Y-%m-%d} vs 전년 동요일 {_rp2[0]:%Y-%m-%d} – {_rp2[1]:%Y-%m-%d} (364일 전, 같은 요일끼리 비교) · 단위: 백만원" + (" (일평균)" if _ch_pd else " (누적)"))
+                _rp2 = (shift_prev_year(_rc2[0], _ch_basis), shift_prev_year(_rc2[1], _ch_basis))
+                st.caption(f"📅 올해 {_rc2[0]:%Y-%m-%d} – {_rc2[1]:%Y-%m-%d} vs 전년 {_ch_basis} {_rp2[0]:%Y-%m-%d} – {_rp2[1]:%Y-%m-%d} ({"364일 전, 같은 요일끼리 비교" if _ch_basis == "동요일" else "작년 같은 월·일 비교"}) · 단위: 백만원" + (" (일평균)" if _ch_pd else " (누적)"))
                 _sum_rows = compute_luxury_channel_compare(_ch_daily, _rc2, _rp2, _ch_pd)
                 _ep_pct = next((r["전년비"] for r in _sum_rows if r["채널"] == "EP"), None)
                 _sb = ""
@@ -5663,7 +5669,7 @@ if side["page"].startswith("14."):
 
             # --- ② 전년비 흐름 (월별/주별) ---
             if _ch_unit == "월별":
-                _mon14 = compute_luxury_monthly_yoy(_ch_daily, _ch_last.year, _ch_last, _ch_pd)
+                _mon14 = compute_luxury_monthly_yoy(_ch_daily, _ch_last.year, _ch_last, _ch_pd, _ch_basis)
                 _periods = [
                     (f"{m}월" + (f" (~{_ch_last.day}일)" if v["_partial"] else ""), {ch: v[ch][2] for ch in _ch_cols})
                     for m, v in _mon14.items()
@@ -5673,7 +5679,7 @@ if side["page"].startswith("14."):
                     for m, v in _mon14.items()
                 ]
             else:
-                _wk14 = compute_channel_weekly_yoy(_ch_daily, _ch_last, 20, _ch_pd)
+                _wk14 = compute_channel_weekly_yoy(_ch_daily, _ch_last, 20, _ch_pd, _ch_basis)
                 _periods = [
                     (week_start_label(_ws) + ("*" if part else ""), {ch: vals[ch][2] for ch in _ch_cols})
                     for _ws, vals, part in _wk14

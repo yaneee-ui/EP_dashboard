@@ -4251,7 +4251,13 @@ def compute_luxury_channel_compare(daily, range_cur, range_prev, per_day=False):
     return [r for r in rows if r["채널"] != "합계"] + tot
 
 
-def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False):
+def shift_prev_year(d, basis="동요일"):
+    """전년 비교 날짜. 동요일 = 364일 전(같은 요일), 동일 = 작년 같은 월/일(요일은 달라질 수 있음)."""
+    d = pd.Timestamp(d)
+    return d - pd.Timedelta(days=364) if basis == "동요일" else d - pd.DateOffset(years=1)
+
+
+def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False, basis="동요일"):
     """월별 전년비. 마감된 달은 작년 같은 달 전체와, 진행 중인 달은 1일~last_date를 전년 동요일
     (364일 전)과 비교. 채널별 + 합계의 (올해, 전년, 전년비%) 반환: {월: {채널: (c, p, pct)}}"""
     out = {}
@@ -4263,7 +4269,7 @@ def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False):
         partial = full_end > last_date
         b = last_date if partial else full_end
         if partial:
-            pa, pb = a - pd.Timedelta(days=364), b - pd.Timedelta(days=364)
+            pa, pb = shift_prev_year(a, basis), shift_prev_year(b, basis)
         else:
             pa = pd.Timestamp(year - 1, m, 1)
             pb = pa + pd.offsets.MonthEnd(0)
@@ -4298,7 +4304,7 @@ def channel_all_daily(df_ch, kinds=None, category="전체"):
     return pv
 
 
-def compute_channel_weekly_yoy(daily, last_date, n_weeks=20, per_day=False):
+def compute_channel_weekly_yoy(daily, last_date, n_weeks=20, per_day=False, basis="동요일"):
     """최근 n_weeks개 주(월~일)의 채널별 전년비. 진행 중인 주는 last_date까지만 쓰고 전년 동요일(364일 전)과
     같은 일수끼리 비교. 반환: [(주 시작일, {채널: (올해, 전년, 전년비%)}, 진행중여부)] (오래된 주 -> 최신 주)"""
     last_date = pd.Timestamp(last_date)
@@ -4307,7 +4313,7 @@ def compute_channel_weekly_yoy(daily, last_date, n_weeks=20, per_day=False):
     for k in range(n_weeks - 1, -1, -1):
         s = cur_start - pd.Timedelta(weeks=k)
         e = min(s + pd.Timedelta(days=6), last_date)
-        ps, pe = s - pd.Timedelta(days=364), e - pd.Timedelta(days=364)
+        ps, pe = shift_prev_year(s, basis), shift_prev_year(e, basis)
         if ps < daily.index.min():
             continue
         cur, prev = daily.loc[s:e].sum(), daily.loc[ps:pe].sum()
