@@ -2118,11 +2118,9 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
     _bar_pad = "7px 10px" if compact else "10px 14px"
     _final_pct_size = "1.05rem" if compact else "1.3rem"
     _indent = "34px" if compact else "58px"
-    # 구매 막대는 전환율이 낮으면 폭이 최소치(6%)까지 좁아지는데, 그 안에 숫자를
-    # white-space:nowrap + overflow:hidden으로 넣다 보니 세 자리 숫자도 "7"처럼
-    # 잘려 보이는 문제가 있었음 — 막대가 아무리 좁아져도 숫자가 잘리지 않도록
-    # 최소 픽셀 폭을 같이 지정한다(퍼센트 폭보다 min-width가 크면 그게 이김).
-    _min_bar_w = "56px" if compact else "70px"
+    # 구매 막대는 전환율이 낮으면 폭이 최소치(6%)까지 좁아지는데, 고정 픽셀 min-width로는
+    # 패딩을 뺀 자리가 모자라 "1,076"도 "1,..."로 잘렸음 — 막대 폭의 최소값을 숫자 길이
+    # (min-width:max-content)로 잡아서 숫자가 항상 다 보이게 한다.
     _final_sub = "" if compact else "<span style='color:#9ca3af;font-size:0.8rem;'>트래픽 대비 구매 비율</span>"
 
     # 전일비/전주(평균)비/전년(동요일)비: KPI 카드와 같은 계산(metric_kpi_stats) 결과를 호출부에서 받아 그대로 표시
@@ -2165,8 +2163,8 @@ def render_conversion_funnel(traffic_val, purchase_val, subtitle=None, compact=F
         f"display:flex;align-items:center;justify-content:center;font-size:{_icon_font};'>🛒</div>"
         f"<div style='font-weight:600;width:{_label_w};flex:0 0 {_label_w};font-size:0.85rem;'>구매</div>"
         "<div style='flex:1;background:#f1f5f9;border-radius:8px;min-width:0;'>"
-        f"<div style='width:{_bar_w2:.1f}%;min-width:{_min_bar_w};background:#ef4444;color:#fff;font-weight:700;padding:{_bar_pad};"
-        f"border-radius:8px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;box-sizing:border-box;'>{purchase_val:,.0f}</div></div>"
+        f"<div style='width:{_bar_w2:.1f}%;min-width:max-content;background:#ef4444;color:#fff;font-weight:700;padding:{_bar_pad};"
+        f"border-radius:8px;white-space:nowrap;box-sizing:border-box;'>{purchase_val:,.0f}</div></div>"
         f"<div style='width:{_pct_w};flex:0 0 {_pct_w};text-align:right;font-size:0.78rem;color:#6b7280;'>"
         f"통과율 <span style='color:#ef4444;font-weight:700;'>{cr:.2f}%</span></div>"
         "</div>"
