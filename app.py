@@ -44,7 +44,7 @@ from dashboard_helpers import (
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
     compute_total_monthly_trend, render_total_monthly_trend_html, build_total_monthly_trend_excel,
-    total_daily_with_channel_fallback,
+    total_daily_with_channel_fallback, render_category_movers, summary_compare_ranges, category_gmv_rows,
     compute_daily_compare, render_daily_compare_html, build_daily_compare_excel,
     compute_daily_category_compare, render_daily_category_compare_html, build_daily_category_compare_excel,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
@@ -1622,6 +1622,38 @@ if side["page"].startswith("1."):
         unsafe_allow_html=True,
     )
     render_bpu_comparison_table(df_traffic, unit=unit, selected_period_date=selected_period_date)
+
+    # --- 카테고리 Top 변동 (카테고리 원본 기준 · 전 BPU + 정상/이월/입점, 전년 비교) ---
+    if not df_category.empty:
+        st.markdown("---")
+        st.markdown("### 🗂️ 카테고리 Top 변동", unsafe_allow_html=True)
+        _tv_last = df_category["날짜"].max()
+        _tv_seg = segment if segment in ("전체", "회원", "신규") else "전체"
+        _tv_cur, _tv_prev, _tv_partial = summary_compare_ranges(
+            unit, selected_period_date if selected_period_date is not None else _tv_last, _tv_last
+        )
+        _tv_sum = unit == "월마감"
+        _tv_notes = []
+        if _tv_seg != segment:
+            _tv_notes.append(f"카테고리 원본에 '{segment}' 구분이 없어 전체 기준")
+        elif _tv_seg != "전체":
+            _tv_notes.append(f"{_tv_seg} 기준")
+        if _ff_exclude:
+            _tv_notes.append("핏플랍 제외 적용")
+        st.markdown(
+            f"<div class='chart-caption'><b>{unit}</b> 기준 · 기준시점: <b>{period_label}</b> · "
+            f"이번 {_tv_cur[0]:%Y-%m-%d} – {_tv_cur[1]:%Y-%m-%d}{' (진행 중)' if _tv_partial else ''} vs "
+            f"전년 {_tv_prev[0]:%Y-%m-%d} – {_tv_prev[1]:%Y-%m-%d}"
+            + (f" · {' · '.join(_tv_notes)}" if _tv_notes else "") + "</div>",
+            unsafe_allow_html=True,
+        )
+        render_category_movers(
+            category_gmv_rows(df_category, _tv_prev, _tv_cur, "sum" if _tv_sum else "mean", _tv_seg, _ff_exclude),
+            caption=(
+                f"증감액 단위: 백만원({'기간 합계' if _tv_sum else '일평균'}, 올해 − 작년) · 막대는 같은 카드 안에서의 변동폭 비교 · "
+                "'순취소'는 이번 기간 거래액이 마이너스인 카테고리 · 비교 기준은 위 KPI 카드의 전년비와 같아요"
+            ),
+        )
 
     # ============================================================
     # 하단: EP 채널 지표 (원부매칭율/최저가율 등)

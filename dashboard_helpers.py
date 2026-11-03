@@ -2845,6 +2845,150 @@ def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, 
     return {"ndays_a": ndays_a, "ndays_b": ndays_b, "bpu_rows": bpu_rows, "cat_rows": cat_rows, "coupon": coupon}
 
 
+def summary_compare_ranges(unit, selected_period_date, last_date):
+    """실적 요약의 조회 단위/기준 시점에 맞는 '이번 구간'과 '전년 비교 구간' (KPI 카드와 같은 규칙).
+    일별/주별 = 364일 전(동요일), 월별 = 진행 중이면 364일 전 같은 일수 / 다 끝난 달이면 작년 같은 달 전체,
+    월마감 = 작년 같은 달. 이번 구간은 데이터가 있는 마지막 날까지만 잡는다.
+    반환: (cur(시작, 끝), prev(시작, 끝), 부분기간 여부)"""
+    d = pd.Timestamp(selected_period_date).normalize()
+    last = pd.Timestamp(last_date).normalize()
+    if unit == "주별":
+        start = d - pd.Timedelta(days=d.weekday())
+        full_end = start + pd.Timedelta(days=6)
+    elif unit in ("월별", "월마감"):
+        start = d.replace(day=1)
+        full_end = start + pd.offsets.MonthEnd(0)
+    else:
+        start = full_end = d
+    end = min(full_end, last)
+    partial = end < full_end
+    if unit == "월마감" or (unit == "월별" and not partial):
+        _ps = pd.Timestamp(start - pd.DateOffset(years=1))
+        prev = (_ps, _ps + pd.offsets.MonthEnd(0))
+    else:
+        prev = (start - pd.Timedelta(days=364), end - pd.Timedelta(days=364))
+    return (start, end), prev, partial
+
+
+def category_gmv_rows(df_category, rng_prev, rng_cur, agg="mean", segment="전체", ff_exclude=False):
+    """BPU x 카테고리 거래액을 이번 구간(B)과 전년 구간(A)로 계산한 행 목록 (render_category_movers 입력).
+    agg='mean'이면 구간의 달력 일수로 나눈 일평균, 'sum'이면 합계. ff_exclude면 핏플랍(FF) 기여분을 뺀다."""
+    base_cols = (df_category["브랜드"] == "전체") & (df_category["회원구분"] == segment) & (df_category["카테고리"] != "전체")
+    base = df_category[base_cols]
+    ff = df_category[(df_category["브랜드"] == "FF") & (df_category["회원구분"] == segment) & (df_category["카테고리"] != "전체")] if ff_exclude else None
+
+    def _agg(rng):
+        n = (rng[1] - rng[0]).days + 1
+        w = base[(base["날짜"] >= rng[0]) & (base["날짜"] <= rng[1])].groupby(["BPU", "카테고리"])["거래액"].sum()
+        if ff is not None:
+            f = ff[(ff["날짜"] >= rng[0]) & (ff["날짜"] <= rng[1])].groupby(["BPU", "카테고리"])["거래액"].sum()
+            w = w.sub(f, fill_value=0)
+        return w / n if agg == "mean" else w
+
+    a, b = _agg(rng_prev), _agg(rng_cur)
+    rows = []
+    for key in sorted(set(a.index) | set(b.index)):
+        rows.append({"BPU": key[0], "카테고리": key[1], "A": float(a.get(key, 0.0)), "B": float(b.get(key, 0.0)), "is_total": False})
+    return rows
+
+
+def render_category_movers(rows, caption=None):
+    """카테고리별 거래액 증감 Top 변동 카드(전체 + 정상/이월/입점). rows = [{BPU, 카테고리, A(작년), B(올해), is_total}].
+    증감액은 백만원 단위로 표시한다. 행사 기간 비교 / 실적 요약 탭에서 같이 쓴다."""
+    def _build_movers(bpu_filter):
+        _agg = {}
+        for row in rows:
+            if row["is_total"]:
+                continue
+            if bpu_filter is not None and row["BPU"] not in bpu_filter:
+                continue
+            e = _agg.setdefault(row["카테고리"], {"A": 0.0, "B": 0.0})
+            e["A"] += row["A"] or 0.0
+            e["B"] += row["B"] or 0.0
+        out = []
+        for cat, v in _agg.items():
+            diff = v["B"] - v["A"]
+            # 기준(작년) 값이 0 이하면 증감률이 의미가 없어서 비운다
+            pct = (v["B"] / v["A"] - 1) * 100 if v["A"] > 0 else None
+            out.append({"카테고리": cat, "diff": diff, "pct": pct, "A": v["A"], "B": v["B"]})
+        out.sort(key=lambda x: x["diff"], reverse=True)
+        return out
+
+    def _mover_rows(items, positive, scale):
+        """카테고리별 한 줄: 이름 | 변동 크기 막대 | 증감액(백만원) + 증감률. 막대 길이는 같은 카드의 최대 변동폭 기준."""
+        _color = "#16a34a" if positive else "#dc2626"
+        _bg = "#dcfce7" if positive else "#fee2e2"
+        if not items:
+            return "<div style='color:#9ca3af;font-size:0.82rem;padding:8px 0;'>해당 없음</div>"
+        _html = ""
+        for it in items:
+            _w = max(abs(it["diff"]) / scale * 100, 3) if scale else 3
+            _val = f"{'+' if positive else '△'}{abs(it['diff']) / 1e6:,.1f}"
+            if it["pct"] is None:
+                _pct = ""
+            else:
+                _pct = (
+                    f"<span style='font-size:0.72rem;color:{_color};background:{_bg};border-radius:10px;"
+                    f"padding:1px 7px;margin-left:6px;'>{'+' if it['pct'] >= 0 else '△'}"
+                    f"{'>999' if abs(it['pct']) > 999 else format(abs(it['pct']), '.1f')}%</span>"
+                )
+            _note = (
+                "<span style='font-size:0.68rem;color:#9ca3af;margin-left:4px;'>순취소</span>"
+                if it["B"] < 0 else ""
+            )
+            _html += (
+                "<div style='display:grid;grid-template-columns:76px minmax(40px,1fr) auto;align-items:center;gap:10px;"
+                "padding:5px 0;border-bottom:1px solid #f1f2f4;'>"
+                f"<div style='font-size:0.88rem;white-space:nowrap;'>{it['카테고리']}{_note}</div>"
+                f"<div style='background:#f3f4f6;border-radius:6px;height:10px;'>"
+                f"<div style='width:{_w:.1f}%;height:10px;background:{_color};border-radius:6px;'></div></div>"
+                f"<div style='text-align:right;white-space:nowrap;font-weight:700;color:{_color};font-size:0.9rem;'>{_val}{_pct}</div>"
+                "</div>"
+            )
+        return _html
+
+    def _group_card(name, sub, movers, wide):
+        # 증가/감소는 실제로 늘고/줄어든 카테고리만 Top 3로 (반대 방향이 섞여 보이지 않게)
+        _ups = [m for m in movers if m["diff"] > 0][:3]
+        _downs = sorted([m for m in movers if m["diff"] < 0], key=lambda x: x["diff"])[:3]
+        _scale = max([abs(m["diff"]) for m in _ups + _downs] or [0])
+
+        def _sec(title, color, rows):
+            return (
+                f"<div><div style='font-weight:700;font-size:0.82rem;color:{color};margin-bottom:2px;'>{title}</div>{rows}</div>"
+            )
+
+        _grid = (
+            "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;" if wide
+            else "display:grid;grid-template-columns:1fr;gap:12px;"
+        )
+        _sub = f"<span style='color:#9ca3af;font-weight:400;font-size:0.78rem;'> · {sub}</span>" if sub else ""
+        return (
+            "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;height:100%;box-sizing:border-box;'>"
+            f"<div style='font-weight:700;color:#111827;margin-bottom:8px;'>{name}{_sub}</div>"
+            f"<div style='{_grid}'>"
+            + _sec("▲ 증가 Top 3", "#16a34a", _mover_rows(_ups, True, _scale))
+            + _sec("▼ 감소 Top 3", "#dc2626", _mover_rows(_downs, False, _scale))
+            + "</div></div>"
+        )
+
+    if caption:
+        st.caption(caption)
+    st.markdown(_group_card("전체", "전 BPU 합산", _build_movers(None), wide=True), unsafe_allow_html=True)
+
+    # 정상(e-영업1) / 이월(e-영업2) / 입점(e-영업3+4) 별로도 나눠서 본다 — 3개를 나란히
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    _cards = "".join(
+        _group_card(_g_name, " + ".join(_g_bpus), _build_movers(_g_bpus), wide=False)
+        for _g_name, _g_bpus in [("정상", ["e-영업1"]), ("이월", ["e-영업2"]), ("입점", ["e-영업3", "e-영업4"])]
+    )
+    st.markdown(
+        f"<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;align-items:stretch;'>{_cards}</div>",
+        unsafe_allow_html=True,
+    )
+
+
+
 def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
     """compute_event_comparison() 결과를 '한눈에 보는' 대시보드 형태로 그린다
     (KPI 카드 + BPU별 거래액 바 차트 + 카테고리 Top 변동 + 쿠폰 비용률 카드).
@@ -2933,94 +3077,9 @@ def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
         "**카테고리 Top 변동**  ·  <span style='color:#6b7280;font-size:0.85rem'>거래액, 일평균 · 전체(전 BPU 합산) + 정상/이월/입점</span>",
         unsafe_allow_html=True,
     )
-    def _build_movers(bpu_filter):
-        _agg = {}
-        for row in result["cat_rows"]["거래액"]:
-            if row["is_total"]:
-                continue
-            if bpu_filter is not None and row["BPU"] not in bpu_filter:
-                continue
-            e = _agg.setdefault(row["카테고리"], {"A": 0.0, "B": 0.0})
-            e["A"] += row["A"] or 0.0
-            e["B"] += row["B"] or 0.0
-        out = []
-        for cat, v in _agg.items():
-            diff = v["B"] - v["A"]
-            # 기준(작년) 값이 0 이하면 증감률이 의미가 없어서 비운다
-            pct = (v["B"] / v["A"] - 1) * 100 if v["A"] > 0 else None
-            out.append({"카테고리": cat, "diff": diff, "pct": pct, "A": v["A"], "B": v["B"]})
-        out.sort(key=lambda x: x["diff"], reverse=True)
-        return out
-
-    def _mover_rows(items, positive, scale):
-        """카테고리별 한 줄: 이름 | 변동 크기 막대 | 증감액(백만원) + 증감률. 막대 길이는 같은 카드의 최대 변동폭 기준."""
-        _color = "#16a34a" if positive else "#dc2626"
-        _bg = "#dcfce7" if positive else "#fee2e2"
-        if not items:
-            return "<div style='color:#9ca3af;font-size:0.82rem;padding:8px 0;'>해당 없음</div>"
-        _html = ""
-        for it in items:
-            _w = max(abs(it["diff"]) / scale * 100, 3) if scale else 3
-            _val = f"{'+' if positive else '△'}{abs(it['diff']) / 1e6:,.1f}"
-            if it["pct"] is None:
-                _pct = ""
-            else:
-                _pct = (
-                    f"<span style='font-size:0.72rem;color:{_color};background:{_bg};border-radius:10px;"
-                    f"padding:1px 7px;margin-left:6px;'>{'+' if it['pct'] >= 0 else '△'}{abs(it['pct']):.1f}%</span>"
-                )
-            _note = (
-                "<span style='font-size:0.68rem;color:#9ca3af;margin-left:4px;'>순취소</span>"
-                if it["B"] < 0 else ""
-            )
-            _html += (
-                "<div style='display:grid;grid-template-columns:76px minmax(40px,1fr) auto;align-items:center;gap:10px;"
-                "padding:5px 0;border-bottom:1px solid #f1f2f4;'>"
-                f"<div style='font-size:0.88rem;white-space:nowrap;'>{it['카테고리']}{_note}</div>"
-                f"<div style='background:#f3f4f6;border-radius:6px;height:10px;'>"
-                f"<div style='width:{_w:.1f}%;height:10px;background:{_color};border-radius:6px;'></div></div>"
-                f"<div style='text-align:right;white-space:nowrap;font-weight:700;color:{_color};font-size:0.9rem;'>{_val}{_pct}</div>"
-                "</div>"
-            )
-        return _html
-
-    def _group_card(name, sub, movers, wide):
-        # 증가/감소는 실제로 늘고/줄어든 카테고리만 Top 3로 (반대 방향이 섞여 보이지 않게)
-        _ups = [m for m in movers if m["diff"] > 0][:3]
-        _downs = sorted([m for m in movers if m["diff"] < 0], key=lambda x: x["diff"])[:3]
-        _scale = max([abs(m["diff"]) for m in _ups + _downs] or [0])
-
-        def _sec(title, color, rows):
-            return (
-                f"<div><div style='font-weight:700;font-size:0.82rem;color:{color};margin-bottom:2px;'>{title}</div>{rows}</div>"
-            )
-
-        _grid = (
-            "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;" if wide
-            else "display:grid;grid-template-columns:1fr;gap:12px;"
-        )
-        _sub = f"<span style='color:#9ca3af;font-weight:400;font-size:0.78rem;'> · {sub}</span>" if sub else ""
-        return (
-            "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;height:100%;box-sizing:border-box;'>"
-            f"<div style='font-weight:700;color:#111827;margin-bottom:8px;'>{name}{_sub}</div>"
-            f"<div style='{_grid}'>"
-            + _sec("▲ 증가 Top 3", "#16a34a", _mover_rows(_ups, True, _scale))
-            + _sec("▼ 감소 Top 3", "#dc2626", _mover_rows(_downs, False, _scale))
-            + "</div></div>"
-        )
-
-    st.caption("증감액 단위: 백만원(일평균, 올해 − 작년) · 막대는 같은 카드 안에서의 변동폭 비교 · '순취소'는 이번 기간 거래액이 마이너스인 카테고리")
-    st.markdown(_group_card("전체", "전 BPU 합산", _build_movers(None), wide=True), unsafe_allow_html=True)
-
-    # 정상(e-영업1) / 이월(e-영업2) / 입점(e-영업3+4) 별로도 나눠서 본다 — 3개를 나란히
-    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
-    _cards = "".join(
-        _group_card(_g_name, " + ".join(_g_bpus), _build_movers(_g_bpus), wide=False)
-        for _g_name, _g_bpus in [("정상", ["e-영업1"]), ("이월", ["e-영업2"]), ("입점", ["e-영업3", "e-영업4"])]
-    )
-    st.markdown(
-        f"<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;align-items:stretch;'>{_cards}</div>",
-        unsafe_allow_html=True,
+    render_category_movers(
+        result["cat_rows"]["거래액"],
+        caption="증감액 단위: 백만원(일평균, 올해 − 작년) · 막대는 같은 카드 안에서의 변동폭 비교 · '순취소'는 이번 기간 거래액이 마이너스인 카테고리",
     )
 
     st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
