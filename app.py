@@ -5242,17 +5242,21 @@ if side["page"].startswith("12."):
         _default_range_b = _clamp_range(_default_range_b)
         if _is_partial_b:
             st.caption(f"ℹ️ 이번 행사는 아직 진행 중이라 데이터가 있는 {_tr_max_d.strftime('%m/%d')}까지만 기본값으로 채웠어요.")
+        # 날짜 칸의 key에 선택한 행사를 넣어서, 행사를 바꾸면 그 행사 기간으로 새로 채워지게 한다
+        # (key가 고정이면 처음 값을 계속 기억해서 행사를 바꿔도 날짜가 안 따라옴).
+        # 같은 행사를 보는 동안 직접 조정한 기간은 그대로 유지된다.
+        # 위쪽 행사 선택과 같은 순서: 왼쪽 = 이번, 오른쪽 = 비교
         with ed1:
-            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교 기간</div>", unsafe_allow_html=True)
-            range_a_input = st.date_input(
-                "비교 기간", value=_default_range_a, min_value=_tr_min_d, max_value=_tr_max_d,
-                key="event_range_a", label_visibility="collapsed",
-            )
-        with ed2:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>이번 기간</div>", unsafe_allow_html=True)
             range_b_input = st.date_input(
                 "이번 기간", value=_default_range_b, min_value=_tr_min_d, max_value=_tr_max_d,
-                key="event_range_b", label_visibility="collapsed",
+                key=f"event_range_b::{_sel_b_label}", label_visibility="collapsed",
+            )
+        with ed2:
+            st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>비교 기간</div>", unsafe_allow_html=True)
+            range_a_input = st.date_input(
+                "비교 기간", value=_default_range_a, min_value=_tr_min_d, max_value=_tr_max_d,
+                key=f"event_range_a::{_sel_a_label}", label_visibility="collapsed",
             )
 
         if not (
