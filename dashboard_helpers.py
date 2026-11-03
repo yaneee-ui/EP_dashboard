@@ -3202,7 +3202,8 @@ def build_event_comparison_excel(result, label_a="작년", label_b="올해"):
 # ============================================================
 # 월별 실적 추이 (전체 vs EP) — 1_전체실적.xlsx 기반 (ep_total_daily.csv)
 # ============================================================
-TREND_CHANNEL_ORDER = ["전체", "EP", "직접", "광고", "제휴", "PUSH", "미디어커머스", "브랜드광고"]
+# 미디어커머스·브랜드광고는 규모가 작아서 표에서 뺐다 (데이터는 ep_total_daily.csv에 그대로 있음)
+TREND_CHANNEL_ORDER = ["전체", "EP", "직접", "광고", "제휴", "PUSH"]
 _TREND_FALLBACK_CHANNELS = ["직접", "광고", "제휴", "PUSH"]
 
 
