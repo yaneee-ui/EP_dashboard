@@ -3338,7 +3338,8 @@ def _trend_fmt(v, kind):
 
 
 def _trend_yoy(cur, prev):
-    if cur is None or prev in (None, 0):
+    # 작년 값이 0 이하(취소가 더 많은 날 등)면 증감률이 의미가 없어서 비워 둔다
+    if cur is None or prev is None or prev <= 0:
         return None
     return cur / prev - 1
 

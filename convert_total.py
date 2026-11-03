@@ -9,6 +9,7 @@
     (원본에 없는 채널은 건너뛰고, 있으면 월별 실적 추이의 '전 채널' 보기에 나온다)
 지표는 트래픽/거래액만 (트래픽당 거래액은 거래액/트래픽으로 대시보드에서 재계산).
 
+작년 일자는 1_전체실적_2025.xlsx(같은 형식)가 있으면 같이 읽는다. 두 파일에 같은 날짜가 있으면 1_전체실적.xlsx 값을 쓴다.
 원본에 없는 날짜는 기존 파일 행을 보존한다 (convert_coupon.py와 같은 결손 방어).
 """
 import os
@@ -17,45 +18,57 @@ import pandas as pd
 from raw_sanity import abort, guard
 
 SRC = "1_전체실적.xlsx"
+SRC_PREV = "1_전체실적_2025.xlsx"  # 있으면 같이 읽는다 (작년 일자 — 올해 파일에는 작년 채널별 트래픽이 없어서)
 OUT = "ep_total_daily.csv"
-
-try:
-    raw = pd.read_excel(SRC, sheet_name=0)
-except Exception as e:  # DRM(문서보안) 파일 등
-    abort("전체실적(1_전체실적.xlsx)", [f"엑셀로 열 수 없어요 — 문서보안(DRM)이 걸린 파일일 수 있어요. ({type(e).__name__})"])
-raw = raw.rename(columns={raw.columns[0]: "지표"})
-raw["지표"] = raw["지표"].ffill()
-
-date_cols = [c for c in raw.columns[6:] if pd.notna(pd.to_datetime(str(c), errors="coerce"))]
-if not date_cols:
-    abort("전체실적(1_전체실적.xlsx)", [
-        "일자별 열(2026-01-01 ...)이 없어요 — '2026년 01월'처럼 월별 형식으로 내려받은 것 같아요.",
-        f"읽힌 열 이름: {list(raw.columns[6:9])} ...",
-    ])
 
 # 전체/EP는 필수(없으면 중단), 나머지 채널은 원본에 있을 때만 담는다
 REQUIRED = ["전체", "EP"]
 OPTIONAL = ["직접", "광고", "제휴", "PUSH", "미디어커머스", "브랜드광고"]
 
-parts = []
-for metric in ["트래픽", "거래액"]:
-    m = raw[raw["지표"] == metric]
-    chan_masks = [
-        ("전체", (m["채널"] == "전체") & (m["채널상세"] == "전체")),
-        ("EP", (m["채널"] == "EP") & (m["채널상세"] == "전체")),
-    ] + [(ch, (m["채널"] == ch) & (m["채널상세"] == ch)) for ch in OPTIONAL]
-    for channel, mask in chan_masks:
-        row = m[mask]
-        if len(row) == 0 and channel not in REQUIRED:
-            continue
-        if len(row) != 1:
-            raise SystemExit(f"{metric}/{channel} 행을 정확히 1개 찾지 못했어요 ({len(row)}개) — 원본 구조가 바뀌었는지 확인하세요.")
-        s = row.iloc[0][date_cols]
-        parts.append(pd.DataFrame({
-            "날짜": pd.to_datetime([str(c) for c in date_cols]),
-            "채널": channel, "지표": metric,
-            "값": pd.to_numeric(s.values, errors="coerce"),
-        }))
+
+def read_src(path):
+    """원본 하나를 (날짜, 채널, 지표, 값) 세로 표로 바꾼다."""
+    name = f"전체실적({path})"
+    try:
+        raw = pd.read_excel(path, sheet_name=0)
+    except Exception as e:  # DRM(문서보안) 파일 등
+        abort(name, [f"엑셀로 열 수 없어요 — 문서보안(DRM)이 걸린 파일일 수 있어요. ({type(e).__name__})"])
+    raw = raw.rename(columns={raw.columns[0]: "지표"})
+    raw["지표"] = raw["지표"].ffill()
+
+    date_cols = [c for c in raw.columns[6:] if pd.notna(pd.to_datetime(str(c), errors="coerce"))]
+    if not date_cols:
+        abort(name, [
+            "일자별 열(2026-01-01 ...)이 없어요 — '2026년 01월'처럼 월별 형식으로 내려받은 것 같아요.",
+            f"읽힌 열 이름: {list(raw.columns[6:9])} ...",
+        ])
+
+    out = []
+    for metric in ["트래픽", "거래액"]:
+        m = raw[raw["지표"] == metric]
+        chan_masks = [
+            ("전체", (m["채널"] == "전체") & (m["채널상세"] == "전체")),
+            ("EP", (m["채널"] == "EP") & (m["채널상세"] == "전체")),
+        ] + [(ch, (m["채널"] == ch) & (m["채널상세"] == ch)) for ch in OPTIONAL]
+        for channel, mask in chan_masks:
+            row = m[mask]
+            if len(row) == 0 and channel not in REQUIRED:
+                continue
+            if len(row) != 1:
+                raise SystemExit(f"{path}: {metric}/{channel} 행을 정확히 1개 찾지 못했어요 ({len(row)}개) — 원본 구조가 바뀌었는지 확인하세요.")
+            s = row.iloc[0][date_cols]
+            out.append(pd.DataFrame({
+                "날짜": pd.to_datetime([str(c) for c in date_cols]),
+                "채널": channel, "지표": metric,
+                "값": pd.to_numeric(s.values, errors="coerce"),
+            }))
+    return out
+
+
+# 올해 파일을 먼저 두어서 같은 날짜가 겹치면 올해 파일 값이 남는다 (pivot_table aggfunc="first")
+parts = read_src(SRC)
+if os.path.exists(SRC_PREV):
+    parts += read_src(SRC_PREV)
 
 long = pd.concat(parts, ignore_index=True)
 out_df = long.pivot_table(index=["날짜", "채널"], columns="지표", values="값", aggfunc="first").reset_index()
