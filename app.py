@@ -44,6 +44,7 @@ from dashboard_helpers import (
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
     compute_total_monthly_trend, render_total_monthly_trend_html, build_total_monthly_trend_excel,
+    total_daily_with_channel_fallback,
     compute_daily_compare, render_daily_compare_html, build_daily_compare_excel,
     compute_daily_category_compare, render_daily_category_compare_html, build_daily_category_compare_excel,
     render_monthly_comparison_table, render_insight_panel, render_donut_chart,
@@ -4246,20 +4247,32 @@ if side["page"].startswith("11."):
         if df_total_daily.empty:
             st.info("전체실적 데이터(ep_total_daily.csv)가 없어요. 1_전체실적.xlsx를 올린 뒤 convert_total.py를 실행해주세요.")
         else:
-            _tt = compute_total_monthly_trend(df_total_daily)
+            _tt_all = st.radio(
+                "채널 보기", ["전체·EP", "전 채널"], horizontal=True, key="tt_channel_view",
+                help="'전 채널'을 고르면 직접·광고·제휴·PUSH 등 다른 유입채널의 일평균 거래액/트래픽/트래픽당 거래액/비중/전년비까지 봐요.",
+            ) == "전 채널"
+            _tt = compute_total_monthly_trend(
+                total_daily_with_channel_fallback(df_total_daily, df_chall) if _tt_all else df_total_daily
+            )
             st.caption(
                 f"기준일 {_tt['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원(일평균) · 진행 중인 {_tt['cur_month']}월은 "
                 "올해 1일~기준일 vs 작년 동요일(364일 전) 동일 일수, 그 외 달은 달력 월 전체 · "
                 "트래픽당 거래액은 거래액 합계/트래픽 합계"
             )
+            if _tt_all:
+                st.caption(
+                    "ℹ️ 채널별 트래픽은 전체실적 원본에 올해(2026년)분만 있어서, 작년 채널별 트래픽·트래픽당 거래액·전년비는 비어 있어요. "
+                    "작년 직접/광고/제휴/PUSH 거래액은 전체채널별실적 기준으로 채웠어요 (올해 전체실적과 약 0.1% 이내 차이). "
+                    "미디어커머스·브랜드광고는 작년 값이 없어요."
+                )
             st.download_button(
                 "⬇️ 월별 실적 추이 엑셀 다운로드",
-                data=build_total_monthly_trend_excel(_tt),
-                file_name=f"월별실적추이_{_tt['ref'].strftime('%Y%m%d')}.xlsx",
+                data=build_total_monthly_trend_excel(_tt, all_channels=_tt_all),
+                file_name=f"월별실적추이{'_전채널' if _tt_all else ''}_{_tt['ref'].strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="total_trend_dl",
             )
-            render_total_monthly_trend_html(_tt)
+            render_total_monthly_trend_html(_tt, all_channels=_tt_all)
 
 
 # ============================================================

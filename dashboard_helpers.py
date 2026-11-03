@@ -3202,14 +3202,39 @@ def build_event_comparison_excel(result, label_a="작년", label_b="올해"):
 # ============================================================
 # 월별 실적 추이 (전체 vs EP) — 1_전체실적.xlsx 기반 (ep_total_daily.csv)
 # ============================================================
+TREND_CHANNEL_ORDER = ["전체", "EP", "직접", "광고", "제휴", "PUSH", "미디어커머스", "브랜드광고"]
+_TREND_FALLBACK_CHANNELS = ["직접", "광고", "제휴", "PUSH"]
+
+
+def total_daily_with_channel_fallback(df_total, df_chall):
+    """전체실적 원본(ep_total_daily)에 없는 (날짜, 채널) 거래액을 전체채널별실적(ep_channel_all)으로 채운다.
+    1_전체실적.xlsx는 채널별 행이 올해(2026)분만 있어서 작년 직접/광고/제휴/PUSH는 거래액만 이쪽에서 가져오고
+    트래픽은 비워둔다(원본에 없음). 원본이 있는 날짜는 절대 덮어쓰지 않는다."""
+    d = df_total.copy()
+    if df_chall is None or df_chall.empty or d.empty:
+        return d
+    ch = df_chall[df_chall["채널"].isin(_TREND_FALLBACK_CHANNELS)].copy()
+    ch["날짜"] = pd.to_datetime(ch["날짜"])
+    ch = ch.groupby(["날짜", "채널"], as_index=False)["거래액"].sum()
+    have = set(zip(pd.to_datetime(d["날짜"]), d["채널"]))
+    add = ch[[(a, b) not in have for a, b in zip(ch["날짜"], ch["채널"])]].copy()
+    add = add[add["날짜"] <= pd.to_datetime(d["날짜"]).max()]
+    if add.empty:
+        return d
+    add["트래픽"] = float("nan")
+    return pd.concat([d, add[["날짜", "채널", "거래액", "트래픽"]]], ignore_index=True)
+
+
 def compute_total_monthly_trend(df_total):
-    """전사(전체) vs EP 월별 일평균 거래액/트래픽/트래픽당 거래액 + 전년비.
+    """전사(전체)·EP·기타 채널 월별 일평균 거래액/트래픽/트래픽당 거래액 + 전년비.
 
     기준일 = 데이터 마지막 날짜. 진행 중인 달은 올해 1일~기준일, 작년은 같은 요일
     기준(364일 전) 동일 일수로 비교한다 (그 외 달은 달력 월 전체). 트래픽당 거래액은
-    일평균의 비율이 아니라 합계/합계로 계산(비율 지표 단순평균 금지 원칙)."""
+    일평균의 비율이 아니라 합계/합계로 계산(비율 지표 단순평균 금지 원칙).
+    원본에 없는 채널·값(예: 작년 채널별 트래픽)은 None으로 둔다."""
     d = df_total.copy()
     d["날짜"] = pd.to_datetime(d["날짜"])
+    channels = [c for c in TREND_CHANNEL_ORDER if c in set(d["채널"])]
     ref = d["날짜"].max()
     cur_y, cur_m = ref.year, ref.month
     cur_days = pd.date_range(ref.replace(day=1), ref)
@@ -3217,11 +3242,15 @@ def compute_total_monthly_trend(df_total):
 
     def _agg(days):
         sub = d[d["날짜"].isin(days)]
-        out = {}
-        for ch in ["전체", "EP"]:
+        n = int(sub[sub["채널"] == "전체"]["날짜"].nunique())
+        if n == 0:
+            return None
+        out = {"n": n}
+        for ch in channels:
             s = sub[sub["채널"] == ch]
-            out[ch] = {"gmv": float(s["거래액"].sum()), "tr": float(s["트래픽"].sum()), "n": int(s["날짜"].nunique())}
-        return out if out["전체"]["n"] > 0 else None
+            g, t = s["거래액"].dropna(), s["트래픽"].dropna()
+            out[ch] = {"gmv": float(g.sum()) if len(g) else None, "tr": float(t.sum()) if len(t) else None}
+        return out
 
     def _fmt_rng(days):
         return f"{days.min().month}/{days.min().day}~{days.max().month}/{days.max().day}"
@@ -3249,34 +3278,49 @@ def compute_total_monthly_trend(df_total):
     def _metrics(a):
         if not a:
             return None
-        g, e, n = a["전체"], a["EP"], a["전체"]["n"]
-        return {
-            "gmv_all": g["gmv"] / n, "gmv_ep": e["gmv"] / n,
-            "tr_all": g["tr"] / n, "tr_ep": e["tr"] / n,
-            "gpt_all": g["gmv"] / g["tr"] if g["tr"] else None,
-            "gpt_ep": e["gmv"] / e["tr"] if e["tr"] else None,
-            "label": a["label"],
-        }
+        n = a["n"]
+        gmv, tr, gpt = {}, {}, {}
+        for ch in channels:
+            g, t = a[ch]["gmv"], a[ch]["tr"]
+            gmv[ch] = g / n if g is not None else None
+            tr[ch] = t / n if t is not None else None
+            gpt[ch] = g / t if (g is not None and t) else None
+        return {"gmv": gmv, "tr": tr, "gpt": gpt, "label": a["label"]}
 
     table = {y: {m: _metrics(a) for m, a in months.items()} for y, months in years.items()}
-    return {"ref": ref, "cur_year": cur_y, "cur_month": cur_m, "table": table}
+    return {"ref": ref, "cur_year": cur_y, "cur_month": cur_m, "table": table, "channels": channels}
 
 
-# (섹션, [(행 라벨, 값 키 or (분자,분모), 종류)]) — 화면/엑셀 공용 행 정의
-_TOTAL_TREND_BLOCKS = [
-    ("일평균\n거래액", [("전체", "gmv_all", "mm"), ("EP", "gmv_ep", "mm"), ("EP비중", ("gmv_ep", "gmv_all"), "pct")]),
-    ("일평균\n트래픽", [("전체", "tr_all", "int"), ("EP", "tr_ep", "int"), ("EP비중", ("tr_ep", "tr_all"), "pct")]),
-    ("트래픽당\n거래액", [("전체", "gpt_all", "int"), ("EP", "gpt_ep", "int")]),
-]
+def _trend_blocks(result, all_channels=False):
+    """(섹션, [(행 라벨, 값 키, 종류)]) — 화면/엑셀 공용 행 정의.
+    값 키 = (지표, 채널) 또는 ("share", 분자키, 분모키). 기본은 기존 양식(전체/EP/EP비중),
+    all_channels=True면 원본에 있는 모든 채널과 채널별 비중까지 나열한다."""
+    if not all_channels:
+        return [
+            ("일평균\n거래액", [("전체", ("gmv", "전체"), "mm"), ("EP", ("gmv", "EP"), "mm"),
+                            ("EP비중", ("share", ("gmv", "EP"), ("gmv", "전체")), "pct")]),
+            ("일평균\n트래픽", [("전체", ("tr", "전체"), "int"), ("EP", ("tr", "EP"), "int"),
+                            ("EP비중", ("share", ("tr", "EP"), ("tr", "전체")), "pct")]),
+            ("트래픽당\n거래액", [("전체", ("gpt", "전체"), "int"), ("EP", ("gpt", "EP"), "int")]),
+        ]
+    chs = result["channels"]
+    others = [c for c in chs if c != "전체"]
+    return [
+        ("일평균\n거래액", [(c, ("gmv", c), "mm") for c in chs]),
+        ("거래액\n비중", [(c, ("share", ("gmv", c), ("gmv", "전체")), "pct1") for c in others]),
+        ("일평균\n트래픽", [(c, ("tr", c), "int") for c in chs]),
+        ("트래픽\n비중", [(c, ("share", ("tr", c), ("tr", "전체")), "pct1") for c in others]),
+        ("트래픽당\n거래액", [(c, ("gpt", c), "int") for c in chs]),
+    ]
 
 
 def _trend_value(mt, key):
     if mt is None:
         return None
-    if isinstance(key, tuple):
-        a, b = mt.get(key[0]), mt.get(key[1])
+    if key[0] == "share":
+        a, b = _trend_value(mt, key[1]), _trend_value(mt, key[2])
         return a / b if a is not None and b else None
-    return mt.get(key)
+    return mt[key[0]].get(key[1])
 
 
 def _trend_fmt(v, kind):
@@ -3288,6 +3332,8 @@ def _trend_fmt(v, kind):
         return f"{v:,.0f}"
     if kind == "pct":
         return f"{v * 100:.0f}%"
+    if kind == "pct1":
+        return f"{v * 100:.1f}%"
     return f"{v}"
 
 
@@ -3297,9 +3343,10 @@ def _trend_yoy(cur, prev):
     return cur / prev - 1
 
 
-def render_total_monthly_trend_html(result):
+def render_total_monthly_trend_html(result, all_channels=False):
     """템플릿(월별 실적 추이) 양식 그대로 HTML 표 3개(작년/올해/전년비)로 렌더링."""
     tbl, cur_m, cur_y = result["table"], result["cur_month"], result["cur_year"]
+    blocks = _trend_blocks(result, all_channels)
     th = "padding:3px 5px;border:1px solid #cbd5e1;text-align:center;font-size:0.76rem;"
     td = "padding:3px 5px;border:1px solid #cbd5e1;text-align:right;font-size:0.78rem;"
 
@@ -3317,9 +3364,9 @@ def render_total_monthly_trend_html(result):
 
     def _rows(y, yoy):
         rows = [_head(y)]
-        for sec, lines in _TOTAL_TREND_BLOCKS:
+        for sec, lines in blocks:
             if yoy:
-                lines = [ln for ln in lines if ln[2] != "pct"]
+                lines = [ln for ln in lines if not ln[2].startswith("pct")]
             for i, (lab, key, kind) in enumerate(lines):
                 tds = ""
                 for m in range(1, 13):
@@ -3339,7 +3386,7 @@ def render_total_monthly_trend_html(result):
                     tds += f"<td style='{cell_style}'>{txt}</td>"
                 first = (f"<td rowspan='{len(lines)}' style='{th}white-space:pre-line;background:#fefce8;font-weight:600;'>{sec}</td>"
                          if i == 0 else "")
-                rows.append(f"<tr>{first}<td style='{th}background:#fefce8;'>{lab}</td>{tds}</tr>")
+                rows.append(f"<tr>{first}<td style='{th}background:#fefce8;white-space:nowrap;'>{lab}</td>{tds}</tr>")
         return "".join(rows)
 
     def _table(title, body):
@@ -3352,12 +3399,13 @@ def render_total_monthly_trend_html(result):
     st.markdown(html, unsafe_allow_html=True)
 
 
-def build_total_monthly_trend_excel(result):
+def build_total_monthly_trend_excel(result, all_channels=False):
     """월별 실적 추이를 템플릿과 같은 배치(작년/올해/전년비 3블록)로 엑셀 저장."""
     import openpyxl
     from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 
     tbl, cur_m, cur_y = result["table"], result["cur_month"], result["cur_year"]
+    blocks = _trend_blocks(result, all_channels)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "월별 실적 추이"
@@ -3393,9 +3441,9 @@ def build_total_monthly_trend_excel(result):
         return row + 1
 
     def _body(y, row, yoy=False):
-        for sec, lines in _TOTAL_TREND_BLOCKS:
+        for sec, lines in blocks:
             if yoy:
-                lines = [ln for ln in lines if ln[2] != "pct"]
+                lines = [ln for ln in lines if not ln[2].startswith("pct")]
             top = row
             for lab, key, kind in lines:
                 ws.cell(row=row, column=2, value=lab)
@@ -3417,7 +3465,7 @@ def build_total_monthly_trend_excel(result):
                         v = _trend_value(tbl[y][m], key)
                         if v is not None:
                             c.value = v
-                            c.number_format = {"mm": "#,##0", "int": "#,##0", "pct": "0%"}[kind]
+                            c.number_format = {"mm": "#,##0", "int": "#,##0", "pct": "0%", "pct1": "0.0%"}[kind]
                         if lab == "EP":
                             c.fill = f_cur_ep if (m == cur_m and y == cur_y) else f_ep
                     c.font = Font(bold=bold, color=color)
@@ -3434,7 +3482,7 @@ def build_total_monthly_trend_excel(result):
     row = _body(cur_y, _header(cur_y, row + 1), yoy=True)
 
     ws.column_dimensions["A"].width = 10
-    ws.column_dimensions["B"].width = 9
+    ws.column_dimensions["B"].width = 14 if all_channels else 9
     for col in range(3, 15):
         ws.column_dimensions[openpyxl.utils.get_column_letter(col)].width = 11
     ws.cell(row=row + 1, column=1,

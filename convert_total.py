@@ -2,9 +2,11 @@
 대시보드가 쓰는 ep_total_daily.csv(날짜/채널/트래픽/거래액)로 변환.
 
 원본: 행 = (지표, 회원구분, 신규구분1, 신규구분2, 채널, 채널상세), 열 = 날짜(YYYY-MM-DD 문자열).
-지표 라벨은 블록 첫 행에만 채워져 있어 ffill 필요. 우리가 쓰는 건 두 줄뿐:
+지표 라벨은 블록 첫 행에만 채워져 있어 ffill 필요. 쓰는 행:
   - 채널=전체/채널상세=전체  -> 채널 "전체" (전사 합계)
   - 채널=EP/채널상세=전체    -> 채널 "EP"
+  - 채널=직접/광고/제휴/PUSH/미디어커머스/브랜드광고 (채널상세 = 채널과 같은 행) -> 같은 이름의 채널
+    (원본에 없는 채널은 건너뛰고, 있으면 월별 실적 추이의 '전 채널' 보기에 나온다)
 지표는 트래픽/거래액만 (트래픽당 거래액은 거래액/트래픽으로 대시보드에서 재계산).
 
 원본에 없는 날짜는 기존 파일 행을 보존한다 (convert_coupon.py와 같은 결손 방어).
@@ -31,14 +33,21 @@ if not date_cols:
         f"읽힌 열 이름: {list(raw.columns[6:9])} ...",
     ])
 
+# 전체/EP는 필수(없으면 중단), 나머지 채널은 원본에 있을 때만 담는다
+REQUIRED = ["전체", "EP"]
+OPTIONAL = ["직접", "광고", "제휴", "PUSH", "미디어커머스", "브랜드광고"]
+
 parts = []
 for metric in ["트래픽", "거래액"]:
     m = raw[raw["지표"] == metric]
-    for channel, mask in [
+    chan_masks = [
         ("전체", (m["채널"] == "전체") & (m["채널상세"] == "전체")),
         ("EP", (m["채널"] == "EP") & (m["채널상세"] == "전체")),
-    ]:
+    ] + [(ch, (m["채널"] == ch) & (m["채널상세"] == ch)) for ch in OPTIONAL]
+    for channel, mask in chan_masks:
         row = m[mask]
+        if len(row) == 0 and channel not in REQUIRED:
+            continue
         if len(row) != 1:
             raise SystemExit(f"{metric}/{channel} 행을 정확히 1개 찾지 못했어요 ({len(row)}개) — 원본 구조가 바뀌었는지 확인하세요.")
         s = row.iloc[0][date_cols]
@@ -51,8 +60,9 @@ for metric in ["트래픽", "거래액"]:
 long = pd.concat(parts, ignore_index=True)
 out_df = long.pivot_table(index=["날짜", "채널"], columns="지표", values="값", aggfunc="first").reset_index()
 out_df.columns.name = None
-out_df["트래픽"] = out_df["트래픽"].round().astype("int64")
-out_df["거래액"] = out_df["거래액"].round().astype("int64")
+# 빈칸 = 그 채널 거래 없음(0)
+out_df["트래픽"] = out_df["트래픽"].fillna(0).round().astype("int64")
+out_df["거래액"] = out_df["거래액"].fillna(0).round().astype("int64")
 
 guard("전체실적(1_전체실적.xlsx)", OUT, out_df, dims=["채널"], check_last_date=False)
 
