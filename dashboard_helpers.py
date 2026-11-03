@@ -2946,47 +2946,82 @@ def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
         out = []
         for cat, v in _agg.items():
             diff = v["B"] - v["A"]
-            pct = (v["B"] / v["A"] - 1) * 100 if v["A"] else None
-            out.append({"카테고리": cat, "diff": diff, "pct": pct})
+            # 기준(작년) 값이 0 이하면 증감률이 의미가 없어서 비운다
+            pct = (v["B"] / v["A"] - 1) * 100 if v["A"] > 0 else None
+            out.append({"카테고리": cat, "diff": diff, "pct": pct, "A": v["A"], "B": v["B"]})
         out.sort(key=lambda x: x["diff"], reverse=True)
         return out
 
-    def _mover_card(title, items, positive):
+    def _mover_rows(items, positive, scale):
+        """카테고리별 한 줄: 이름 | 변동 크기 막대 | 증감액(백만원) + 증감률. 막대 길이는 같은 카드의 최대 변동폭 기준."""
         _color = "#16a34a" if positive else "#dc2626"
-        _rows_html = ""
+        _bg = "#dcfce7" if positive else "#fee2e2"
+        if not items:
+            return "<div style='color:#9ca3af;font-size:0.82rem;padding:8px 0;'>해당 없음</div>"
+        _html = ""
         for it in items:
-            _sign = "+" if it["diff"] >= 0 else "△"
-            _pct_txt = f"({it['pct']:+.1f}%)" if it["pct"] is not None else ""
-            _rows_html += (
-                "<div style='display:flex;justify-content:space-between;padding:5px 0;border-bottom:1px solid #f1f2f4;'>"
-                f"<span>{it['카테고리']}</span>"
-                f"<span style='color:{_color};font-weight:600;'>{_sign}{abs(it['diff']):,.0f} {_pct_txt}</span></div>"
+            _w = max(abs(it["diff"]) / scale * 100, 3) if scale else 3
+            _val = f"{'+' if positive else '△'}{abs(it['diff']) / 1e6:,.1f}"
+            if it["pct"] is None:
+                _pct = ""
+            else:
+                _pct = (
+                    f"<span style='font-size:0.72rem;color:{_color};background:{_bg};border-radius:10px;"
+                    f"padding:1px 7px;margin-left:6px;'>{'+' if it['pct'] >= 0 else '△'}{abs(it['pct']):.1f}%</span>"
+                )
+            _note = (
+                "<span style='font-size:0.68rem;color:#9ca3af;margin-left:4px;'>순취소</span>"
+                if it["B"] < 0 else ""
             )
-        if not _rows_html:
-            _rows_html = "<div style='color:#9ca3af;font-size:0.85rem;'>데이터 없음</div>"
+            _html += (
+                "<div style='display:grid;grid-template-columns:76px minmax(40px,1fr) auto;align-items:center;gap:10px;"
+                "padding:5px 0;border-bottom:1px solid #f1f2f4;'>"
+                f"<div style='font-size:0.88rem;white-space:nowrap;'>{it['카테고리']}{_note}</div>"
+                f"<div style='background:#f3f4f6;border-radius:6px;height:10px;'>"
+                f"<div style='width:{_w:.1f}%;height:10px;background:{_color};border-radius:6px;'></div></div>"
+                f"<div style='text-align:right;white-space:nowrap;font-weight:700;color:{_color};font-size:0.9rem;'>{_val}{_pct}</div>"
+                "</div>"
+            )
+        return _html
+
+    def _group_card(name, sub, movers, wide):
+        # 증가/감소는 실제로 늘고/줄어든 카테고리만 Top 3로 (반대 방향이 섞여 보이지 않게)
+        _ups = [m for m in movers if m["diff"] > 0][:3]
+        _downs = sorted([m for m in movers if m["diff"] < 0], key=lambda x: x["diff"])[:3]
+        _scale = max([abs(m["diff"]) for m in _ups + _downs] or [0])
+
+        def _sec(title, color, rows):
+            return (
+                f"<div><div style='font-weight:700;font-size:0.82rem;color:{color};margin-bottom:2px;'>{title}</div>{rows}</div>"
+            )
+
+        _grid = (
+            "display:grid;grid-template-columns:repeat(auto-fit,minmax(300px,1fr));gap:22px;" if wide
+            else "display:grid;grid-template-columns:1fr;gap:12px;"
+        )
+        _sub = f"<span style='color:#9ca3af;font-weight:400;font-size:0.78rem;'> · {sub}</span>" if sub else ""
         return (
-            "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:12px 16px;'>"
-            f"<div style='font-weight:600;margin-bottom:4px;'>{title}</div>{_rows_html}</div>"
+            "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:12px;padding:14px 18px;height:100%;box-sizing:border-box;'>"
+            f"<div style='font-weight:700;color:#111827;margin-bottom:8px;'>{name}{_sub}</div>"
+            f"<div style='{_grid}'>"
+            + _sec("▲ 증가 Top 3", "#16a34a", _mover_rows(_ups, True, _scale))
+            + _sec("▼ 감소 Top 3", "#dc2626", _mover_rows(_downs, False, _scale))
+            + "</div></div>"
         )
 
-    def _render_movers(movers):
-        _mc1, _mc2 = st.columns(2)
-        with _mc1:
-            st.markdown(_mover_card("🔺 가장 많이 증가", [m for m in movers[:3] if m["diff"] > 0] or movers[:3], True), unsafe_allow_html=True)
-        with _mc2:
-            _down = sorted(movers, key=lambda x: x["diff"])[:3]
-            st.markdown(_mover_card("🔻 가장 많이 감소", [m for m in _down if m["diff"] < 0] or _down, False), unsafe_allow_html=True)
+    st.caption("증감액 단위: 백만원(일평균, 올해 − 작년) · 막대는 같은 카드 안에서의 변동폭 비교 · '순취소'는 이번 기간 거래액이 마이너스인 카테고리")
+    st.markdown(_group_card("전체", "전 BPU 합산", _build_movers(None), wide=True), unsafe_allow_html=True)
 
-    _render_movers(_build_movers(None))
-
-    # 정상(e-영업1) / 이월(e-영업2) / 입점(e-영업3+4) 별로도 나눠서 본다
-    for _g_name, _g_bpus in [("정상", ["e-영업1"]), ("이월", ["e-영업2"]), ("입점", ["e-영업3", "e-영업4"])]:
-        st.markdown(
-            f"<div style='margin:14px 0 6px;font-weight:600;color:#374151;'>{_g_name}"
-            f"<span style='color:#9ca3af;font-weight:400;font-size:0.8rem;'> · {' + '.join(_g_bpus)}</span></div>",
-            unsafe_allow_html=True,
-        )
-        _render_movers(_build_movers(_g_bpus))
+    # 정상(e-영업1) / 이월(e-영업2) / 입점(e-영업3+4) 별로도 나눠서 본다 — 3개를 나란히
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    _cards = "".join(
+        _group_card(_g_name, " + ".join(_g_bpus), _build_movers(_g_bpus), wide=False)
+        for _g_name, _g_bpus in [("정상", ["e-영업1"]), ("이월", ["e-영업2"]), ("입점", ["e-영업3", "e-영업4"])]
+    )
+    st.markdown(
+        f"<div style='display:grid;grid-template-columns:repeat(auto-fit,minmax(320px,1fr));gap:12px;align-items:stretch;'>{_cards}</div>",
+        unsafe_allow_html=True,
+    )
 
     st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
 
