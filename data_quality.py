@@ -18,6 +18,11 @@ SPIKE_RATIO_HIGH = 3.0        # 채널 트래픽이 직전 중앙값의 3배 이
 SPIKE_RATIO_LOW = 0.33        # 1/3 이하여도 이상
 STALE_ERROR_DAYS = 3          # 기준일보다 이만큼 이상 뒤처지면 error (1~2일은 warn)
 
+# 실적이 원래 없는 날(빠진 게 아니라 0이 맞는 날) — 결측일 경고에서 제외. {데이터 이름: [날짜, ...]}
+KNOWN_EMPTY_DAYS = {
+    "명품(순금+실버)": ["2026-10-25"],
+}
+
 _WD = ["월", "화", "수", "목", "금", "토", "일"]
 
 
@@ -64,6 +69,8 @@ def check_gaps(datasets, lookback=GAP_LOOKBACK_DAYS):
         # 데이터가 시작되기 전 날짜는 결측이 아니다
         full = full[full >= ds.min()]
         miss = full.difference(ds)
+        known = pd.DatetimeIndex(pd.to_datetime(KNOWN_EMPTY_DAYS.get(name, [])))
+        miss = miss.difference(known)
         if len(miss) == 0:
             out.append(_row("빠진 날짜", "ok", f"{name}: 최근 {lookback}일 빠진 날 없음"))
         else:
