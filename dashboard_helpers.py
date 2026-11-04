@@ -3120,11 +3120,17 @@ def render_event_comparison_tables(result, label_a="작년", label_b="올해"):
         return f"{v:.1f}%" if is_pct else f"{v:,.0f}"
 
     def _fmt_delta(v):
-        if v is None or pd.isna(v):
-            return "-"
+        return _ev_delta_html(v) if v is not None and not pd.isna(v) else ""
+
+    _th, _td = _EVT_TH, _EVT_TD
+
+    def _tbl(first_col, body, scroll_style=""):
         return (
-            f"<span style='color:#16a34a;'>{v:.1f}%</span>" if v >= 0
-            else f"<span style='color:#dc2626;'>△{abs(v):.1f}%</span>"
+            f"<div style='overflow-x:auto;{scroll_style}'>"
+            "<table style='border-collapse:collapse;width:100%;'>"
+            f"<thead><tr><th style='{_th}text-align:left;'>{first_col}</th><th style='{_th}'>{label_a}</th>"
+            f"<th style='{_th}'>{label_b}</th><th style='{_th}{_EVT_YOY_TH}'>전년비</th></tr></thead>"
+            f"<tbody>{body}</tbody></table></div>"
         )
 
     st.markdown("**BPU별 상세실적**  ·  <span style='color:#6b7280;font-size:0.85rem'>일평균 기준</span>", unsafe_allow_html=True)
@@ -3133,19 +3139,15 @@ def render_event_comparison_tables(result, label_a="작년", label_b="올해"):
     for r in result["bpu_rows"]:
         if r["지표"] != _cur_metric:
             _cur_metric = r["지표"]
-            _sections += f"<tr><td colspan='4' style='background:#eef2ff;font-weight:700;'>{_cur_metric}</td></tr>"
+            _sections += f"<tr><td colspan='4' style='{_th}{_EVT_GRP}text-align:left;'>{_cur_metric}</td></tr>"
+        _tot = _EVT_TOTAL if r["구분"] == "전체" else ""
         _sections += (
-            f"<tr><td class='m'>{r['구분']}</td>"
-            f"<td style='text-align:right;'>{_fmt_num(r['A'], r['is_pct'])}</td>"
-            f"<td style='text-align:right;'>{_fmt_num(r['B'], r['is_pct'])}</td>"
-            f"<td style='text-align:right;'>{_fmt_delta(r['전년비'])}</td></tr>"
+            f"<tr><td style='{_td}{_tot}text-align:left;'>{r['구분']}</td>"
+            f"<td style='{_td}{_tot}'>{_fmt_num(r['A'], r['is_pct'])}</td>"
+            f"<td style='{_td}{_tot}'>{_fmt_num(r['B'], r['is_pct'])}</td>"
+            f"<td style='{_td}{_tot}{_EVT_YOY_TD}'>{_fmt_delta(r['전년비'])}</td></tr>"
         )
-    st.markdown(
-        "<div style='overflow-x:auto;'><table class='summary-table'>"
-        f"<thead><tr><th>구분</th><th>{label_a}</th><th>{label_b}</th><th>증감</th></tr></thead>"
-        f"<tbody>{_sections}</tbody></table></div>",
-        unsafe_allow_html=True,
-    )
+    st.markdown(_tbl("구분", _sections), unsafe_allow_html=True)
 
     st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
@@ -3156,20 +3158,15 @@ def render_event_comparison_tables(result, label_a="작년", label_b="올해"):
         for r in result["cat_rows"][metric]:
             if r["BPU"] != _cur_bpu:
                 _cur_bpu = r["BPU"]
-                _body += f"<tr><td colspan='4' style='background:#eef2ff;font-weight:700;'>{_cur_bpu}</td></tr>"
-            _row_style = "font-weight:600;" if r["is_total"] else ""
+                _body += f"<tr><td colspan='4' style='{_th}{_EVT_GRP}text-align:left;'>{_cur_bpu}</td></tr>"
+            _tot = _EVT_TOTAL if r["is_total"] else ""
             _body += (
-                f"<tr style='{_row_style}'><td class='m'>{r['카테고리']}</td>"
-                f"<td style='text-align:right;'>{_fmt_num(r['A'])}</td>"
-                f"<td style='text-align:right;'>{_fmt_num(r['B'])}</td>"
-                f"<td style='text-align:right;'>{_fmt_delta(r['전년비'])}</td></tr>"
+                f"<tr><td style='{_td}{_tot}text-align:left;'>{r['카테고리']}</td>"
+                f"<td style='{_td}{_tot}'>{_fmt_num(r['A'])}</td>"
+                f"<td style='{_td}{_tot}'>{_fmt_num(r['B'])}</td>"
+                f"<td style='{_td}{_tot}{_EVT_YOY_TD}'>{_fmt_delta(r['전년비'])}</td></tr>"
             )
-        st.markdown(
-            "<div style='overflow-x:auto;max-height:420px;overflow-y:auto;'><table class='summary-table'>"
-            f"<thead><tr><th>카테고리</th><th>{label_a}</th><th>{label_b}</th><th>증감</th></tr></thead>"
-            f"<tbody>{_body}</tbody></table></div>",
-            unsafe_allow_html=True,
-        )
+        st.markdown(_tbl("카테고리", _body, "max-height:420px;overflow-y:auto;"), unsafe_allow_html=True)
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
 
     st.markdown("**쿠폰 비용률**", unsafe_allow_html=True)
@@ -3177,15 +3174,15 @@ def render_event_comparison_tables(result, label_a="작년", label_b="올해"):
     _rate_a = f"{_ca['비용률']:.2f}%" if _ca["비용률"] is not None else "-"
     _rate_b = f"{_cb['비용률']:.2f}%" if _cb["비용률"] is not None else "-"
     st.markdown(
-        "<div style='overflow-x:auto;'><table class='summary-table'>"
-        f"<thead><tr><th>구분</th><th>{label_a}</th><th>{label_b}</th></tr></thead>"
+        "<div style='overflow-x:auto;'><table style='border-collapse:collapse;width:100%;'>"
+        f"<thead><tr><th style='{_th}text-align:left;'>구분</th><th style='{_th}'>{label_a}</th><th style='{_th}'>{label_b}</th></tr></thead>"
         "<tbody>"
-        f"<tr><td class='m'>쿠폰할인(일평균)</td><td style='text-align:right;'>{_fmt_num(_ca['쿠폰할인'])}</td>"
-        f"<td style='text-align:right;'>{_fmt_num(_cb['쿠폰할인'])}</td></tr>"
-        f"<tr><td class='m'>거래액(일평균, Total)</td><td style='text-align:right;'>{_fmt_num(_ca['거래액'])}</td>"
-        f"<td style='text-align:right;'>{_fmt_num(_cb['거래액'])}</td></tr>"
-        f"<tr><td class='m'>비용률</td><td style='text-align:right;font-weight:700;'>{_rate_a}</td>"
-        f"<td style='text-align:right;font-weight:700;'>{_rate_b}</td></tr>"
+        f"<tr><td style='{_td}text-align:left;'>쿠폰할인(일평균)</td><td style='{_td}'>{_fmt_num(_ca['쿠폰할인'])}</td>"
+        f"<td style='{_td}'>{_fmt_num(_cb['쿠폰할인'])}</td></tr>"
+        f"<tr><td style='{_td}text-align:left;'>거래액(일평균, Total)</td><td style='{_td}'>{_fmt_num(_ca['거래액'])}</td>"
+        f"<td style='{_td}'>{_fmt_num(_cb['거래액'])}</td></tr>"
+        f"<tr><td style='{_td}{_EVT_TOTAL}text-align:left;'>비용률</td><td style='{_td}{_EVT_TOTAL}'>{_rate_a}</td>"
+        f"<td style='{_td}{_EVT_TOTAL}'>{_rate_b}</td></tr>"
         "</tbody></table></div>",
         unsafe_allow_html=True,
     )
@@ -3989,6 +3986,17 @@ def _ev_fmt(v, kind):
     return f"{v:,.0f}"
 
 
+# 행사 기간 비교 하단 표(BPU 상세 / 카테고리별 / 상세 표 보기)가 모두 같은 모양이 되도록 공통 스타일을 한 곳에 둔다.
+# 머리글 흰 배경, 구분 칸 연회색, 전체/소계 행 연파랑, 전년비 열은 노란 머리글 + 파란 테두리로 강조.
+_EVT_TH = "padding:4px 6px;border:1px solid #9ca3af;text-align:center;font-size:0.78rem;font-weight:700;background:#fff;white-space:nowrap;"
+_EVT_TD = "padding:4px 6px;border:1px solid #cbd5e1;text-align:right;font-size:0.8rem;white-space:nowrap;"
+_EVT_GRP = "background:#f3f4f6;"
+_EVT_TOTAL = "background:#dbeafe;font-weight:700;"
+_EVT_YOY_TH = "background:#fde047;border-left:3px solid #1d4ed8;border-right:3px solid #1d4ed8;border-top:3px solid #1d4ed8;"
+_EVT_YOY_TD = "border-left:3px solid #1d4ed8;border-right:3px solid #1d4ed8;"
+_EVT_YOY_LAST = "border-bottom:3px solid #1d4ed8;"
+
+
 def _ev_delta_html(v):
     if v is None or pd.isna(v):
         return ""
@@ -3999,27 +4007,25 @@ def _ev_delta_html(v):
 
 def render_event_detail_html(result, title, year_a, year_b):
     """보고서 양식(구분/BPU/작년/올해/전년비, 전년비 열 강조) 그대로 HTML 렌더링."""
-    th = "padding:5px 12px;border:1px solid #9ca3af;text-align:center;font-size:0.85rem;font-weight:700;"
-    td = "padding:5px 12px;border:1px solid #cbd5e1;text-align:right;font-size:0.86rem;"
-    box = "border-left:3px solid #1d4ed8;border-right:3px solid #1d4ed8;"
-    head = (f"<tr><th style='{th}background:#fff;'>구분</th><th style='{th}background:#fff;'>BPU</th>"
-            f"<th style='{th}background:#fff;'>{year_a}년</th><th style='{th}background:#fff;'>{year_b}년</th>"
-            f"<th style='{th}background:#fde047;{box}border-top:3px solid #1d4ed8;'>전년비</th></tr>")
+    th, td, box = _EVT_TH, _EVT_TD, _EVT_YOY_TD
+    head = (f"<tr><th style='{th}'>구분</th><th style='{th}'>BPU</th>"
+            f"<th style='{th}'>{year_a % 100}년</th><th style='{th}'>{year_b % 100}년</th>"
+            f"<th style='{th}{_EVT_YOY_TH}'>전년비</th></tr>")
     body, by_metric = "", {}
     for r in result["rows"]:
         by_metric.setdefault(r["지표"], []).append(r)
     total_metrics = len(by_metric)
     for mi, (metric, rs) in enumerate(by_metric.items()):
         for i, r in enumerate(rs):
-            first = (f"<td rowspan='{len(rs)}' style='{th}background:#f3f4f6;white-space:pre-line;'>{metric}</td>"
+            first = (f"<td rowspan='{len(rs)}' style='{th}{_EVT_GRP}white-space:pre-line;'>{metric}</td>"
                      if i == 0 else "")
             is_total = r["BPU"] == "전체"
-            row_bg = "background:#dbeafe;font-weight:700;" if is_total else ""
+            row_bg = _EVT_TOTAL if is_total else ""
             last = (mi == total_metrics - 1 and i == len(rs) - 1)
             body += (f"<tr>{first}<td style='{th}{row_bg}'>{r['BPU']}</td>"
                      f"<td style='{td}{row_bg}'>{_ev_fmt(r['A'], r['kind'])}</td>"
                      f"<td style='{td}{row_bg}'>{_ev_fmt(r['B'], r['kind'])}</td>"
-                     f"<td style='{td}{row_bg}{box}{'border-bottom:3px solid #1d4ed8;' if last else ''}'>"
+                     f"<td style='{td}{row_bg}{box}{_EVT_YOY_LAST if last else ''}'>"
                      f"{_ev_delta_html(r['전년비'])}</td></tr>")
     pre = (
         "<tr><td colspan='2' style='border:none;'></td>"
@@ -4225,29 +4231,22 @@ def render_event_category_table_html(result, metric, title, year_a, year_b):
     """한 지표의 카테고리별 표(구분/카테고리/작년/올해/전년비/증감)를 HTML 문자열로 반환."""
     rows = result["metrics"][metric]
     kind = dict(_EVENT_CAT_METRICS)[metric]
-    th = "padding:3px 6px;border:1px solid #6b7280;text-align:center;font-size:0.76rem;font-weight:700;"
-    td = "padding:3px 6px;border:1px solid #9ca3af;text-align:right;font-size:0.78rem;"
+    th, td = _EVT_TH, _EVT_TD
     unit = " (백만원)" if kind == "mm" else ""
-    head = (f"<tr><th style='{th}background:#fff;'>구분</th><th style='{th}background:#fff;'>카테고리</th>"
-            f"<th style='{th}background:#fff;'>{year_a % 100}년</th><th style='{th}background:#fff;'>{year_b % 100}년</th>"
-            f"<th style='{th}background:#fff;'>전년비</th><th style='{th}background:#fff;color:#9ca3af;'>증감</th></tr>")
+    head = (f"<tr><th style='{th}'>구분</th><th style='{th}'>카테고리</th>"
+            f"<th style='{th}'>{year_a % 100}년</th><th style='{th}'>{year_b % 100}년</th>"
+            f"<th style='{th}{_EVT_YOY_TH}'>전년비</th><th style='{th}color:#9ca3af;'>증감</th></tr>")
     span = {}
     for r in rows:
         span[r["구분"]] = span.get(r["구분"], 0) + 1
     seen, body = set(), ""
-    for r in rows:
+    for i, r in enumerate(rows):
         first = ""
         if r["구분"] not in seen:
             seen.add(r["구분"])
-            first = f"<td rowspan='{span[r['구분']]}' style='{th}background:#e5e7eb;'>{r['구분']}</td>"
-        bg = "background:#e5e7eb;font-weight:700;" if r["is_total"] else ""
-        yo = r["전년비"]
-        if yo is None:
-            yo_html = ""
-        elif yo < 0:
-            yo_html = f"<span style='color:#dc2626;'>△{abs(yo):.0f}%</span>"
-        else:
-            yo_html = f"{yo:.0f}%"
+            first = f"<td rowspan='{span[r['구분']]}' style='{th}{_EVT_GRP}'>{r['구분']}</td>"
+        bg = _EVT_TOTAL if r["is_total"] else ""
+        yo_html = _ev_delta_html(r["전년비"])
         df_ = r["diff"]
         if df_ is None:
             df_html = ""
@@ -4256,9 +4255,10 @@ def render_event_category_table_html(result, metric, title, year_a, year_b):
             shown = df_ / 1e6 if kind == "mm" else df_
             txt = f"{shown:+,.1f}" if kind in ("mm", "pct") else f"{shown:+,.0f}"
             df_html = f"<span style='color:{col};font-size:0.74rem;font-weight:600;'>{txt}</span>"
+        _last = _EVT_YOY_LAST if i == len(rows) - 1 else ""
         body += (f"<tr>{first}<td style='{th}{bg}'>{r['카테고리']}</td>"
                  f"<td style='{td}{bg}'>{_evc_fmt(r['A'], kind)}</td><td style='{td}{bg}'>{_evc_fmt(r['B'], kind)}</td>"
-                 f"<td style='{td}{bg}'>{yo_html}</td><td style='{td}'>{df_html}</td></tr>")
+                 f"<td style='{td}{bg}{_EVT_YOY_TD}{_last}'>{yo_html}</td><td style='{td}'>{df_html}</td></tr>")
     # '전년 행사기간'은 전년(25년) 열 바로 위에 두고, 단위는 오른쪽 끝 위에 둔다
     pre = ("<tr>"
            "<td colspan='2' style='border:none;'></td>"
