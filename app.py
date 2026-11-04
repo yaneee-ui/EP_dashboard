@@ -17,6 +17,7 @@ from ai_insights import (
     render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
 )
 from sidebar import render_sidebar, render_sidebar_data_status
+from home_page import render_home, EP_YEARLY_GMV_TARGET
 from filters import filter_by_combo
 from kpi import render_kpi_cards
 from charts import main_trend_data
@@ -249,6 +250,7 @@ with _sticky:
     ]
 
     _page_titles = {
+        "0": "🏠 홈",
         "1": "📊 실적 요약", "2": "🗂️ 카테고리 실적 요약", "3": "🧭 종합 요약",
         "4": "📋 누적 데이터", "5": "🏷️ 누적 데이터 (카테고리)",
         "6": "📅 전체 실적 (주차별)", "7": "👤 회원 실적 (주차별)", "8": "✨ 신규 실적 (주차별)",
@@ -568,7 +570,7 @@ with _sticky:
     # 페이지 6: 주간보고용은 자체 필터(기준 시점)를 페이지 본문에서 처리하므로,
     # 여기서는 간단한 제목만 표시
     # ========================================================
-    elif _page_num == "11":
+    elif _page_num in ("0", "11"):
         st.markdown(
             f"<span style='font-size:1.15rem;font-weight:700;'>{_page_titles[_page_num]}</span>",
             unsafe_allow_html=True,
@@ -1017,6 +1019,12 @@ components.html(
     height=0,
 )
 
+
+
+if side["page"].startswith("0."):
+    render_home(
+        df_ep, df_traffic, df_category, df_product, df_total_daily, df_coupon_daily, df_lux, df_chall, COL_DATE,
+    )
 
 
 if side["page"].startswith("1."):
@@ -4814,7 +4822,7 @@ if side["page"].startswith("3."):
 # Total/자사/정상/이월/입점 x 1~12월 표로 보여준다.
 # ============================================================
 # 연도별 EP 거래액 목표 (원) — 마감 예상 실적 페이지의 달성률 계산에 사용
-EP_YEARLY_GMV_TARGET = {2026: 46_750_000_000}
+# (연도별 EP 거래액 목표는 home_page.EP_YEARLY_GMV_TARGET 에서 관리 — 홈 화면과 공용)
 
 if side["page"].startswith("10."):
     st.markdown("### 📈 마감 예상 실적")

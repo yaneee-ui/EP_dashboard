@@ -400,6 +400,74 @@ def test_week_of_month_no_collision_at_month_boundary():
     )
 
 
+def test_data_quality_checks():
+    """홈 화면 데이터 품질 점검: 뒤처진 데이터 / 빠진 날 / 상품 커버리지 급락 / 채널 트래픽 급등을 잡는지."""
+    print("\n[데이터 품질 점검]")
+    import data_quality as dq
+
+    base = pd.Timestamp("2026-11-03")
+    full = pd.date_range("2026-09-01", base)
+
+    # 1) 최신성: 하루 뒤처진 데이터는 warn, 같은 날이면 ok
+    res = dq.check_freshness([("A", pd.DatetimeIndex(full)), ("B", pd.DatetimeIndex(full[:-1]))], base)
+    lv = {r["msg"].split(":")[0]: r["level"] for r in res}
+    check("최신성: 같은 날이면 ok", lv["A"] == "ok")
+    check("최신성: 1일 뒤처지면 warn", lv["B"] == "warn")
+    res = dq.check_freshness([("C", pd.DatetimeIndex(full[:-4]))], base)
+    check("최신성: 3일 이상이면 error", res[0]["level"] == "error")
+
+    # 2) 빠진 날짜
+    ds = pd.DatetimeIndex([d for d in full if d != pd.Timestamp("2026-10-25")])
+    res = dq.check_gaps([("X", ds)])
+    check("빠진 날짜: 10/25 감지", res[0]["level"] == "warn" and "10/25" in res[0]["msg"])
+    res = dq.check_gaps([("Y", pd.DatetimeIndex(full))])
+    check("빠진 날짜: 없으면 ok", res[0]["level"] == "ok")
+
+    # 3) 상품 커버리지: 평소 97% -> 마지막날 80%
+    cat = pd.DataFrame({"날짜": full, "카테고리": "전체", "브랜드": "전체", "회원구분": "전체", "거래액": 100.0})
+    prod = pd.DataFrame({"날짜": full, "거래액": [97.0] * (len(full) - 1) + [80.0]})
+    res = dq.check_product_coverage(prod, cat)
+    check("상품 커버리지: 급락 감지", res and res[0]["level"] == "warn" and "11/3" in res[0]["msg"])
+    prod_ok = pd.DataFrame({"날짜": full, "거래액": 97.0})
+    res = dq.check_product_coverage(prod_ok, cat)
+    check("상품 커버리지: 평소면 ok", res and res[0]["level"] == "ok")
+
+    # 4) 채널 트래픽 급등
+    rows = []
+    for d in full:
+        v = 1000.0 if d < base - pd.Timedelta(days=1) else 40000.0
+        rows.append({"날짜": d, "채널": "제휴", "트래픽": v, "거래액": 1.0})
+    res = dq.check_channel_traffic(pd.DataFrame(rows))
+    check("채널 트래픽: 40배 급등 감지", res and res[0]["level"] == "warn" and "제휴" in res[0]["msg"])
+    rows = [{"날짜": d, "채널": "제휴", "트래픽": 1000.0 + (i % 5) * 50, "거래액": 1.0} for i, d in enumerate(full)]
+    res = dq.check_channel_traffic(pd.DataFrame(rows))
+    check("채널 트래픽: 평소면 ok", res and res[0]["level"] == "ok")
+
+    # 5) 합계 일치
+    tr = pd.DataFrame({"날짜": full, "BPU": "Total", "회원구분": "전체", "거래액": 100.0})
+    c_ok = pd.DataFrame({"날짜": full, "카테고리": "전체", "브랜드": "전체", "회원구분": "전체", "BPU": "e-영업1", "거래액": 100.0})
+    res = dq.check_sum_consistency(tr, c_ok, None)
+    check("합계 일치: 같으면 ok", res and res[0]["level"] == "ok")
+    c_bad = c_ok.copy(); c_bad.loc[c_bad.index[-1], "거래액"] = 80.0
+    res = dq.check_sum_consistency(tr, c_bad, None)
+    check("합계 일치: 20% 차이 감지", res and res[0]["level"] == "warn")
+
+
+def test_home_watch_items():
+    """홈 '주목할 변화': 급락/급등만 뽑고, 정상 범위면 비어 있어야 한다."""
+    print("\n[홈 주목할 변화]")
+    import home_page as hp
+
+    def rows(prev, yoy):
+        return [{"metric_label": "거래액(순결제)", "bpu": "e-영업3", "is_pct": False,
+                 "stats": {"current": 1e8, "prev_delta": prev, "avg_delta": 0, "yoy_delta": yoy}}]
+
+    check("주목: 정상 범위는 없음", hp.compute_watch_items(rows(5.0, 10.0)) == [])
+    check("주목: 전일 -25% 감지", len(hp.compute_watch_items(rows(-25.0, 0.0))) == 1)
+    check("주목: 전년 -15% 감지", len(hp.compute_watch_items(rows(0.0, -15.0))) == 1)
+    check("주목: 전년 +60% 상승 감지", len(hp.compute_watch_items(rows(0.0, 60.0))) == 1)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("EP 대시보드 회귀 테스트")
@@ -415,6 +483,8 @@ if __name__ == "__main__":
     test_pct_delta_safe_handles_negative_base()
     test_render_line_chart_handles_missing_yoy_data()
     test_week_of_month_no_collision_at_month_boundary()
+    test_data_quality_checks()
+    test_home_watch_items()
 
     print()
     print("=" * 60)
