@@ -765,10 +765,23 @@ def compute_bpu_comparison_rows(df_traffic, unit="일별", selected_period_date=
     return rows, cfg, BPU_COLS
 
 
+def _bpu_cells(stats, is_pct):
+    """(값 문자열, 전일비 td, 전주평균비 td, 전년비 td) — 상세표/한눈에표가 공유."""
+    if stats is None:
+        return "-", "<td>-</td>", "<td>-</td>", "<td>-</td>"
+    val_str = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
+    prev = f"<td class='d'>{format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), is_pct)}</td>"
+    avg = f"<td class='d'>{format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), is_pct)}</td>"
+    yoy = f"<td class='d'>{format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), is_pct)}</td>"
+    return val_str, prev, avg, yoy
+
+
 def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=None):
-    """사업부별(Total/e-영업1~4/자사/입점) 실적 비교표.
-    상단의 '조회 단위'(일별/주별/월별/월마감)와 '기준 시점'을 그대로 따른다.
-    → 위 KPI 카드/요약표와 동일한 집계 방식이므로 Total 열은 KPI 카드 값과 일치한다."""
+    """사업부별(Total/e-영업1~4/자사/입점) 실적 비교.
+    상단의 '조회 단위'와 '기준 시점'을 그대로 따른다 → Total 열은 KPI 카드 값과 일치.
+    화면 구성 (예전엔 지표 11개를 표 11개로 쌓아서 약 5,200px이었음):
+      1) 한눈에 보기 — 지표 × 사업부 한 장 (값 + 전년비)
+      2) 지표별 상세 — 지표 하나를 골라 전일비/전주평균비/전년비까지 확인"""
     rows, cfg, BPU_COLS = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
 
     by_metric = {}
@@ -776,37 +789,82 @@ def render_bpu_comparison_table(df_traffic, unit="일별", selected_period_date=
         by_metric.setdefault(r["metric_label"], {"is_pct": r["is_pct"], "cells": {}})
         by_metric[r["metric_label"]]["cells"][r["bpu"]] = r["stats"]
 
-    for metric_label, info in by_metric.items():
-        is_pct = info["is_pct"]
-        header_html = "<th>구분</th>" + "".join(f"<th>{b}</th>" for b in BPU_COLS)
-        row_val, row_prev, row_avg, row_yoy = [], [], [], []
-        for bpu_key in BPU_COLS:
-            stats = info["cells"].get(bpu_key)
-            if stats is None:
-                row_val.append("<td>-</td>")
-                row_prev.append("<td>-</td>")
-                row_avg.append("<td>-</td>")
-                row_yoy.append("<td>-</td>")
-                continue
-            val_str = f"{stats['current']:.1f}%" if is_pct else f"{stats['current']:,.0f}"
-            row_val.append(f"<td class='v'>{val_str}</td>")
-            row_prev.append(f"<td class='d'>{format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), is_pct)}</td>")
-            row_avg.append(f"<td class='d'>{format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), is_pct)}</td>")
-            row_yoy.append(f"<td class='d'>{format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), is_pct)}</td>")
+    groups = [
+        ("전체", ["EP UV", "거래액(순결제)", "구매객수", "구매전환율(%)", "객단가"]),
+        ("회원", ["회원UV", "회원거래액"]),
+        ("신규", ["신규UV", "신규거래액"]),
+        ("기존", ["기존UV", "기존거래액"]),
+    ]
+    _disp = {"Total": "전체"}
 
-        cfg = UNIT_CONFIG[unit]
-        table_html = (
-            "<table class='summary-table' style='margin-bottom:14px;'>"
-            f"<thead><tr><th colspan='{len(BPU_COLS)+1}' style='background:#eef2ff;color:#374151;font-weight:700;'>{metric_label}</th></tr>"
-            f"<tr>{header_html}</tr></thead>"
-            "<tbody>"
-            f"<tr><td class='m'>값</td>{''.join(row_val)}</tr>"
-            f"<tr><td class='m'>{cfg['prev_label']}</td>{''.join(row_prev)}</tr>"
-            f"<tr><td class='m'>{cfg['avg_label']}</td>{''.join(row_avg)}</tr>"
-            f"<tr><td class='m'>{cfg['yoy_label']}</td>{''.join(row_yoy)}</tr>"
-            "</tbody></table>"
+    # --- 1) 한눈에 보기 ---
+    st.markdown("**한눈에 보기** <span style='color:#6b7280;font-size:0.8rem;'>· 값 + "
+                f"{cfg['yoy_label']}</span>", unsafe_allow_html=True)
+    head = "<th>지표</th>" + "".join(f"<th>{_disp.get(b, b)}</th>" for b in BPU_COLS)
+    body = []
+    for gname, metrics in groups:
+        body.append(
+            f"<tr><td colspan='{len(BPU_COLS)+1}' style='background:#eef2ff;color:#374151;font-weight:700;"
+            f"font-size:0.78rem;padding:4px 10px;'>{gname}</td></tr>"
         )
-        st.markdown(table_html, unsafe_allow_html=True)
+        for m in metrics:
+            info = by_metric.get(m)
+            if not info:
+                continue
+            tds = [f"<td class='m' style='white-space:nowrap;'>{m}</td>"]
+            for b in BPU_COLS:
+                stt = info["cells"].get(b)
+                if stt is None:
+                    tds.append("<td class='v'>-</td>")
+                    continue
+                v, _, _, _ = _bpu_cells(stt, info["is_pct"])
+                yd = stt.get("yoy_delta")
+                dl = format_delta_html(yd) if yd is not None else ""
+                tds.append(
+                    f"<td class='v' style='white-space:nowrap;'>{v}<br/>"
+                    f"<span style='font-size:0.78em;font-weight:400;'>{dl}</span></td>"
+                )
+            body.append(f"<tr>{''.join(tds)}</tr>")
+    st.markdown(
+        f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>{head}</tr></thead>"
+        f"<tbody>{''.join(body)}</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+    # --- 2) 지표별 상세 ---
+    st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+    st.markdown(
+        "**지표별 상세** <span style='color:#6b7280;font-size:0.8rem;'>· "
+        f"{cfg['prev_label']} · {cfg['avg_label']} · {cfg['yoy_label']}</span>",
+        unsafe_allow_html=True,
+    )
+    metric_order = [m for _, ms in groups for m in ms if m in by_metric]
+    sel = st.radio(
+        "지표 선택", metric_order,
+        index=metric_order.index("거래액(순결제)") if "거래액(순결제)" in metric_order else 0,
+        horizontal=True, key="bpu_cmp_metric", label_visibility="collapsed",
+    )
+    info = by_metric[sel]
+    is_pct = info["is_pct"]
+    header_html = "<th>구분</th>" + "".join(f"<th>{_disp.get(b, b)}</th>" for b in BPU_COLS)
+    row_val, row_prev, row_avg, row_yoy = [], [], [], []
+    for b in BPU_COLS:
+        v, prev, avg, yoy = _bpu_cells(info["cells"].get(b), is_pct)
+        row_val.append(f"<td class='v'>{v}</td>" if v != "-" else "<td>-</td>")
+        row_prev.append(prev)
+        row_avg.append(avg)
+        row_yoy.append(yoy)
+    nw = "style='white-space:nowrap;'"
+    st.markdown(
+        "<div style='overflow-x:auto;'><table class='summary-table'>"
+        f"<thead><tr>{header_html}</tr></thead><tbody>"
+        f"<tr><td class='m' {nw}>값</td>{''.join(row_val)}</tr>"
+        f"<tr><td class='m' {nw}>{cfg['prev_label']}</td>{''.join(row_prev)}</tr>"
+        f"<tr><td class='m' {nw}>{cfg['avg_label']}</td>{''.join(row_avg)}</tr>"
+        f"<tr><td class='m' {nw}>{cfg['yoy_label']}</td>{''.join(row_yoy)}</tr>"
+        "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
 
 def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, unit, selected_period_date, metric_col="거래액", df_traffic=None, keep_zero_current=False):
@@ -2648,7 +2706,7 @@ def render_revenue_ranking(sub_df, group_col, unit, selected_period_date, title,
                 "도넛 조각으로는 표시되지 않고, 오른쪽 목록에 실제 마이너스 값 그대로 표시돼요."
             )
 
-        with st.expander(f"📊 전체 항목 · 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
+        with st.expander(f"📊 {title} · 전체 항목 전년 대비 막대로 보기 ({_yoy_label_share})", expanded=False):
             st.markdown(
                 "<div style='display:flex;gap:14px;margin-bottom:10px;font-size:0.76rem;color:#6b7280;'>"
                 f"<span><span style='display:inline-block;width:10px;height:10px;background:{bar_color_cur};border-radius:2px;margin-right:4px;'></span>올해</span>"
@@ -3094,7 +3152,7 @@ def render_event_comparison_summary(result, label_a="작년", label_b="올해"):
             st.markdown(
                 "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
                 f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_label} 비용률</div>"
-                f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_rate_str}</div>"
+                f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_rate_str}</div>"
                 f"<div style='font-size:0.76rem;color:#9ca3af;margin-top:4px;'>"
                 f"쿠폰할인 {_stat['쿠폰할인']:,.0f} · 거래액 {_stat['거래액']:,.0f} (일평균)</div>"
                 "</div>",

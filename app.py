@@ -1213,7 +1213,7 @@ if side["page"].startswith("1."):
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                        f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>{_ff_cur_note}"
+                        f"<div style='font-size:clamp(1.05rem,1.9vw,1.5rem);font-weight:700;color:#111827;white-space:nowrap;'>{val_str}</div>{_ff_cur_note}"
                         f"<div style='font-size:0.78rem;margin-top:6px;'>"
                         f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}{_ff_prev_note}<br/>"
                         f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), _is_pct)}{_ff_avg_note}<br/>"
@@ -1591,14 +1591,14 @@ if side["page"].startswith("1."):
                 st.markdown(
                     f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
                     f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_cs_latest.strftime('%Y년 %m월')} 쿠폰할인</div>"
-                    f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cs_coupon_val:,.0f}</div></div>",
+                    f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cs_coupon_val:,.0f}</div></div>",
                     unsafe_allow_html=True,
                 )
             with _cs_c2:
                 st.markdown(
                     f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
                     f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액(Total)</div>"
-                    f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cs_gmv_val:,.0f}</div></div>"
+                    f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cs_gmv_val:,.0f}</div></div>"
                     if _cs_gmv_val else "<div></div>",
                     unsafe_allow_html=True,
                 )
@@ -1606,7 +1606,7 @@ if side["page"].startswith("1."):
                 st.markdown(
                     f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
                     f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>비용률</div>"
-                    f"<div style='font-size:1.4rem;font-weight:700;color:#7c3aed;'>{_cs_rate:.2f}%</div></div>"
+                    f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#7c3aed;'>{_cs_rate:.2f}%</div></div>"
                     if _cs_rate is not None else "<div></div>",
                     unsafe_allow_html=True,
                 )
@@ -1713,7 +1713,7 @@ if side["page"].startswith("1."):
             st.markdown(
                 f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                 f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                f"<div style='font-size:1.5rem;font-weight:700;color:#111827;'>{val_str}</div>"
+                f"<div style='font-size:clamp(1.05rem,1.7vw,1.5rem);white-space:nowrap;font-weight:700;color:#111827;'>{val_str}</div>"
                 f"<div style='font-size:0.78rem;margin-top:6px;'>"
                 f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}<br/>"
                 f"{cfg['avg_label']} {format_delta_html(stats['avg_delta'])}{_ref_str(stats.get('avg_value'), _is_pct)}<br/>"
@@ -2046,7 +2046,7 @@ if side["page"].startswith("2."):
                         st.markdown(
                             f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:180px;'>"
                             f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{display_name}</div>"
-                            f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{val_str}</div>{_ff_cur_note}"
+                            f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{val_str}</div>{_ff_cur_note}"
                             f"<div style='font-size:0.76rem;margin-top:6px;'>"
                             f"{cfg['prev_label']} {format_delta_html(stats['prev_delta'])}{_ref_str(stats.get('prev_value'), _is_pct)}{_ff_prev_note}<br/>"
                             f"{cfg['yoy_label']} {format_delta_html(stats['yoy_delta'])}{_ref_str(stats.get('yoy_value'), _is_pct)}{_ff_yoy_note}"
@@ -2949,7 +2949,7 @@ if side["page"].startswith("4."):
             render_excel_download(pd.DataFrame(export_rows), _fname)
 
         table_html = (
-            "<div style='overflow-x:auto;'><table class='summary-table'>"
+            "<div class='scroll-table total-first'><table class='summary-table'>"
             f"<thead><tr>{header_html}</tr></thead>"
             f"<tbody>{_total_row_html}{''.join(body_rows)}</tbody></table></div>"
         )
@@ -3065,7 +3065,7 @@ if side["page"].startswith("5."):
                     _fname2 = f"카테고리누적데이터_{bpu}_{selected_cat}_{brand_label(selected_brand)}_{cum_unit}.xlsx".replace(" ", "")
                     render_excel_download(pd.DataFrame(export_rows2), _fname2)
                 table_html2 = (
-                    "<div style='overflow-x:auto;'><table class='summary-table'>"
+                    "<div class='scroll-table'><table class='summary-table'>"
                     f"<thead><tr>{header_html2}</tr></thead>"
                     f"<tbody>{''.join(body_rows2)}</tbody></table></div>"
                 )
@@ -3212,7 +3212,7 @@ if side["page"].startswith("9."):
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:150px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>쿠폰할인</div>"
-                        f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_coupon:,.0f}</div>"
+                        f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cur_coupon:,.0f}</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
                         f"{_prev_label} {format_delta_html(_delta_pct(_cur_coupon, _prev_coupon))}{_ref_str(_prev_coupon)}<br/>"
                         f"{_yoy_line}"
@@ -3226,7 +3226,7 @@ if side["page"].startswith("9."):
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:150px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액(기존 대시보드 기준)</div>"
-                        f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_gmv:,.0f}</div>"
+                        f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cur_gmv:,.0f}</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
                         f"{_prev_label} {format_delta_html(_delta_pct(_cur_gmv, _prev_gmv))}{_ref_str(_prev_gmv)}<br/>"
                         f"{_yoy_line2}"
@@ -3242,7 +3242,7 @@ if side["page"].startswith("9."):
                     st.markdown(
                         f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;min-height:150px;'>"
                         f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>비용률 (쿠폰할인/거래액)</div>"
-                        f"<div style='font-size:1.4rem;font-weight:700;color:#111827;'>{_cur_rate:.2f}%</div>"
+                        f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cur_rate:.2f}%</div>"
                         f"<div style='font-size:0.76rem;margin-top:6px;'>"
                         f"{_prev_label} {format_delta_html(_rate_prev_delta) if _rate_prev_delta is not None else '-'}p{_ref_str(_prev_rate, True)}<br/>"
                         f"{_yoy_line3}"

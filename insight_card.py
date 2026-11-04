@@ -223,7 +223,9 @@ def render_insight_card(auto_payload, ai_context, ai_cache_key, memo_key, period
     # 카드 전체를 st.expander로 감싼다 — 접기/펼치기가 기본 내장돼 있고, 네이티브
     # 컴포넌트라 테두리도 항상 안정적으로 그려진다 (예전엔 <div> 직접 열고 닫는
     # 방식이었는데, 접기/펼치기 요청이 와서 이 참에 더 안정적인 방식으로 교체함).
-    with st.expander("📊 인사이트  ·  좌: 자동 요약(토큰 미사용) · 우: AI 인사이트·메모(저장됨)", expanded=True):
+    # 기본은 접힌 상태 — 펼치면 화면 2,000px 이상을 차지해서 핵심 KPI가 한참 아래로
+    # 밀리던 문제가 있었음 (펼친 상태는 사용자가 직접 열어 볼 때만)
+    with st.expander("📊 인사이트 · 자동 요약 + AI·메모  (눌러서 펼치기)", expanded=False):
         if rule_based_sections:
             # dashboard_helpers.render_insight_panel과 동일한 컴포넌트를 재사용 —
             # 예전엔 여기 따로 <div>를 그려서 두 군데(이 카드 vs 다른 페이지의

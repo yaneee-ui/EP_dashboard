@@ -90,6 +90,25 @@ CUSTOM_CSS = """
 .summary-table td.v { font-weight: 600; }
 .summary-table td.d { text-align: left; }
 
+/* 행이 수백 개인 누적 표: 높이를 제한하고 안에서 스크롤 + 머리글 고정.
+   날짜 칸이 좁은 화면에서 글자 단위로 줄바꿈되지 않도록 nowrap. */
+.scroll-table {
+    overflow: auto;
+    max-height: 620px;
+    border: 1px solid #eaecef;
+    border-radius: 8px;
+}
+.scroll-table .summary-table { border: none; border-radius: 0; width: max-content; min-width: 100%; }
+.scroll-table .summary-table thead th {
+    position: sticky; top: 0; z-index: 2; white-space: nowrap;
+    box-shadow: 0 1px 0 #eaecef;
+}
+.scroll-table .summary-table tbody td { white-space: nowrap; padding: 7px 12px; }
+.scroll-table.total-first .summary-table tbody tr:first-child td { position: sticky; top: 33px; z-index: 1; background: #f3f4f6; }
+.scroll-table .summary-table tbody td:first-child,
+.scroll-table .summary-table thead th:first-child { position: sticky; left: 0; background: #fff; }
+.scroll-table .summary-table thead th:first-child { background: #f7f8fa; z-index: 3; }
+
 /* (예전엔 여기 'KPI 카드 높이 통일' 규칙이 있었는데, 지금 KPI 카드는 전부
    st.markdown() raw HTML(<div style='background:#fff;...')로 그려지고 있어서
    해당 규칙이 적용될 대상이 없는 죽은 코드였음. 대신 st.expander/
