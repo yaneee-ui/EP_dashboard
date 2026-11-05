@@ -468,6 +468,33 @@ def test_home_watch_items():
     check("주목: 전년 +60% 상승 감지", len(hp.compute_watch_items(rows(0.0, 60.0))) == 1)
 
 
+def test_event_compare_modes():
+    """행사 비교 기준: 진행일(N일차끼리) / 동요일(같은 요일끼리) 날짜 대응."""
+    print("\n[행사 비교 기준]")
+    from dashboard_helpers import resolve_event_days
+    T = pd.Timestamp
+    have = set(pd.date_range("2025-11-01", "2026-11-04"))
+    a = (T("2025-11-21"), T("2025-11-28"))   # 금~금 (8일)
+    b = (T("2026-11-02"), T("2026-11-09"))   # 월~월, 데이터는 11/4(수)까지
+
+    pa, pb = resolve_event_days(have, a, b, "진행일")
+    check("진행일: 이번 3일(11/2~11/4) ↔ 작년 1~3일차(11/21~11/23)",
+          [d.strftime("%m/%d") for d in pb] == ["11/02", "11/03", "11/04"]
+          and [d.strftime("%m/%d") for d in pa] == ["11/21", "11/22", "11/23"])
+    pa, pb = resolve_event_days(have, a, b, "동요일")
+    check("동요일: 월~수(11/2~11/4) ↔ 작년 월~수(11/24~11/26)",
+          [d.strftime("%m/%d") for d in pa] == ["11/24", "11/25", "11/26"]
+          and [d.weekday() for d in pa] == [d.weekday() for d in pb])
+
+    have2 = set(pd.date_range("2025-11-01", "2026-11-09"))
+    pa, pb = resolve_event_days(have2, a, b, "동요일")
+    check("동요일: 짝 없는 날(이번 2번째 월요일 11/9)은 양쪽에서 제외 → 7일 대 7일",
+          len(pa) == len(pb) == 7 and T("2026-11-09") not in pb and T("2025-11-28") not in pa)
+    check("동요일: 모든 짝의 요일 일치", all(x.weekday() == y.weekday() for x, y in zip(pa, pb)))
+    pa, pb = resolve_event_days(have2, a, b, "진행일")
+    check("진행일: 완료된 행사는 8일 대 8일", len(pa) == len(pb) == 8)
+
+
 if __name__ == "__main__":
     print("=" * 60)
     print("EP 대시보드 회귀 테스트")
@@ -485,6 +512,7 @@ if __name__ == "__main__":
     test_week_of_month_no_collision_at_month_boundary()
     test_data_quality_checks()
     test_home_watch_items()
+    test_event_compare_modes()
 
     print()
     print("=" * 60)

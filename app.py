@@ -54,6 +54,7 @@ from dashboard_helpers import (
     load_event_calendar, compute_event_comparison, render_event_comparison_tables,
     render_event_comparison_summary, build_event_comparison_excel,
     compute_event_detail, render_event_detail_html, build_event_detail_excel,
+    resolve_event_days, describe_event_pairs,
     compute_event_category_detail, render_event_category_table_html, add_event_category_sheet,
 )
 
@@ -5306,6 +5307,15 @@ if side["page"].startswith("12."):
                 key=f"event_range_a::{_sel_a_label}", label_visibility="collapsed",
             )
 
+        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin:6px 0 1px;'>비교 기준</div>", unsafe_allow_html=True)
+        _cmp_mode_label = st.radio(
+            "비교 기준", ["행사 진행일 (N일차끼리)", "동요일 (같은 요일끼리)"], horizontal=True,
+            key="event_cmp_mode", label_visibility="collapsed",
+            help="행사 진행일: 행사 첫날부터 1일차·2일차…끼리 비교해요 (보통은 이 기준). "
+                 "동요일: 행사 시작 요일이 작년과 다를 때(예: 올해 월~월 / 작년 금~금) 같은 요일끼리 맞춰 비교해요.",
+        )
+        _cmp_mode = "동요일" if _cmp_mode_label.startswith("동요일") else "진행일"
+
         if not (
             isinstance(range_a_input, tuple) and len(range_a_input) == 2
             and isinstance(range_b_input, tuple) and len(range_b_input) == 2
@@ -5314,24 +5324,34 @@ if side["page"].startswith("12."):
         else:
             range_a = (pd.Timestamp(range_a_input[0]), pd.Timestamp(range_a_input[1]))
             range_b = (pd.Timestamp(range_b_input[0]), pd.Timestamp(range_b_input[1]))
-            _ndays_a = (range_a[1] - range_a[0]).days + 1
-            _ndays_b = (range_b[1] - range_b[0]).days + 1
+            _have_ev = set(pd.to_datetime(df_traffic["날짜"].unique()))
+            _days_a, _days_b = resolve_event_days(_have_ev, range_a, range_b, _cmp_mode)
+            _ndays_a, _ndays_b = len(_days_a), len(_days_b)
             _label_a = _sel_a_label.split(" · ")[0] if _sel_a_label else range_a_input[0].strftime("%Y.%m")
             _label_b = _sel_b_label.split(" · ")[0] if _sel_b_label else range_b_input[0].strftime("%Y.%m")
 
             st.markdown(
                 f"<div style='background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin:8px 0;'>"
-                f"<div style='font-size:0.85rem;color:#374151;'>📅 <b>{_label_a}</b> {range_a_input[0]}~{range_a_input[1]} ({_ndays_a}일)"
-                f" &nbsp;vs&nbsp; <b>{_label_b}</b> {range_b_input[0]}~{range_b_input[1]} ({_ndays_b}일)</div>"
-                f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>모든 값은 일평균(기간 합계 ÷ 일수) 기준이에요 "
-                f"— 두 기간 길이가 달라도 공정하게 비교돼요.</div></div>",
+                f"<div style='font-size:0.85rem;color:#374151;'>📅 <b>{_label_a}</b> {range_a_input[0]}~{range_a_input[1]}"
+                f" &nbsp;vs&nbsp; <b>{_label_b}</b> {range_b_input[0]}~{range_b_input[1]}"
+                f" &nbsp;·&nbsp; <b>{'동요일' if _cmp_mode == '동요일' else '행사 진행일'}</b> 기준 {_ndays_b}일 비교</div>"
+                f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>대응 날짜(이번 ↔ 비교): "
+                f"{describe_event_pairs(_days_a, _days_b, _cmp_mode)}</div>"
+                f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>모든 값은 일평균(비교한 날짜의 합계 ÷ 일수) 기준이에요.</div></div>",
                 unsafe_allow_html=True,
             )
-            if _ndays_a != _ndays_b:
-                st.caption(f"⚠️ 두 기간 일수가 달라요 ({_ndays_a}일 vs {_ndays_b}일) — 일평균 기준이라 비교 자체는 괜찮지만 참고하세요.")
+            if _cmp_mode == "동요일":
+                _drop_b = [d for d in pd.date_range(range_b[0], range_b[1]) if d in _have_ev and d not in set(_days_b)]
+                if _drop_b:
+                    st.caption(
+                        "ℹ️ 같은 요일 짝이 없어서 비교에서 뺀 이번 기간 날짜: "
+                        + ", ".join(f"{d.month}/{d.day}({'월화수목금토일'[d.weekday()]})" for d in _drop_b)
+                    )
+            elif _ndays_a != _ndays_b:
+                st.caption(f"⚠️ 비교 기간이 이번 기간보다 짧아요 ({_ndays_a}일 vs {_ndays_b}일) — 있는 날짜까지만 비교해요.")
 
             try:
-                _result = compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b)
+                _result = compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b, mode=_cmp_mode)
                 render_event_comparison_summary(_result, label_a=_label_a, label_b=_label_b)
 
                 # --- 행사 상세 실적 (전년동요일): 올해 행사 기간 vs 364일 전 같은 요일 구간 ---
@@ -5342,22 +5362,28 @@ if side["page"].startswith("12."):
                     "집계 방식", ["기간 합계", "일평균"], horizontal=True, key="event_detail_agg",
                     label_visibility="collapsed",
                 )
-                _ev_detail = compute_event_detail(df_traffic, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a)
+                _ev_detail = compute_event_detail(df_traffic, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a, mode=_cmp_mode)
                 if _ev_detail["cur"] is None:
                     st.info("이번 기간에 데이터가 있는 날짜가 아직 없어요.")
                 else:
                     _ev_ya, _ev_yb = _ev_detail["prev"][0].year, _ev_detail["cur"][0].year
                     _ev_title = f"{_ev_name} 상세 실적"
-                    st.caption(
+                    _ev_pairs_txt = (
                         f"{_ev_yb}년 {_ev_detail['cur'][0].strftime('%m/%d')} – {_ev_detail['cur'][1].strftime('%m/%d')} vs "
                         f"{_ev_ya}년 행사 기간 {_ev_detail['prev'][0].strftime('%m/%d')} – {_ev_detail['prev'][1].strftime('%m/%d')} "
-                        f"({_ev_detail['n']}일) · 거래액 단위 백만원 · CR/객단가는 합계 기준 재계산 · "
+                        if _cmp_mode != "동요일" else
+                        f"{_ev_yb}년 {_ev_detail['cur'][0].strftime('%m/%d')} – {_ev_detail['cur'][1].strftime('%m/%d')} vs "
+                        f"{_ev_ya}년 같은 요일 날짜({', '.join(d.strftime('%m/%d') for d in _ev_detail['prev_days'])}) "
+                    )
+                    st.caption(
+                        _ev_pairs_txt
+                        + f"({_ev_detail['n']}일, {'동요일' if _cmp_mode == '동요일' else '행사 진행일'} 기준) · 거래액 단위 백만원 · CR/객단가는 합계 기준 재계산 · "
                         "비교 기간은 위에서 고른 '비교 기간'(작년 행사)을 그대로 써요"
                     )
                     _ev_cat = (
                         compute_event_category_detail(
                             df_category, range_b, "mean" if _ev_agg_label == "일평균" else "sum", range_a=range_a,
-                            df_traffic=df_traffic,
+                            df_traffic=df_traffic, mode=_cmp_mode,
                         ) if not df_category.empty else None
                     )
                     _ev_xlsx = build_event_detail_excel(_ev_detail, _ev_title, _ev_ya, _ev_yb)

@@ -2809,10 +2809,52 @@ def load_event_calendar(path="event_calendar.csv"):
     return df.sort_values(["연도", "월"]).reset_index(drop=True)
 
 
-def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b):
+EVENT_CMP_MODES = ("진행일", "동요일")
+_WD_KR = ["월", "화", "수", "목", "금", "토", "일"]
+
+
+def resolve_event_days(have, range_a, range_b, mode="진행일"):
+    """행사 비교에서 '어느 날짜끼리' 비교할지 정한다. 반환: (A 날짜 리스트, B 날짜 리스트).
+    have: 데이터가 있는 날짜 집합. B는 데이터가 있는 날만 쓴다(진행 중인 행사).
+    - 진행일: 행사 시작일부터 N일차끼리. B가 n일이면 A도 앞에서 n일(1일차=1일차).
+    - 동요일: 같은 요일끼리. B의 k번째 '월요일'은 A의 k번째 '월요일'과 짝짓고, 짝이 없는 날은 양쪽 다 뺀다.
+      (예: 올해 월~월 / 작년 금~금 행사면 월~목은 작년 월~목, 금~일은 작년 금~일과 비교)"""
+    all_a = [d for d in pd.date_range(pd.Timestamp(range_a[0]), pd.Timestamp(range_a[1])) if d in have]
+    days_b = [d for d in pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1])) if d in have]
+    if mode == "동요일":
+        by_wd = {}
+        for d in all_a:
+            by_wd.setdefault(d.weekday(), []).append(d)
+        seen, pa, pb = {}, [], []
+        for d in days_b:
+            k = seen.get(d.weekday(), 0)
+            seen[d.weekday()] = k + 1
+            lst = by_wd.get(d.weekday(), [])
+            if k < len(lst):
+                pa.append(lst[k])
+                pb.append(d)
+        return pa, pb
+    return all_a[:len(days_b)], days_b
+
+
+def describe_event_pairs(days_a, days_b, mode, limit=8):
+    """대응 날짜를 사람이 읽는 문장으로 (예: '1일차 11/2(월) ↔ 11/21(금)')."""
+    def f(d):
+        return f"{d.month}/{d.day}({_WD_KR[d.weekday()]})"
+    parts = []
+    for i, (a, b) in enumerate(zip(days_a, days_b)):
+        head = f"{i + 1}일차 " if mode != "동요일" else ""
+        parts.append(f"{head}{f(b)} ↔ {f(a)}")
+    shown = parts[:limit]
+    if len(parts) > limit:
+        shown.append(f"외 {len(parts) - limit}일")
+    return " · ".join(shown)
+
+
+def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b, mode="진행일"):
     """구간 A(보통 작년 행사) vs 구간 B(보통 올해 행사)를 일평균 기준으로 비교.
-    range_a/range_b: (시작 Timestamp, 종료 Timestamp) - 각 자기 구간의 일수로 나눠서
-    일평균을 낸다(구간 길이가 서로 달라도 공정하게 비교되도록).
+    range_a/range_b: (시작 Timestamp, 종료 Timestamp). 비교할 날짜는 mode로 정한다
+    (resolve_event_days: '진행일' = N일차끼리, '동요일' = 같은 요일끼리) — 각 날짜 수로 나눠 일평균을 낸다.
 
     반환: {
       'ndays_a', 'ndays_b',
@@ -2821,11 +2863,13 @@ def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, 
       'coupon': {'A':{'쿠폰할인','거래액','비용률'}, 'B':{...}},
     }
     """
-    ndays_a = (range_a[1] - range_a[0]).days + 1
-    ndays_b = (range_b[1] - range_b[0]).days + 1
+    _have = set(pd.to_datetime(df_traffic["날짜"].unique()))
+    days_a, days_b = resolve_event_days(_have, range_a, range_b, mode)
+    ndays_a = len(days_a)
+    ndays_b = len(days_b)
 
     def _tr_bpu_metrics(rng, ndays):
-        s = df_traffic[(df_traffic["날짜"] >= rng[0]) & (df_traffic["날짜"] <= rng[1])]
+        s = df_traffic[df_traffic["날짜"].isin(rng)]
         s_all = s[s["회원구분"] == "전체"]
         s_mem = s[s["회원구분"] == "회원"]
         out = {}
@@ -2839,8 +2883,8 @@ def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, 
             }
         return out
 
-    m_a = _tr_bpu_metrics(range_a, ndays_a)
-    m_b = _tr_bpu_metrics(range_b, ndays_b)
+    m_a = _tr_bpu_metrics(days_a, ndays_a)
+    m_b = _tr_bpu_metrics(days_b, ndays_b)
 
     bpu_rows = []
     for metric in ["트래픽", "회원 트래픽", "거래액", "구매객수", "CR", "객단가"]:
@@ -2860,19 +2904,19 @@ def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, 
     ]
 
     def _cat_metric(rng, ndays, metric):
-        s = cat_sub[(cat_sub["날짜"] >= rng[0]) & (cat_sub["날짜"] <= rng[1])]
+        s = cat_sub[cat_sub["날짜"].isin(rng)]
         return s.groupby(["BPU", "카테고리"])[metric].sum() / ndays
 
     def _cat_total_metric(rng, ndays, metric):
-        s = cat_total_sub[(cat_total_sub["날짜"] >= rng[0]) & (cat_total_sub["날짜"] <= rng[1])]
+        s = cat_total_sub[cat_total_sub["날짜"].isin(rng)]
         return s.groupby("BPU")[metric].sum() / ndays
 
     cat_rows = {}
     for metric in ["거래액", "트래픽"]:
-        pv_all = _cat_metric(range_a, ndays_a, metric)
-        cv_all = _cat_metric(range_b, ndays_b, metric)
-        pv_tot = _cat_total_metric(range_a, ndays_a, metric)
-        cv_tot = _cat_total_metric(range_b, ndays_b, metric)
+        pv_all = _cat_metric(days_a, ndays_a, metric)
+        cv_all = _cat_metric(days_b, ndays_b, metric)
+        pv_tot = _cat_total_metric(days_a, ndays_a, metric)
+        cv_tot = _cat_total_metric(days_b, ndays_b, metric)
         rows = []
         for bpu in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
             cats = sorted(
@@ -2890,17 +2934,18 @@ def compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, 
         cat_rows[metric] = rows
 
     def _coupon_stats(rng, ndays):
-        c = df_coupon_daily[(df_coupon_daily["날짜"] >= rng[0]) & (df_coupon_daily["날짜"] <= rng[1])]
+        c = df_coupon_daily[df_coupon_daily["날짜"].isin(rng)]
         t = df_traffic[
-            (df_traffic["날짜"] >= rng[0]) & (df_traffic["날짜"] <= rng[1])
+            df_traffic["날짜"].isin(rng)
             & (df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")
         ]
         cost, gmv = c["쿠폰할인"].sum(), t["거래액"].sum()
         return {"쿠폰할인": cost / ndays, "거래액": gmv / ndays, "비용률": (cost / gmv * 100) if gmv else None}
 
-    coupon = {"A": _coupon_stats(range_a, ndays_a), "B": _coupon_stats(range_b, ndays_b)}
+    coupon = {"A": _coupon_stats(days_a, ndays_a), "B": _coupon_stats(days_b, ndays_b)}
 
-    return {"ndays_a": ndays_a, "ndays_b": ndays_b, "bpu_rows": bpu_rows, "cat_rows": cat_rows, "coupon": coupon}
+    return {"ndays_a": ndays_a, "ndays_b": ndays_b, "bpu_rows": bpu_rows, "cat_rows": cat_rows, "coupon": coupon,
+            "days_a": days_a, "days_b": days_b, "mode": mode}
 
 
 def summary_compare_ranges(unit, selected_period_date, last_date):
@@ -3986,7 +4031,7 @@ _EVENT_DETAIL_BPUS = [("전체", "Total"), ("e-영업1", "e-영업1"), ("e-영�
                       ("e-영업3", "e-영업3"), ("e-영업4", "e-영업4")]
 
 
-def compute_event_detail(df_traffic, range_b, agg="sum", range_a=None):
+def compute_event_detail(df_traffic, range_b, agg="sum", range_a=None, mode="진행일"):
     """올해 행사 기간(range_b)과 비교 기간(range_a, 보통 작년 같은 행사 기간)의 BPU별
     트래픽/거래액/구매객수/CR/객단가. range_a가 없으면 range_b의 동요일(364일 전)을 쓴다.
 
@@ -3995,14 +4040,12 @@ def compute_event_detail(df_traffic, range_b, agg="sum", range_a=None):
     agg: 'sum'(행사 기간 합계) / 'mean'(일평균) — 비율 지표는 영향 없음."""
     base = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
     have = set(pd.to_datetime(base["날짜"].unique()))
-    all_days = pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1]))
-    cur_days = [d for d in all_days if d in have]
-    n = len(cur_days)
     if range_a is not None:
-        prev_all = list(pd.date_range(pd.Timestamp(range_a[0]), pd.Timestamp(range_a[1])))
-        prev_days = [d for d in prev_all if d in have][:n]
+        prev_days, cur_days = resolve_event_days(have, range_a, range_b, mode)
     else:
+        cur_days = [d for d in pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1])) if d in have]
         prev_days = [d - pd.Timedelta(days=364) for d in cur_days]
+    n = len(cur_days)
 
     def _sums(days, bpu):
         sub = base[(base["BPU"] == bpu) & (base["날짜"].isin(days))]
@@ -4031,6 +4074,7 @@ def compute_event_detail(df_traffic, range_b, agg="sum", range_a=None):
         "prev": (prev_days[0], prev_days[-1]) if prev_days else None,
         "n_prev": len(prev_days),
         "by_range": range_a is not None,
+        "cur_days": cur_days, "prev_days": prev_days, "mode": mode,
     }
 
 
@@ -4197,7 +4241,7 @@ _EVENT_CAT_METRICS = [
 ]
 
 
-def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None, df_traffic=None):
+def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None, df_traffic=None, mode="진행일"):
     """행사 기간(올해 range_b vs 비교 range_a)의 정상/이월/입점(3BPU·4BPU) x 카테고리별
     거래액·트래픽·구매객수·CR·객단가. 올해 데이터가 있는 일수만큼만 비교 기간도 앞에서부터
     잘라 일수를 맞춘다. CR/객단가는 합계/합계로 재계산. 증감(diff)은 올해-작년(CR은 %p).
@@ -4209,12 +4253,12 @@ def compute_event_category_detail(df_category, range_b, agg="sum", range_a=None,
         d = d[d["회원구분"] == "전체"]
     d = d[d["브랜드"] == "전체"]
     have = set(pd.to_datetime(d["날짜"].unique()))
-    cur_days = [x for x in pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1])) if x in have]
-    n = len(cur_days)
     if range_a is not None:
-        prev_days = [x for x in pd.date_range(pd.Timestamp(range_a[0]), pd.Timestamp(range_a[1])) if x in have][:n]
+        prev_days, cur_days = resolve_event_days(have, range_a, range_b, mode)
     else:
+        cur_days = [x for x in pd.date_range(pd.Timestamp(range_b[0]), pd.Timestamp(range_b[1])) if x in have]
         prev_days = [x - pd.Timedelta(days=364) for x in cur_days]
+    n = len(cur_days)
 
     cols = ["거래액", "트래픽", "구매객수"]
 
