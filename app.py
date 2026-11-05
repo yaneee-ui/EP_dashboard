@@ -5327,14 +5327,25 @@ if side["page"].startswith("12."):
             _have_ev = set(pd.to_datetime(df_traffic["날짜"].unique()))
             _days_a, _days_b = resolve_event_days(_have_ev, range_a, range_b, _cmp_mode)
             _ndays_a, _ndays_b = len(_days_a), len(_days_b)
+            def _fmt_ev_days(_ds):
+                """실제로 비교에 쓰는 날짜를 짧게: 이어진 날짜는 '11/21~11/23', 아니면 '11/24, 11/25'."""
+                if not _ds:
+                    return "-"
+                _contig = all((_ds[i + 1] - _ds[i]).days == 1 for i in range(len(_ds) - 1))
+                if _contig and len(_ds) > 1:
+                    return f"{_ds[0]:%Y-%m-%d}~{_ds[-1]:%m-%d} ({len(_ds)}일)"
+                return ", ".join(f"{d:%m/%d}" for d in _ds) + f" ({len(_ds)}일)"
+
             _label_a = _sel_a_label.split(" · ")[0] if _sel_a_label else range_a_input[0].strftime("%Y.%m")
             _label_b = _sel_b_label.split(" · ")[0] if _sel_b_label else range_b_input[0].strftime("%Y.%m")
 
             st.markdown(
                 f"<div style='background:#f8fafc;border:1px solid #e5e7eb;border-radius:8px;padding:10px 14px;margin:8px 0;'>"
-                f"<div style='font-size:0.85rem;color:#374151;'>📅 <b>{_label_a}</b> {range_a_input[0]}~{range_a_input[1]}"
-                f" &nbsp;vs&nbsp; <b>{_label_b}</b> {range_b_input[0]}~{range_b_input[1]}"
+                f"<div style='font-size:0.85rem;color:#374151;'>📅 <b>{_label_b}</b> {_fmt_ev_days(_days_b)}"
+                f" &nbsp;vs&nbsp; <b>{_label_a}</b> {_fmt_ev_days(_days_a)}"
                 f" &nbsp;·&nbsp; <b>{'동요일' if _cmp_mode == '동요일' else '행사 진행일'}</b> 기준 {_ndays_b}일 비교</div>"
+                f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>선택한 기간: 이번 {range_b_input[0]}~{range_b_input[1]} · "
+                f"비교 {range_a_input[0]}~{range_a_input[1]} 중 위 날짜만 사용</div>"
                 f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>대응 날짜(이번 ↔ 비교): "
                 f"{describe_event_pairs(_days_a, _days_b, _cmp_mode)}</div>"
                 f"<div style='font-size:0.76rem;color:#6b7280;margin-top:3px;'>모든 값은 일평균(비교한 날짜의 합계 ÷ 일수) 기준이에요.</div></div>",
