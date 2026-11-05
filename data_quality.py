@@ -23,6 +23,10 @@ KNOWN_EMPTY_DAYS = {
     "명품(순금+실버)": ["2026-10-25"],
 }
 
+# 월초에 트래픽이 크게 느는 게 정상인 채널 — 이 기간(매월 N일까지)의 '급증'은 경고하지 않는다 (급감은 그대로 경고).
+# 제휴: 월초 신규 유입이 많은 구조라 정상 (2026-11-05 확인)
+EARLY_MONTH_SPIKE_OK = {"제휴": 10}
+
 _WD = ["월", "화", "수", "목", "금", "토", "일"]
 
 
@@ -162,6 +166,8 @@ def check_channel_traffic(df_total_daily, recent=3):
         flagged = []
         for d, v in s.tail(recent).items():
             r = v / med
+            if r >= SPIKE_RATIO_HIGH and d.day <= EARLY_MONTH_SPIKE_OK.get(ch, 0):
+                continue
             if r >= SPIKE_RATIO_HIGH or r <= SPIKE_RATIO_LOW:
                 flagged.append(f"{_fmt_d(d)} {v:,.0f} (평소의 {r:.1f}배)")
         if flagged:

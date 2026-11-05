@@ -436,12 +436,24 @@ def test_data_quality_checks():
     rows = []
     for d in full:
         v = 1000.0 if d < base - pd.Timedelta(days=1) else 40000.0
-        rows.append({"날짜": d, "채널": "제휴", "트래픽": v, "거래액": 1.0})
+        rows.append({"날짜": d, "채널": "광고", "트래픽": v, "거래액": 1.0})
     res = dq.check_channel_traffic(pd.DataFrame(rows))
-    check("채널 트래픽: 40배 급등 감지", res and res[0]["level"] == "warn" and "제휴" in res[0]["msg"])
+    check("채널 트래픽: 40배 급등 감지", res and res[0]["level"] == "warn" and "광고" in res[0]["msg"])
     rows = [{"날짜": d, "채널": "제휴", "트래픽": 1000.0 + (i % 5) * 50, "거래액": 1.0} for i, d in enumerate(full)]
     res = dq.check_channel_traffic(pd.DataFrame(rows))
     check("채널 트래픽: 평소면 ok", res and res[0]["level"] == "ok")
+
+    # 4-2) 제휴 월초 급증은 정상, 월중 급증은 경고
+    rows = [{"날짜": d, "채널": "제휴", "트래픽": 1000.0, "거래액": 1.0} for d in pd.date_range("2026-10-05", "2026-11-04")]
+    for r_ in rows:
+        if r_["날짜"] >= pd.Timestamp("2026-11-02"):
+            r_["트래픽"] = 40000.0
+    res = dq.check_channel_traffic(pd.DataFrame(rows))
+    check("채널 트래픽: 제휴 월초(11/2~) 급증은 정상", res and res[0]["level"] == "ok")
+    rows = [{"날짜": d, "채널": "제휴", "트래픽": 40000.0 if d >= pd.Timestamp("2026-10-30") else 1000.0, "거래액": 1.0}
+            for d in pd.date_range("2026-10-01", "2026-10-30")]
+    res = dq.check_channel_traffic(pd.DataFrame(rows))
+    check("채널 트래픽: 제휴 월중(10/30) 급증은 경고", res and res[0]["level"] == "warn")
 
     # 5) 합계 일치
     tr = pd.DataFrame({"날짜": full, "BPU": "Total", "회원구분": "전체", "거래액": 100.0})
