@@ -40,7 +40,7 @@ from dashboard_helpers import (
     LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
-    DASHBOARD_EVENTS, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
+    DASHBOARD_EVENTS, period_notes_for, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
@@ -2232,7 +2232,10 @@ if side["page"].startswith("2."):
                 yoy_label_cat = UNIT_CONFIG[unit]["yoy_label"]
                 cat_chart_df[f"{yoy_label_cat}(전년)"] = yoy_vals
                 _cat_yoy_actual_dates = yoy_actual
-            render_line_chart(cat_chart_df, height=350, unit=unit, yoy_actual_dates=_cat_yoy_actual_dates)
+            render_line_chart(
+                cat_chart_df, height=350, unit=unit, yoy_actual_dates=_cat_yoy_actual_dates,
+                period_notes=period_notes_for(bpu, selected_cat),
+            )
 
             # --- 지난 연도 흐름 보기 (페이지1과 동일한 이유·구조) ---
             _cat_past_years = sorted(

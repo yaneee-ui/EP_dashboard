@@ -963,7 +963,68 @@ DASHBOARD_EVENTS = [
 ]
 
 
-def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None):
+# 일별 그래프에 '음영'으로 표시하고 그래프 아래에 설명을 붙이는 기간 메모.
+# bpus: 이 매체를 볼 때만 표시 / category: 이 카테고리를 볼 때만 표시 (None이면 전체)
+# 새 항목은 여기에 추가하면 된다 (시각은 시:분까지 적어두면 설명에 그대로 나오고, 음영은 날짜 단위로 칠한다).
+DASHBOARD_PERIOD_NOTES = [
+    {
+        "start": pd.Timestamp("2026-11-04 14:00"),
+        "end": pd.Timestamp("2026-11-09 10:00"),
+        "label": "명품 EP쿠폰율 상향 (10% → 11%)",
+        "bpus": ("입점", "e-영업3", "e-영업4"),
+        "category": "명품",
+        "detail": "입점 > 명품의 EP쿠폰율을 10%에서 11%로 1%p 올려 운영한 기간이에요.",
+    },
+]
+
+
+def period_notes_for(bpu, category):
+    """지금 보고 있는 매체/카테고리에 해당하는 기간 메모만 골라서 돌려준다."""
+    out = []
+    for n in DASHBOARD_PERIOD_NOTES:
+        if n.get("bpus") and bpu not in n["bpus"]:
+            continue
+        if n.get("category") and category != n["category"]:
+            continue
+        out.append(n)
+    return out
+
+
+def _fmt_note_dt(ts):
+    return f"{ts.month}/{ts.day}({'월화수목금토일'[ts.weekday()]}) {ts.hour}시" if ts.hour or ts.minute else f"{ts.month}/{ts.day}({'월화수목금토일'[ts.weekday()]})"
+
+
+def render_period_notes(notes, chart_start=None, chart_end=None):
+    """그래프 아래에 기간 메모 설명 상자를 그린다. chart_start/end: 그래프에 보이는 날짜 범위(겹칠 때만 표시)."""
+    for n in notes:
+        if chart_start is not None and chart_end is not None:
+            if n["end"].normalize() < pd.Timestamp(chart_start).normalize() or n["start"].normalize() > pd.Timestamp(chart_end).normalize():
+                continue
+        dur = n["end"] - n["start"]
+        hours = int(dur.total_seconds() // 3600)
+        dur_txt = f"{hours // 24}일 {hours % 24}시간" if hours % 24 else f"{hours // 24}일"
+        partial = []
+        if n["start"].hour or n["start"].minute:
+            partial.append(f"{n['start'].month}/{n['start'].day}은 {n['start'].hour}시부터")
+        if n["end"].hour or n["end"].minute:
+            partial.append(f"{n['end'].month}/{n['end'].day}은 {n['end'].hour}시까지")
+        partial_txt = (
+            f"{', '.join(partial)}만 적용돼서 일 단위 그래프에서는 음영 구간의 양 끝날이 부분일이에요. "
+            if partial else ""
+        )
+        st.markdown(
+            "<div style='background:#fffbeb;border:1px solid #fde68a;border-left:4px solid #f59e0b;border-radius:8px;"
+            "padding:10px 14px;margin:6px 0 10px;font-size:0.84rem;color:#374151;line-height:1.65;'>"
+            f"<div style='font-weight:700;color:#92400e;'>🟨 {n['label']}</div>"
+            f"<div>기간: <b>{_fmt_note_dt(n['start'])} ~ {_fmt_note_dt(n['end'])}</b> ({dur_txt})</div>"
+            f"<div>{n.get('detail', '')}</div>"
+            f"<div style='color:#6b7280;font-size:0.8rem;'>{partial_txt}이 구간의 거래액·구매전환율 변동에는 쿠폰율 상향 영향이 섞여 있을 수 있으니, "
+            "전후 비교할 때 참고하세요.</div></div>",
+            unsafe_allow_html=True,
+        )
+
+
+def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None, period_notes=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
     Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)
@@ -976,7 +1037,9 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     ref_date/ref_label: '지난 연도 흐름 보기'처럼 전년 비교선 없이 그 해 데이터만 단독으로
     그릴 때, 지금 조회 중인 시점이 이 과거 연도 흐름에서 어디쯤(동주/동월)인지 주황 다이아몬드
     마커로 짚어준다(ref_date=chart_df 안에 실제로 있는 날짜, ref_label=마커 옆 설명 문구).
-    없으면(None) 마커를 그리지 않는다."""
+    없으면(None) 마커를 그리지 않는다.
+    period_notes: period_notes_for()가 돌려준 기간 메모 목록. 일별 그래프에서 그 기간의 날짜들을 옅은 노란
+    음영으로 칠하고(그래프 뒤), 그래프 아래에 설명 상자를 붙인다. 다른 조회 단위에선 설명 상자만 붙인다."""
     import altair as alt
 
     if chart_df is None or chart_df.empty:
@@ -1043,6 +1106,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     _is_monthly = unit in ("월별", "월마감")
     _event_rows = []
+    _shade_labels = []
     if _is_monthly:
         x_enc = alt.X(
             "날짜:T", title=None, timeUnit="yearmonth",
@@ -1065,9 +1129,17 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
                 _tick_vals.append(_label_order[-1])
         else:
             _tick_vals = _label_order
+        _shade_labels = []
+        for _n in (period_notes or []):
+            _s0, _e0 = _n["start"].normalize(), _n["end"].normalize()
+            for _d in _uniq_dates:
+                if _s0 <= pd.Timestamp(_d).normalize() <= _e0:
+                    _shade_labels.append((pd.Timestamp(_d).strftime("%m/%d"), _n["label"]))
+        # 음영(사각형)을 같이 그리려면 x축이 칸(band) 스케일이어야 해서, 음영이 있을 때만 바꾼다
         x_enc = alt.X(
             "_date_label:O", title=None, sort=_label_order,
             axis=alt.Axis(labelAngle=0, values=_tick_vals),
+            **({"scale": alt.Scale(type="band", paddingInner=0, paddingOuter=0)} if _shade_labels else {}),
         )
         _date_fmt = "%Y-%m-%d"
 
@@ -1139,9 +1211,19 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
             )
             chart = alt.layer(chart, _ref_marker).resolve_scale(x="shared", y="shared")
 
+    if _shade_labels:
+        _shade_df = pd.DataFrame(_shade_labels, columns=["_date_label", "기간 메모"])
+        _shade = alt.Chart(_shade_df).mark_rect(color="#fde68a", opacity=0.5).encode(
+            x=alt.X("_date_label:O", sort=_label_order),
+            tooltip=[alt.Tooltip("_date_label:N", title="날짜"), alt.Tooltip("기간 메모:N", title="기간 메모")],
+        )
+        chart = alt.layer(_shade, chart).resolve_scale(x="shared", y="shared")
+
     # .interactive()를 호출하지 않으므로 휠 확대/축소·드래그 팬이 비활성화됨
     st.altair_chart(chart, use_container_width=True)
 
+    if period_notes:
+        render_period_notes(period_notes, pd.DatetimeIndex(chart_df.index).min(), pd.DatetimeIndex(chart_df.index).max())
     if _event_rows:
         _ev_caption = "  ·  ".join(f"📌 {r['_date_label']} {r['이벤트']}" for r in _event_rows)
         st.caption(_ev_caption)
