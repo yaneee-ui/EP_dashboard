@@ -969,7 +969,7 @@ DASHBOARD_EVENTS = [
 DASHBOARD_PERIOD_NOTES = [
     {
         "start": pd.Timestamp("2026-11-04 14:00"),
-        "end": pd.Timestamp("2026-11-09 10:00"),
+        "end": pd.Timestamp("2026-11-06 10:00"),
         "label": "명품 EP쿠폰율 상향 (10% → 11%)",
         "bpus": ("입점", "e-영업3", "e-영업4"),
         "category": "명품",
