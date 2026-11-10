@@ -1024,7 +1024,7 @@ def render_period_notes(notes, chart_start=None, chart_end=None):
         )
 
 
-def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None, period_notes=None):
+def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None, period_notes=None, yoy_legend_label=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
     Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)
@@ -1039,7 +1039,8 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
     마커로 짚어준다(ref_date=chart_df 안에 실제로 있는 날짜, ref_label=마커 옆 설명 문구).
     없으면(None) 마커를 그리지 않는다.
     period_notes: period_notes_for()가 돌려준 기간 메모 목록. 일별 그래프에서 그 기간의 날짜들을 옅은 노란
-    음영으로 칠하고(그래프 뒤), 그래프 아래에 설명 상자를 붙인다. 다른 조회 단위에선 설명 상자만 붙인다."""
+    음영으로 칠하고(그래프 뒤), 그래프 아래에 설명 상자를 붙인다. 다른 조회 단위에선 설명 상자만 붙인다.
+    yoy_legend_label: 둘째 계열(비교선)의 범례 문구를 직접 정한다(행사 비교처럼 '전년 동요일'이 아닌 경우)."""
     import altair as alt
 
     if chart_df is None or chart_df.empty:
@@ -1090,7 +1091,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         "월별": "전년 동월(동요일 기준)", "월마감": "전년 동월",
     }
     _cur_year_label = f"{int(pd.DatetimeIndex(chart_df.index).year.max()) % 100}년"
-    _yoy_display_label = _YOY_LEGEND_LABEL.get(unit, "전년")
+    _yoy_display_label = yoy_legend_label or _YOY_LEGEND_LABEL.get(unit, "전년")
     _label_map = {cols[0]: _cur_year_label}
     if len(cols) > 1:
         _label_map[cols[1]] = _yoy_display_label

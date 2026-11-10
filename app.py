@@ -5368,6 +5368,48 @@ if side["page"].startswith("12."):
                 _result = compute_event_comparison(df_traffic, df_category, df_coupon_daily, range_a, range_b, mode=_cmp_mode)
                 render_event_comparison_summary(_result, label_a=_label_a, label_b=_label_b)
 
+                # --- 일자별 추이: 이번 행사 날짜별 값 vs 위 '비교 기준'에 맞춘 비교 행사의 대응 날짜 값 ---
+                st.markdown("---")
+                st.markdown("#### 📈 일자별 추이 (이번 행사 vs 비교 행사)")
+                _et_c1, _et_c2 = st.columns([4, 1])
+                with _et_c1:
+                    _et_metric = st.radio(
+                        "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"], index=1, horizontal=True,
+                        key="event_trend_metric", label_visibility="collapsed",
+                    )
+                with _et_c2:
+                    _et_bpu = st.selectbox(
+                        "매체", ["전체", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"],
+                        key="event_trend_bpu", label_visibility="collapsed",
+                    )
+                if not _days_b:
+                    st.info("이번 기간에 데이터가 있는 날짜가 아직 없어요.")
+                else:
+                    if _et_bpu in BPU_GROUPS:
+                        _et_base = aggregate_traffic(df_traffic, BPU_GROUPS[_et_bpu], "전체")
+                    else:
+                        _et_base = df_traffic[
+                            (df_traffic["BPU"] == ("Total" if _et_bpu == "전체" else _et_bpu)) & (df_traffic["회원구분"] == "전체")
+                        ]
+                    _et_s = _et_base.set_index("날짜")[_et_metric].sort_index()
+                    _et_s = _et_s[~_et_s.index.duplicated(keep="last")]
+                    _pad = len(_days_b) - len(_days_a)
+                    _et_prev = [_et_s.get(d) for d in _days_a] + [None] * max(_pad, 0)
+                    _et_actual = list(_days_a) + list(_days_b[len(_days_a):])
+                    _et_leg = (
+                        f"{_label_a.split('.')[0][-2:]}년 행사 ({'같은 요일' if _cmp_mode == '동요일' else '같은 진행일'})"
+                    )
+                    _et_df = pd.DataFrame({_et_metric: [_et_s.get(d) for d in _days_b]}, index=pd.DatetimeIndex(_days_b))
+                    _et_df[f"{_et_metric}(비교)"] = _et_prev
+                    render_line_chart(
+                        _et_df, height=350, unit="일별", yoy_actual_dates=_et_actual, yoy_legend_label=_et_leg,
+                    )
+                    st.caption(
+                        f"{_et_bpu} · {_et_metric} · 파란 선 = 이번 행사 날짜별 값, 하늘색 선 = 비교 행사의 대응 날짜 값 "
+                        f"({'같은 요일끼리' if _cmp_mode == '동요일' else '행사 N일차끼리'}). 점에 마우스를 올리면 실제 비교 날짜와 전년비가 나와요. "
+                        "대응 날짜는 위 '대응 날짜(이번 ↔ 비교)'와 같아요."
+                    )
+
                 # --- 행사 상세 실적 (전년동요일): 올해 행사 기간 vs 364일 전 같은 요일 구간 ---
                 st.markdown("---")
                 _ev_name = _sel_b_label.split(" · ")[1].split(" (")[0] if (_sel_b_label and " · " in _sel_b_label) else "행사"
