@@ -5374,7 +5374,7 @@ if side["page"].startswith("12."):
                 # --- 일자별 추이: 이번 행사 날짜별 값 vs 위 '비교 기준'에 맞춘 비교 행사의 대응 날짜 값 ---
                 st.markdown("---")
                 st.markdown("#### 📈 일자별 추이 (이번 행사 vs 비교 행사)")
-                _et_c1, _et_c2 = st.columns([4, 1])
+                _et_c1, _et_c2, _et_c3 = st.columns([3, 1, 1])
                 with _et_c1:
                     _et_metric = st.radio(
                         "지표", ["트래픽", "거래액", "구매객수", "CR", "객단가"], index=1, horizontal=True,
@@ -5385,10 +5385,32 @@ if side["page"].startswith("12."):
                         "매체", ["전체", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"],
                         key="event_trend_bpu", label_visibility="collapsed",
                     )
+                # 카테고리: 선택한 매체에 실제로 있는 카테고리만 보여준다 ('전체'는 EP실적 기준)
+                _et_cat_src = df_category
+                if "회원구분" in _et_cat_src.columns:
+                    _et_cat_src = _et_cat_src[_et_cat_src["회원구분"] == "전체"]
+                _et_cat_src = _et_cat_src[_et_cat_src["브랜드"] == "전체"]
+                if _et_bpu in BPU_GROUPS:
+                    _et_cat_src = _et_cat_src[_et_cat_src["BPU"].isin(BPU_GROUPS[_et_bpu])]
+                elif _et_bpu != "전체":
+                    _et_cat_src = _et_cat_src[_et_cat_src["BPU"] == _et_bpu]
+                _et_cat_opts = ["전체"] + sorted(c for c in _et_cat_src["카테고리"].dropna().unique() if c != "전체")
+                with _et_c3:
+                    _et_cat = st.selectbox(
+                        "카테고리", _et_cat_opts, key="event_trend_cat", label_visibility="collapsed",
+                    )
                 if not _days_b:
                     st.info("이번 기간에 데이터가 있는 날짜가 아직 없어요.")
                 else:
-                    if _et_bpu in BPU_GROUPS:
+                    if _et_cat != "전체":
+                        # 카테고리 선택 시: 카테고리 데이터를 날짜별로 합산하고 CR/객단가는 합계/합계로 계산
+                        _et_cs = _et_cat_src[_et_cat_src["카테고리"] == _et_cat].groupby("날짜", as_index=False)[
+                            ["트래픽", "거래액", "구매객수"]
+                        ].sum()
+                        _et_cs["CR"] = (_et_cs["구매객수"] / _et_cs["트래픽"] * 100).where(_et_cs["트래픽"] > 0)
+                        _et_cs["객단가"] = (_et_cs["거래액"] / _et_cs["구매객수"]).where(_et_cs["구매객수"] > 0)
+                        _et_base = _et_cs
+                    elif _et_bpu in BPU_GROUPS:
                         _et_base = aggregate_traffic(df_traffic, BPU_GROUPS[_et_bpu], "전체")
                     else:
                         _et_base = df_traffic[
@@ -5406,10 +5428,10 @@ if side["page"].startswith("12."):
                     _et_df[f"{_et_metric}(비교)"] = _et_prev
                     render_line_chart(
                         _et_df, height=350, unit="일별", yoy_actual_dates=_et_actual, yoy_legend_label=_et_leg,
-                        period_notes=period_notes_for(_et_bpu, "전체"),
+                        period_notes=period_notes_for(_et_bpu, _et_cat),
                     )
                     st.caption(
-                        f"{_et_bpu} · {_et_metric} · 파란 선 = 이번 행사 날짜별 값, 하늘색 선 = 비교 행사의 대응 날짜 값 "
+                        f"{_et_bpu} · {_et_cat} · {_et_metric} · 파란 선 = 이번 행사 날짜별 값, 하늘색 선 = 비교 행사의 대응 날짜 값 "
                         f"({'같은 요일끼리' if _cmp_mode == '동요일' else '행사 N일차끼리'}). 점에 마우스를 올리면 실제 비교 날짜와 전년비가 나와요. "
                         "대응 날짜는 위 '대응 날짜(이번 ↔ 비교)'와 같아요."
                     )
