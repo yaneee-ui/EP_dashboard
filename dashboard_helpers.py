@@ -975,6 +975,15 @@ DASHBOARD_PERIOD_NOTES = [
         "category": "명품",
         "detail": "입점 > 명품의 EP쿠폰율을 10%에서 11%로 1%p 올려 운영한 기간이에요.",
     },
+    {
+        "start": pd.Timestamp("2026-11-06 16:00"),
+        "end": pd.Timestamp("2026-11-09 10:00"),
+        "label": "e-영업2 EP쿠폰 12% 추가 운영",
+        "bpus": ("e-영업2",),
+        "category": "전체",
+        "detail": "e-영업2에 12% EP쿠폰을 추가로 얹어 운영한 기간이에요.",
+        "caution": "이 구간의 거래액·구매전환율 변동에는 추가 쿠폰 영향이 섞여 있을 수 있으니, 전후·전년 비교할 때 참고하세요.",
+    },
 ]
 
 
@@ -1018,8 +1027,8 @@ def render_period_notes(notes, chart_start=None, chart_end=None):
             f"<div style='font-weight:700;color:#92400e;'>🟨 {n['label']}</div>"
             f"<div>기간: <b>{_fmt_note_dt(n['start'])} ~ {_fmt_note_dt(n['end'])}</b> ({dur_txt})</div>"
             f"<div>{n.get('detail', '')}</div>"
-            f"<div style='color:#6b7280;font-size:0.8rem;'>{partial_txt}이 구간의 거래액·구매전환율 변동에는 쿠폰율 상향 영향이 섞여 있을 수 있으니, "
-            "전후 비교할 때 참고하세요.</div></div>",
+            f"<div style='color:#6b7280;font-size:0.8rem;'>{partial_txt}"
+            f"{n.get('caution') or '이 구간의 거래액·구매전환율 변동에는 쿠폰율 상향 영향이 섞여 있을 수 있으니, 전후 비교할 때 참고하세요.'}</div></div>",
             unsafe_allow_html=True,
         )
 

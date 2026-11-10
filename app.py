@@ -1397,7 +1397,10 @@ if side["page"].startswith("1."):
             _tr_yoy_actual_dates = yoy_actual
 
         # 금년=진한 파랑, 전년=하늘색
-        render_line_chart(chart_df, height=350, unit=unit, yoy_actual_dates=_tr_yoy_actual_dates)
+        render_line_chart(
+            chart_df, height=350, unit=unit, yoy_actual_dates=_tr_yoy_actual_dates,
+            period_notes=period_notes_for(bpu, "전체"),
+        )
 
         _tr_start = tr_series.index.min().strftime('%Y-%m-%d')
         _tr_end = tr_series.index.max().strftime('%Y-%m-%d')
@@ -5403,6 +5406,7 @@ if side["page"].startswith("12."):
                     _et_df[f"{_et_metric}(비교)"] = _et_prev
                     render_line_chart(
                         _et_df, height=350, unit="일별", yoy_actual_dates=_et_actual, yoy_legend_label=_et_leg,
+                        period_notes=period_notes_for(_et_bpu, "전체"),
                     )
                     st.caption(
                         f"{_et_bpu} · {_et_metric} · 파란 선 = 이번 행사 날짜별 값, 하늘색 선 = 비교 행사의 대응 날짜 값 "
