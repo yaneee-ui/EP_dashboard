@@ -1033,6 +1033,12 @@ def render_period_notes(notes, chart_start=None, chart_end=None):
         )
 
 
+def _is_pct_metric(name):
+    """지표 이름이 비율(%) 지표인지: CR, '~율', '(%)'가 들어간 이름 (값은 이미 % 단위)."""
+    n = str(name)
+    return n == "CR" or "(%)" in n or n.endswith("율") or n.endswith("전환율")
+
+
 def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None, period_notes=None, yoy_legend_label=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
@@ -1058,6 +1064,9 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     cols = list(chart_df.columns)
     colors = ["#2563eb", "#7dd3fc"][: len(cols)]
+    # 비율 지표(CR, ~율, (%))는 값이 이미 % 단위(예: 3.5 = 3.5%)라서 축·툴팁에 소수 1자리 + % 로 보여준다
+    # (안 그러면 툴팁이 정수로 반올림돼 '0'이 되고, 축은 SI 접두사로 '800m'처럼 나온다)
+    _is_pct = _is_pct_metric(cols[0])
 
     _df = chart_df.copy()
     _df.index.name = "날짜"
@@ -1080,6 +1089,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
     long_df = _df[cols].reset_index().melt("날짜", var_name="구분", value_name="값")
     long_df = long_df.dropna(subset=["값"])
+    long_df["값_표시"] = long_df["값"].map(lambda v: f"{v:,.1f}%" if _is_pct else f"{v:,.0f}")
 
     if _yoy_map:
         long_df["전년비"] = long_df["날짜"].map(_yoy_map)
@@ -1164,7 +1174,10 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
         .mark_line(strokeWidth=3, point=alt.OverlayMarkDef(size=45, filled=True, opacity=1))
         .encode(
             x=x_enc,
-            y=alt.Y("값:Q", title=None, axis=alt.Axis(format="~s"), scale=alt.Scale(zero=False)),
+            y=alt.Y(
+                "값:Q", title=None, scale=alt.Scale(zero=False),
+                axis=(alt.Axis(format=".1f", labelExpr="datum.label + '%'") if _is_pct else alt.Axis(format="~s")),
+            ),
             color=alt.Color(
                 "구분:N",
                 scale=alt.Scale(domain=cols, range=colors),
@@ -1173,7 +1186,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
             tooltip=[
                 alt.Tooltip("_tooltip_date:T", title="날짜", format=_date_fmt),
                 alt.Tooltip("구분:N", title="구분"),
-                alt.Tooltip("값:Q", title="값", format=",.0f"),
+                alt.Tooltip("값_표시:N", title="값"),
                 alt.Tooltip("전년비_표시:N", title="전년비"),
             ],
         )
@@ -1216,7 +1229,7 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
                 tooltip=[
                     alt.Tooltip("_tooltip_date:T", title="날짜", format=_date_fmt),
                     alt.Tooltip("_ref_label:N", title="표시"),
-                    alt.Tooltip("값:Q", title="값", format=",.0f"),
+                    alt.Tooltip("값_표시:N", title="값"),
                 ],
             )
             chart = alt.layer(chart, _ref_marker).resolve_scale(x="shared", y="shared")
