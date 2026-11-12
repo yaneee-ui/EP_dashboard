@@ -3609,6 +3609,17 @@ if side["page"].startswith("11."):
     st.markdown("---")
     st.markdown("### 📑 주간보고용 · 전년동요일 요약")
 
+    # 1~4번 섹션(BPU별 실적 / 최근 5주 일평균 / 카테고리별 최근 5주 / 일자별 비교) 공통 세그먼트.
+    # 엑셀도 이 선택대로 나오고, 파일명 끝에 _신규가 붙는다(전체는 그대로).
+    _wk_seg_c1, _wk_seg_c2 = st.columns([1, 3])
+    with _wk_seg_c1:
+        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>세그먼트 (아래 1~4번 표·엑셀 공통)</div>", unsafe_allow_html=True)
+        _wk_seg = st.radio(
+            "세그먼트", ["전체", "신규"], index=0, horizontal=True,
+            label_visibility="collapsed", key="wk_segment",
+        )
+    _wk_seg_sfx = "" if _wk_seg == "전체" else f"_{_wk_seg}"
+
     if df_traffic.empty and df_category.empty:
         st.info("데이터가 없습니다. 사이드바에서 EP실적/카테고리 CSV를 업로드해주세요.")
     else:
@@ -3623,9 +3634,9 @@ if side["page"].startswith("11."):
         else:
             _all_dates = pd.DatetimeIndex(sorted(df_category["날짜"].unique()))
 
-        # 카테고리 세그먼트/핏플랍 제외는 2번 페이지에서 지금 설정해둔 값을 그대로 가져온다
-        # (2번 페이지를 안 들렀으면 기본값: 전체 세그먼트, 핏플랍 포함)
-        _wk_cat_segment = st.session_state.get("cat_seg_filter", "전체")
+        # 카테고리 세그먼트는 이 페이지 위쪽 세그먼트 선택을 따른다. 핏플랍 제외만 2번 페이지에서
+        # 지금 설정해둔 값을 그대로 가져온다(2번 페이지를 안 들렀으면 기본값: 핏플랍 포함)
+        _wk_cat_segment = _wk_seg
         _wk_ff_exclude = st.session_state.get("cat_ff_exclude", False)
 
         _rule = UNIT_CONFIG[_wk_unit]["rule"]
@@ -3655,7 +3666,7 @@ if side["page"].startswith("11."):
 
         try:
             _wk_xlsx, _pv_left, _pv_cat_dfs = build_weekly_report_excel(
-                _wk_unit, _wk_ref, df_traffic, df_category, _wk_cat_segment, _wk_ff_exclude
+                _wk_unit, _wk_ref, df_traffic, df_category, _wk_cat_segment, _wk_ff_exclude, segment=_wk_seg
             )
 
             # 실제 계산(build_weekly_report_excel)이 selected_period_date(=_wk_ref)를 그대로
@@ -3690,7 +3701,7 @@ if side["page"].startswith("11."):
             st.download_button(
                 "⬇️ 전년동요일 요약 엑셀 다운로드",
                 data=_wk_xlsx,
-                file_name=f"EP_주간보고_전년동요일_{pd.Timestamp(_wk_ref).strftime('%Y%m')}.xlsx",
+                file_name=f"EP_주간보고_전년동요일_{pd.Timestamp(_wk_ref).strftime('%Y%m')}{_wk_seg_sfx}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=False,
             )
@@ -3801,7 +3812,7 @@ if side["page"].startswith("11."):
 
         # --- 최근 5주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
         st.markdown("---")
-        st.markdown("**최근 5주 일평균**")
+        st.markdown(f"**최근 5주 일평균** ({_wk_seg})")
         _wk4_abs_last = df_traffic["날짜"].max()
         _wk4_ref_monday = _wk4_abs_last - pd.Timedelta(days=_wk4_abs_last.weekday())
         _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(4, -1, -1)]  # 오래된 주 -> 최신 주 순
@@ -3817,7 +3828,7 @@ if side["page"].startswith("11."):
 
         def _wk4_series_for(bpu_list, num_col, den_col):
             sub = df_traffic if bpu_list is None else df_traffic[df_traffic["BPU"].isin(bpu_list)]
-            sub = sub[(sub["BPU"] == "Total") & (sub["회원구분"] == "전체")] if bpu_list is None else sub[sub["회원구분"] == "전체"]
+            sub = sub[(sub["BPU"] == "Total") & (sub["회원구분"] == _wk_seg)] if bpu_list is None else sub[sub["회원구분"] == _wk_seg]
             # bpu_list가 여러 개(자사=e1+e2, 입점=e3+e4)면 날짜별로 먼저 합산해야 한다 —
             # 그냥 이어붙이기만 하면 나중에 .mean()을 취할 때 'e1값과 e2값의 평균'이 돼버려서
             # (실제로 원하는 e1+e2 합산의 절반으로) 반토막 나는 버그가 있었음.
@@ -4009,7 +4020,7 @@ if side["page"].startswith("11."):
         # expander로 감싼다(기본 접힘). 부분주 보정 등 계산 원칙은 위 BPU별 표와 동일. ---
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown("**카테고리별 최근 5주 일평균 (BPU·지표별 세분화)**")
+        st.markdown(f"**카테고리별 최근 5주 일평균 (BPU·지표별 세분화)** ({_wk_seg})")
 
         _wk4_cat_metric_defs = [
             ("거래액", "거래액", None, False, False),
@@ -4239,7 +4250,7 @@ if side["page"].startswith("11."):
         st.download_button(
             "⬇️ 엑셀 다운로드 (최근 5주 일평균)",
             data=_wk4_buf.getvalue(),
-            file_name=f"최근5주일평균_{_wk4_abs_last.strftime('%Y%m%d')}.xlsx",
+            file_name=f"최근5주일평균_{_wk4_abs_last.strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         )
 
@@ -4269,16 +4280,16 @@ if side["page"].startswith("11."):
         if df_traffic.empty:
             st.info("EP실적 데이터가 없어요.")
         else:
-            _dc = compute_daily_compare(df_traffic)
+            _dc = compute_daily_compare(df_traffic, segment=_wk_seg)
             st.caption(
-                f"기준일 {_dc['ref'].strftime('%Y-%m-%d')} · 전일비 = 기준일 vs 전날 · "
+                f"기준일 {_dc['ref'].strftime('%Y-%m-%d')} · 세그먼트: {_wk_seg} · 전일비 = 기준일 vs 전날 · "
                 f"전년동요일비 = vs {_dc['yoy_date'].strftime('%Y-%m-%d')}(364일 전) · "
                 "CR/객단가는 합계 기준 재계산 · 자사=e-영업1+2, 정상=e-영업1, 이월=e-영업2, 입점=e-영업3+4"
             )
             st.download_button(
                 "⬇️ 일자별 비교 엑셀 다운로드",
                 data=build_daily_compare_excel(_dc),
-                file_name=f"일자별비교_{_dc['ref'].strftime('%Y%m%d')}.xlsx",
+                file_name=f"일자별비교_{_dc['ref'].strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="daily_cmp_dl",
             )
@@ -4291,14 +4302,14 @@ if side["page"].startswith("11."):
                 st.caption(
                     f"기준일 {_dcc['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원 · 세그먼트: {_wk_cat_segment}"
                     + (" · 핏플랍 제외" if _wk_ff_exclude else "")
-                    + " (2번 페이지 설정 그대로) · 두 날짜 모두 실적이 없는 카테고리는 숨겨요 · "
+                    + " (핏플랍 제외는 2번 페이지 설정) · 두 날짜 모두 실적이 없는 카테고리는 숨겨요 · "
                     "TOTAL은 위 표와 같은 전체 실적(EP실적) 기준이고, 카테고리 행은 카테고리 원본이라 "
                     "여러 카테고리에 걸친 구매가 중복 집계돼 합계가 TOTAL보다 클 수 있어요"
                 )
                 st.download_button(
                     "⬇️ 카테고리별 일자 비교 엑셀 다운로드",
                     data=build_daily_category_compare_excel(_dcc),
-                    file_name=f"카테고리별일자비교_{_dcc['ref'].strftime('%Y%m%d')}.xlsx",
+                    file_name=f"카테고리별일자비교_{_dcc['ref'].strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     key="daily_cat_cmp_dl",
                 )

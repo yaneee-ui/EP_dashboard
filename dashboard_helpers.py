@@ -338,7 +338,7 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
     return agg
 
 
-def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_category, cat_segment, ff_exclude):
+def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_category, cat_segment, ff_exclude, segment="전체"):
     """주간보고용 엑셀(bytes) 생성.
     - 시트1 'BPU별': compute_bpu_comparison_rows() 그대로 사용 → 1번 페이지 비교표와 100% 동일 로직/숫자
     - 시트2~6 '카테고리별(거래액/트래픽/구매객수/CR/객단가)': compute_category_yoy_rows() 그대로
@@ -359,7 +359,14 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
     col_prev, col_cur = f"{prev_year}년", f"{cur_year}년"
 
     # --- 시트1: BPU별 (1번 페이지와 동일 함수) — 이미지 기준: 전체/e-영업1~4만 ---
-    _bpu_rows, cfg, BPU_COLS = compute_bpu_comparison_rows(df_traffic, unit, selected_period_date)
+    # segment(전체/신규 등): BPU별 시트는 그 세그먼트 행만 골라 '전체'로 이름만 바꿔 같은 함수에
+    # 태운다(종합 요약 페이지와 같은 방식). 카테고리 시트는 compute_category_yoy_rows가
+    # cat_segment로 직접 거르니 호출 쪽에서 cat_segment=segment로 넘긴다.
+    _seg_traffic = df_traffic
+    if segment != "전체" and "회원구분" in df_traffic.columns:
+        _seg_traffic = df_traffic[df_traffic["회원구분"] == segment].copy()
+        _seg_traffic["회원구분"] = "전체"
+    _bpu_rows, cfg, BPU_COLS = compute_bpu_comparison_rows(_seg_traffic, unit, selected_period_date)
     _bpu_keep = {"Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"}
     _bpu_label = {"Total": "전체"}
     left_rows = []
@@ -3807,12 +3814,12 @@ _DAILY_CMP_METRICS = [
 ]
 
 
-def compute_daily_compare(df_traffic, ref_date=None, n_days=2):
+def compute_daily_compare(df_traffic, ref_date=None, n_days=2, segment="전체"):
     """기준일 포함 최근 n_days일의 값 + 전일비 + 전년동요일비(364일 전).
 
     구분(Total/자사/정상/이월/입점)별로 날짜 단위 합산 후 비율 지표(CR/객단가)는
     합계/합계로 계산한다. 전일비는 기준일 vs 바로 전날, 전년동요일비는 기준일 vs 364일 전."""
-    base = df_traffic[df_traffic["회원구분"] == "전체"] if "회원구분" in df_traffic.columns else df_traffic
+    base = df_traffic[df_traffic["회원구분"] == segment] if "회원구분" in df_traffic.columns else df_traffic
     ref = pd.Timestamp(ref_date) if ref_date is not None else base["날짜"].max()
     dates = [ref - pd.Timedelta(days=i) for i in range(n_days - 1, -1, -1)]
     yoy_date = ref - pd.Timedelta(days=364)
