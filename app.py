@@ -1308,7 +1308,9 @@ if side["page"].startswith("1."):
         tr_full = metric_period_series(tr_combo, tr_metric, unit)  # CR/객단가는 분자합/분모합
 
         # 올해만 추출
-        latest_year = int(tr_full.index.max().year)
+        # 기준 일자를 작년 이전으로 골랐을 땐 그 해를 '올해' 구간으로 쓴다(안 그러면 최신 연도를
+        # 기준일까지 자르다 빈 시리즈가 돼서 아래 기간 선택이 에러남)
+        latest_year = int(selected_period_date.year) if selected_period_date is not None else int(tr_full.index.max().year)
         tr_series = tr_full[tr_full.index.year == latest_year]
         # 표/KPI 카드는 selected_period_date까지만 자르는데 이 차트는 최신 연도 데이터를
         # 끝까지 다 보여주고 있어서 표랑 차트 마지막 지점이 다른 값을 가리키는 버그가
@@ -1590,26 +1592,38 @@ if side["page"].startswith("1."):
     if not df_coupon.empty:
         st.markdown("---")
         st.markdown("### 🎟️ 쿠폰 비용 요약", unsafe_allow_html=True)
-        _cs_sub = df_coupon[df_coupon["BPU"] == "Total"]
-        _cs_by_month = _cs_sub.groupby("연월")["쿠폰할인"].sum().sort_index()
+        # 위쪽 '기준 일자/시점'과 '매체 필터'를 따른다: 기준 시점이 속한 달의 1일 ~ 기준 시점(그 기간의 끝)까지 누계.
+        # (예전엔 매체·기준일과 무관하게 항상 '최신월 Total'만 보여줬음)
+        _cs_cut = pd.Timestamp(raw_cutoff_date(selected_period_date, unit)) if selected_period_date is not None else df_coupon_daily["날짜"].max()
+        _cs_cut = min(_cs_cut, df_coupon_daily["날짜"].max())
+        _cs_start = _cs_cut.replace(day=1)
+        _cs_bpus = BPU_GROUPS[bpu] if bpu in BPU_GROUPS else (["e-영업1", "e-영업2", "e-영업3", "e-영업4"] if bpu == "Total" else [bpu])
+        _cs_rows = df_coupon_daily[
+            df_coupon_daily["BPU"].isin(_cs_bpus) & (df_coupon_daily["날짜"] >= _cs_start) & (df_coupon_daily["날짜"] <= _cs_cut)
+        ]
+        _cs_by_month = _cs_rows["쿠폰할인"]
         if not _cs_by_month.empty:
-            _cs_latest = _cs_by_month.index.max()
-            _cs_gmv = df_traffic[(df_traffic["BPU"] == "Total") & (df_traffic["회원구분"] == "전체")].set_index("날짜")["거래액"].resample("MS").sum()
-            _cs_gmv_val = _cs_gmv.get(_cs_latest, None)
-            _cs_coupon_val = _cs_by_month.get(_cs_latest, 0)
+            _cs_latest = _cs_start
+            _cs_gmv_df = df_traffic[
+                df_traffic["BPU"].isin(_cs_bpus) & (df_traffic["회원구분"] == "전체")
+                & (df_traffic["날짜"] >= _cs_start) & (df_traffic["날짜"] <= _cs_cut)
+            ]
+            _cs_gmv_val = _cs_gmv_df["거래액"].sum()
+            _cs_coupon_val = _cs_rows["쿠폰할인"].sum()
             _cs_rate = (_cs_coupon_val / _cs_gmv_val * 100) if _cs_gmv_val else None
+            _cs_part = "" if _cs_cut.day == (_cs_cut + pd.offsets.MonthEnd(0)).day else f" (~{_cs_cut.day}일 누계)"
             _cs_c1, _cs_c2, _cs_c3 = st.columns(3)
             with _cs_c1:
                 st.markdown(
                     f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_cs_latest.strftime('%Y년 %m월')} 쿠폰할인</div>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>{_cs_latest.strftime('%Y년 %m월')} 쿠폰할인{_cs_part}</div>"
                     f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cs_coupon_val:,.0f}</div></div>",
                     unsafe_allow_html=True,
                 )
             with _cs_c2:
                 st.markdown(
                     f"<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:14px 16px;'>"
-                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액(Total)</div>"
+                    f"<div style='color:#6b7280;font-size:0.8rem;margin-bottom:4px;'>거래액({'Total' if bpu == 'Total' else bpu})</div>"
                     f"<div style='font-size:clamp(0.95rem,1.7vw,1.4rem);white-space:nowrap;font-weight:700;color:#111827;'>{_cs_gmv_val:,.0f}</div></div>"
                     if _cs_gmv_val else "<div></div>",
                     unsafe_allow_html=True,
@@ -1622,7 +1636,7 @@ if side["page"].startswith("1."):
                     if _cs_rate is not None else "<div></div>",
                     unsafe_allow_html=True,
                 )
-            st.caption("👉 매체별·쿠폰유형별 상세, 쿠폰명 랭킹은 사이드바 '5. 쿠폰 비용 분석' 페이지에서 볼 수 있어요.")
+            st.caption(f"{bpu} · 기준 시점이 속한 달 기준이에요. 👉 매체별·쿠폰유형별 상세, 쿠폰명 랭킹은 사이드바 '5. 쿠폰 비용 분석' 페이지에서 볼 수 있어요.")
 
     st.markdown("---")
     st.markdown("### 🏢 사업부별 실적 비교", unsafe_allow_html=True)
@@ -2147,7 +2161,10 @@ if side["page"].startswith("2."):
             _agg = "sum" if (unit == "월마감" and cat_metric in {"트래픽", "거래액", "구매객수"}) else "mean"
             cat_full = metric_period_series(cat_combo, cat_metric, unit)  # CR/객단가는 분자합/분모합
 
-            latest_year_cat = int(cat_full.index.max().year) if not cat_full.empty else None
+            latest_year_cat = (
+                (int(selected_period_date.year) if selected_period_date is not None else int(cat_full.index.max().year))
+                if not cat_full.empty else None
+            )
             cat_series = cat_full[cat_full.index.year == latest_year_cat] if latest_year_cat else cat_full
             # 표(카테고리 실적 요약 표)/KPI 카드는 selected_period_date까지만 자르는데,
             # 이 차트는 그걸 안 하고 최신 연도 데이터를 끝까지 다 보여주고 있어서 표랑 차트
