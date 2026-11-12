@@ -4627,8 +4627,16 @@ if side["page"].startswith("3."):
         # unit은 위 스티키 헤더에서 이미 사이드바 전역값 그대로 쓰고 있어서 별도 지정 불필요
 
         # ── 섹션 1: 핵심 지표 (전체 BPU) ──
-        st.markdown("#### 📊 핵심 지표 (전체)")
-        _sum_bpu_rows, _sum_cfg, _ = compute_bpu_comparison_rows(df_traffic, unit, _sum_ref)
+        st.markdown(f"#### 📊 핵심 지표 ({_sum_segment})")
+        # 위 '세그먼트' 선택(전체/회원/신규)을 핵심 지표·BPU 표·인사이트에도 반영한다.
+        # compute_bpu_comparison_rows는 회원구분='전체' 행만 보므로, 선택한 세그먼트 행만 추려서
+        # '전체'로 재라벨링해 넘긴다(회원/신규 실적 주차별 페이지와 같은 방식).
+        if _sum_segment == "전체":
+            _sum_seg_df = df_traffic
+        else:
+            _sum_seg_df = df_traffic[df_traffic["회원구분"] == _sum_segment].copy()
+            _sum_seg_df["회원구분"] = "전체"
+        _sum_bpu_rows, _sum_cfg, _ = compute_bpu_comparison_rows(_sum_seg_df, unit, _sum_ref)
         _sum_total_metrics = {r["metric_label"]: r for r in _sum_bpu_rows if r["bpu"] == "Total" and r["stats"]}
         _sum_metric_order = ["EP UV", "거래액(순결제)", "구매객수", "구매전환율(%)", "객단가"]
         _sum_kpi_cols = st.columns(len(_sum_metric_order))
@@ -4654,7 +4662,7 @@ if side["page"].startswith("3."):
         st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
 
         # ── 섹션 2: BPU별 요약 실적 (전체 지표 x 전체 BPU 표, HTML 테이블로 증감률 색상 적용) ──
-        st.markdown("#### 🏢 사업부(BPU)별 요약 실적")
+        st.markdown(f"#### 🏢 사업부(BPU)별 요약 실적 ({_sum_segment})")
         _sum_bpu_order = ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]
         _sum_bpu_display = {"Total": "전체"}
         _sum_header_html = "<th>지표</th>" + "".join(
