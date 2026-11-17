@@ -3618,6 +3618,8 @@ if side["page"].startswith("11."):
     st.markdown(
         """<style>
         .wk-anchor{scroll-margin-top:14rem;height:0;}
+        /* 영역 우측 상단 엑셀 다운로드 버튼 — 컬럼 안에서 오른쪽 끝으로 */
+        [class*="st-key-wkdl_"]{display:flex;justify-content:flex-end;width:100% !important;}
         [data-testid="stElementContainer"]:has(.wk-nav){position:sticky;top:8.1rem;z-index:50;}
         .wk-nav{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:rgba(255,255,255,0.96);
                 border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.05);}
@@ -3665,7 +3667,8 @@ if side["page"].startswith("11."):
         _wk_s = pd.Series(1, index=_all_dates).resample(_rule).sum()
         _wk_periods = list(_wk_s.index)
         _wk_labels = [make_period_label(d, _wk_unit) for d in _wk_periods]
-        _wk_c1, _wk_c2 = st.columns([1, 3])
+        _wk_c1, _wk_c2 = st.columns([1, 3], vertical_alignment="bottom")
+        _wk_dl_summary_ph = _wk_c2.empty()  # 우측 상단 엑셀 버튼 자리 (아래에서 채움)
         with _wk_c1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기준 시점(월)</div>", unsafe_allow_html=True)
             _wk_sel_label = st.selectbox(
@@ -3720,12 +3723,13 @@ if side["page"].startswith("11."):
                 unsafe_allow_html=True,
             )
 
-            st.download_button(
+            _wk_dl_summary_ph.download_button(
                 "⬇️ 전년동요일 요약 엑셀 다운로드",
                 data=_wk_xlsx,
                 file_name=f"EP_주간보고_전년동요일_{pd.Timestamp(_wk_ref).strftime('%Y%m')}{_wk_seg_sfx}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 use_container_width=False,
+                key="wkdl_summary",
             )
 
             st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
@@ -3835,7 +3839,9 @@ if side["page"].startswith("11."):
         # --- 최근 5주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
         st.markdown("<div class='wk-anchor' id='wk-sec-w5'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown(f"**최근 5주 일평균** ({_wk_seg})")
+        _wk_h2_l, _wk_h2_r = st.columns([3, 2], vertical_alignment="center")
+        _wk_h2_l.markdown(f"**최근 5주 일평균** ({_wk_seg})")
+        _wk_dl_w5_ph = _wk_h2_r.empty()
         _wk4_abs_last = df_traffic["날짜"].max()
         _wk4_ref_monday = _wk4_abs_last - pd.Timedelta(days=_wk4_abs_last.weekday())
         _wk4_starts = [_wk4_ref_monday - pd.Timedelta(weeks=w) for w in range(4, -1, -1)]  # 오래된 주 -> 최신 주 순
@@ -4044,7 +4050,9 @@ if side["page"].startswith("11."):
         st.markdown("<div class='wk-anchor' id='wk-sec-w5cat'></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown(f"**카테고리별 최근 5주 일평균 (BPU·지표별 세분화)** ({_wk_seg})")
+        _wk_h3_l, _wk_h3_r = st.columns([3, 2], vertical_alignment="center")
+        _wk_h3_l.markdown(f"**카테고리별 최근 5주 일평균 (BPU·지표별 세분화)** ({_wk_seg})")
+        _wk_dl_w5cat_ph = _wk_h3_r.empty()
 
         _wk4_cat_metric_defs = [
             ("거래액", "거래액", None, False, False),
@@ -4271,12 +4279,15 @@ if side["page"].startswith("11."):
 
         _wk4_buf = io.BytesIO()
         _wk4_wb.save(_wk4_buf)
-        st.download_button(
-            "⬇️ 엑셀 다운로드 (최근 5주 일평균)",
-            data=_wk4_buf.getvalue(),
-            file_name=f"최근5주일평균_{_wk4_abs_last.strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
-            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        )
+        # 최근 5주 / 카테고리별 5주는 같은 엑셀 파일(시트 2개)이라 두 영역 우측 상단에 같은 버튼을 둔다
+        for _ph, _k in ((_wk_dl_w5_ph, "wkdl_w5"), (_wk_dl_w5cat_ph, "wkdl_w5cat")):
+            _ph.download_button(
+                "⬇️ 엑셀 다운로드 (최근 5주 일평균)",
+                data=_wk4_buf.getvalue(),
+                file_name=f"최근5주일평균_{_wk4_abs_last.strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key=_k,
+            )
 
         # 규칙 기반 자동 인사이트 — 이미 계산된 _wk4_all_rows(거래액/Total 행)를 재사용해서
         # "최근 주차 실적" 한 줄 요약을 만든다.
@@ -4301,7 +4312,9 @@ if side["page"].startswith("11."):
         # ------------------------------------------------------------
         st.markdown("<div class='wk-anchor' id='wk-sec-daily'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown("#### 📆 일자별 비교 (최근 2일)")
+        _wk_h4_l, _wk_h4_r = st.columns([3, 2], vertical_alignment="center")
+        _wk_h4_l.markdown("#### 📆 일자별 비교 (최근 2일)")
+        _wk_dl_daily_ph = _wk_h4_r.empty()
         if df_traffic.empty:
             st.info("EP실적 데이터가 없어요.")
         else:
@@ -4311,19 +4324,21 @@ if side["page"].startswith("11."):
                 f"전년동요일비 = vs {_dc['yoy_date'].strftime('%Y-%m-%d')}(364일 전) · "
                 "CR/객단가는 합계 기준 재계산 · 자사=e-영업1+2, 정상=e-영업1, 이월=e-영업2, 입점=e-영업3+4"
             )
-            st.download_button(
+            _wk_dl_daily_ph.download_button(
                 "⬇️ 일자별 비교 엑셀 다운로드",
                 data=build_daily_compare_excel(_dc),
                 file_name=f"일자별비교_{_dc['ref'].strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="daily_cmp_dl",
+                key="wkdl_daily",
             )
             render_daily_compare_html(_dc)
 
             if not df_category.empty:
                 st.markdown("<div class='wk-anchor' id='wk-sec-dailycat'></div>", unsafe_allow_html=True)
                 st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
-                st.markdown("**카테고리별 (정상 / 이월 / 입점)**")
+                _wk_h5_l, _wk_h5_r = st.columns([3, 2], vertical_alignment="center")
+                _wk_h5_l.markdown("**카테고리별 (정상 / 이월 / 입점)**")
+                _wk_dl_dailycat_ph = _wk_h5_r.empty()
                 _dcc = compute_daily_category_compare(df_category, _wk_cat_segment, _wk_ff_exclude, df_traffic=df_traffic)
                 st.caption(
                     f"기준일 {_dcc['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원 · 세그먼트: {_wk_cat_segment}"
@@ -4332,12 +4347,12 @@ if side["page"].startswith("11."):
                     "TOTAL은 위 표와 같은 전체 실적(EP실적) 기준이고, 카테고리 행은 카테고리 원본이라 "
                     "여러 카테고리에 걸친 구매가 중복 집계돼 합계가 TOTAL보다 클 수 있어요"
                 )
-                st.download_button(
+                _wk_dl_dailycat_ph.download_button(
                     "⬇️ 카테고리별 일자 비교 엑셀 다운로드",
                     data=build_daily_category_compare_excel(_dcc),
                     file_name=f"카테고리별일자비교_{_dcc['ref'].strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    key="daily_cat_cmp_dl",
+                    key="wkdl_dailycat",
                 )
                 _dcc_l, _dcc_r = st.columns(2)
                 with _dcc_l:
@@ -4352,7 +4367,9 @@ if side["page"].startswith("11."):
         # ------------------------------------------------------------
         st.markdown("<div class='wk-anchor' id='wk-sec-monthly'></div>", unsafe_allow_html=True)
         st.markdown("---")
-        st.markdown("#### 📈 월별 실적 추이 (전체 vs EP)")
+        _wk_h6_l, _wk_h6_r = st.columns([3, 2], vertical_alignment="center")
+        _wk_h6_l.markdown("#### 📈 월별 실적 추이 (전체 vs EP)")
+        _wk_dl_monthly_ph = _wk_h6_r.empty()
         if df_total_daily.empty:
             st.info("전체실적 데이터(ep_total_daily.csv)가 없어요. 1_전체실적.xlsx를 올린 뒤 convert_total.py를 실행해주세요.")
         else:
@@ -4375,12 +4392,12 @@ if side["page"].startswith("11."):
                     "ℹ️ 채널별 트래픽은 전체실적 원본에 올해(2026년)분만 있어서, 작년 채널별 트래픽·트래픽당 거래액·전년비는 비어 있어요. "
                     "작년 직접/광고/제휴/PUSH 거래액은 전체채널별실적 기준으로 채웠어요 (올해 전체실적과 약 0.1% 이내 차이)."
                 )
-            st.download_button(
+            _wk_dl_monthly_ph.download_button(
                 "⬇️ 월별 실적 추이 엑셀 다운로드",
                 data=build_total_monthly_trend_excel(_tt, all_channels=_tt_all),
                 file_name=f"월별실적추이{'_전채널' if _tt_all else ''}_{_tt['ref'].strftime('%Y%m%d')}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="total_trend_dl",
+                key="wkdl_monthly",
             )
             render_total_monthly_trend_html(_tt, all_channels=_tt_all)
 
