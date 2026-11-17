@@ -125,28 +125,79 @@ def _month_progress(df_traffic, ref):
 
 
 def compute_watch_items(rows):
-    """거래액·핵심 지표에서 주목할 변화를 규칙으로 뽑는다. [(심각도, 아이콘, 문장)] — 심각도 큰 순."""
+    """거래액·핵심 지표에서 주목할 변화를 규칙으로 뽑는다.
+
+    같은 대상·지표는 한 줄로 합친다(전일비·전년동요일비를 한 줄에 같이 보여주려고).
+    반환: [{"sev","kind"(drop/surge),"name","metric","cur","prev","yoy","prev_flag","yoy_flag"}] — 심각도 큰 순.
+    *_flag 는 해당 칸이 기준을 넘었는지("drop"/"surge"/None)."""
     items = []
     by = {(r["metric_label"], r["bpu"]): r["stats"] for r in rows}
     nm = {"Total": "전체"}
+
+    def _add(name, metric, cur, s, check_prev):
+        prev, yoy = s.get("prev_delta"), s.get("yoy_delta")
+        pf = "drop" if (check_prev and prev is not None and prev <= DROP_PREV_PCT) else None
+        yf = None
+        if yoy is not None and yoy <= DROP_YOY_PCT:
+            yf = "drop"
+        elif yoy is not None and yoy >= SURGE_YOY_PCT:
+            yf = "surge"
+        if not pf and not yf:
+            return
+        kind = "drop" if "drop" in (pf, yf) else "surge"
+        sev = max(
+            abs(prev) if pf else 0,
+            (abs(yoy) + 5) if yf == "drop" else 0,
+            (yoy / 2) if yf == "surge" else 0,
+        )
+        items.append({"sev": sev, "kind": kind, "name": name, "metric": metric, "cur": cur,
+                      "prev": prev, "yoy": yoy, "prev_flag": pf, "yoy_flag": yf})
+
     for bpu in ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4", "자사", "입점"]:
         s = by.get(("거래액(순결제)", bpu))
-        if not s:
-            continue
-        prev, yoy = s.get("prev_delta"), s.get("yoy_delta")
-        b = nm.get(bpu, bpu)
-        if prev is not None and prev <= DROP_PREV_PCT:
-            items.append((abs(prev), "📉", f"<b>{b}</b> 거래액이 전일보다 {abs(prev):.1f}% 줄었어요 ({s['current'] / 1e6:,.0f}백만원)"))
-        if yoy is not None and yoy <= DROP_YOY_PCT:
-            items.append((abs(yoy) + 5, "📉", f"<b>{b}</b> 거래액이 전년 동요일보다 {abs(yoy):.1f}% 낮아요"))
-        if yoy is not None and yoy >= SURGE_YOY_PCT:
-            items.append((yoy / 2, "📈", f"<b>{b}</b> 거래액이 전년 동요일보다 {yoy:.1f}% 높아요"))
-    for label in ["구매전환율(%)", "EP UV", "객단가"]:
+        if s:
+            _add(nm.get(bpu, bpu), "거래액", f"{s['current'] / 1e6:,.0f}백만", s, True)
+    # 비율·UV·객단가는 전일 변동이 원래 크므로 전년 동요일 하락만 본다(기존 규칙 그대로)
+    for label, fmt in [("구매전환율(%)", "{:.1f}%"), ("EP UV", "{:,.0f}"), ("객단가", "{:,.0f}")]:
         s = by.get((label, "Total"))
         if s and s.get("yoy_delta") is not None and s["yoy_delta"] <= DROP_YOY_PCT:
-            items.append((abs(s["yoy_delta"]), "📉", f"전체 <b>{label.replace('(%)', '')}</b>이 전년 동요일보다 {abs(s['yoy_delta']):.1f}% 낮아요"))
-    items.sort(key=lambda x: -x[0])
+            _add("전체", label.replace("(%)", ""), fmt.format(s["current"]), s, False)
+    items.sort(key=lambda x: -x["sev"])
     return items
+
+
+def _watch_cell(v, flag):
+    """증감률 한 칸. 기준을 넘은 칸만 색 배지로 강조하고, 나머지는 옅게."""
+    if v is None or pd.isna(v):
+        return "<td class='w-n'><span style='color:#cbd5e1;'>-</span></td>"
+    txt = f"△{abs(v):.1f}%" if v < 0 else f"+{v:.1f}%"
+    if flag == "drop":
+        return f"<td class='w-n'><span style='background:#fee2e2;color:#b91c1c;font-weight:700;border-radius:6px;padding:2px 8px;'>{txt}</span></td>"
+    if flag == "surge":
+        return f"<td class='w-n'><span style='background:#dcfce7;color:#15803d;font-weight:700;border-radius:6px;padding:2px 8px;'>{txt}</span></td>"
+    return f"<td class='w-n'><span style='color:#9ca3af;'>{txt}</span></td>"
+
+
+def _watch_table(items):
+    rows = ""
+    for it in items:
+        bar = "#ef4444" if it["kind"] == "drop" else "#22c55e"
+        rows += (
+            f"<tr><td style='border-left:4px solid {bar};padding-left:10px;white-space:nowrap;'><b>{it['name']}</b></td>"
+            f"<td style='white-space:nowrap;color:#374151;'>{it['metric']}</td>"
+            f"<td class='w-n' style='color:#6b7280;'>{it['cur']}</td>"
+            f"{_watch_cell(it['prev'], it['prev_flag'])}{_watch_cell(it['yoy'], it['yoy_flag'])}</tr>"
+        )
+    return (
+        "<style>.watch-t{width:100%;border-collapse:collapse;font-size:0.88rem;}"
+        ".watch-t th{font-size:0.76rem;color:#6b7280;font-weight:600;text-align:right;padding:4px 10px;border-bottom:1px solid #e5e7eb;}"
+        ".watch-t th:first-child,.watch-t th:nth-child(2){text-align:left;}"
+        ".watch-t td{padding:7px 10px;border-bottom:1px solid #f1f2f4;}"
+        ".watch-t td.w-n{text-align:right;white-space:nowrap;}</style>"
+        "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:10px;padding:6px 8px;overflow-x:auto;'>"
+        "<table class='watch-t'><thead><tr><th>대상</th><th>지표</th><th>어제 값</th><th>전일비</th><th>전년 동요일비</th></tr></thead>"
+        f"<tbody>{rows}</tbody></table></div>"
+    )
 
 
 def _category_top(df_category, ref, last):
@@ -236,13 +287,20 @@ def render_home(df_ep, df_traffic, df_category, df_product, df_total_daily, df_c
     _section("🔔 주목할 변화", f"전일 {DROP_PREV_PCT:.0f}% · 전년 동요일 {DROP_YOY_PCT:.0f}% 이하 하락 / +{SURGE_YOY_PCT:.0f}% 이상 상승")
     watch = compute_watch_items(rows)
     if watch:
+        drops = [w for w in watch if w["kind"] == "drop"]
+        surges = [w for w in watch if w["kind"] == "surge"]
         st.markdown(
-            "".join(
-                "<div style='background:#fff;border:1px solid #e5e7eb;border-radius:8px;padding:8px 14px;margin-bottom:6px;font-size:0.88rem;'>"
-                f"{ic} {tx}</div>" for _, ic, tx in watch[:8]
-            ),
+            "<div style='font-size:0.86rem;color:#374151;margin:0 0 6px;'>"
+            f"<span style='color:#b91c1c;font-weight:700;'>📉 하락 {len(drops)}건</span>"
+            f" &nbsp;·&nbsp; <span style='color:#15803d;font-weight:700;'>📈 상승 {len(surges)}건</span>"
+            " <span style='color:#9ca3af;'>· 색 칠한 칸이 기준을 넘은 값이에요</span></div>",
             unsafe_allow_html=True,
         )
+        TOP_N = 5
+        st.markdown(_watch_table(watch[:TOP_N]), unsafe_allow_html=True)
+        if len(watch) > TOP_N:
+            with st.expander(f"나머지 {len(watch) - TOP_N}건 더 보기"):
+                st.markdown(_watch_table(watch[TOP_N:]), unsafe_allow_html=True)
     else:
         st.markdown(
             "<div style='background:#f0fdf4;border-radius:8px;padding:9px 14px;font-size:0.88rem;color:#15803d;'>"
