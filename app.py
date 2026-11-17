@@ -3615,14 +3615,19 @@ if side["page"].startswith("11."):
         ("summary", "📋 요약표·엑셀"), ("w5", "📊 최근 5주 일평균"), ("w5cat", "🗂️ 카테고리별 5주"),
         ("daily", "📆 일자별 비교"), ("dailycat", "🏷️ 카테고리별 일자비교"), ("monthly", "📈 월별 추이"),
     ]
-    st.markdown(
+    _wk_nav_c1, _wk_nav_c2 = st.columns([4, 1.3])
+    _wk_nav_c1.markdown(
         """<style>
         .wk-anchor{scroll-margin-top:14rem;height:0;}
         /* 영역 우측 상단 엑셀 다운로드 버튼 — 컬럼 안에서 오른쪽 끝으로 */
         [class*="st-key-wkdl_"]{display:flex;justify-content:flex-end;width:100% !important;}
-        [data-testid="stElementContainer"]:has(.wk-nav){position:sticky;top:8.1rem;z-index:50;}
-        .wk-nav{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:rgba(255,255,255,0.96);
+        /* 바로가기 + 세그먼트 선택을 한 줄(카드)로 묶어 스크롤해도 따라오게 고정 */
+        [data-testid="stLayoutWrapper"]:has(.wk-nav){position:sticky;top:8.1rem;z-index:50;}
+        [data-testid="stHorizontalBlock"]:has(.wk-nav){
+                align-items:center;gap:0.5rem;padding:8px 12px;background:#ffffff;
                 border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.05);}
+        .wk-nav{display:flex;flex-wrap:wrap;gap:6px;}
+        .wk-segbox-label{font-size:0.72rem;color:#6b7280;margin-bottom:-4px;white-space:nowrap;}
         .wk-nav a{font-size:0.82rem;padding:4px 11px;border-radius:999px;background:#f3f4f6;color:#374151 !important;
                   text-decoration:none !important;white-space:nowrap;border:1px solid transparent;}
         .wk-nav a:hover{background:#eef2ff;color:#4338ca !important;border-color:#c7d2fe;}
@@ -3635,9 +3640,9 @@ if side["page"].startswith("11."):
 
     # 1~4번 섹션(BPU별 실적 / 최근 5주 일평균 / 카테고리별 최근 5주 / 일자별 비교) 공통 세그먼트.
     # 엑셀도 이 선택대로 나오고, 파일명 끝에 _신규가 붙는다(전체는 그대로).
-    _wk_seg_c1, _wk_seg_c2 = st.columns([1, 3])
-    with _wk_seg_c1:
-        st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>세그먼트 (아래 1~4번 표·엑셀 공통)</div>", unsafe_allow_html=True)
+    # 바로가기 줄 오른쪽에 같이 둔다(스크롤해도 같이 따라옴).
+    with _wk_nav_c2:
+        st.markdown("<div class='wk-segbox-label'>세그먼트 (아래 표·엑셀 공통)</div>", unsafe_allow_html=True)
         _wk_seg = st.radio(
             "세그먼트", ["전체", "신규"], index=0, horizontal=True,
             label_visibility="collapsed", key="wk_segment",
