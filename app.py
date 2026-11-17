@@ -3609,6 +3609,28 @@ if side["page"].startswith("11."):
     st.markdown("---")
     st.markdown("### 📑 주간보고용 · 전년동요일 요약")
 
+    # 섹션 바로가기 — 항목이 많은 페이지라 맨 위에서 눌러 해당 영역으로 바로 이동한다.
+    # (각 섹션 앞에 id가 달린 빈 div(.wk-anchor)를 두고 #링크로 스크롤. 스크롤해도 따라오게 sticky)
+    _wk_nav_items = [
+        ("summary", "📋 요약표·엑셀"), ("w5", "📊 최근 5주 일평균"), ("w5cat", "🗂️ 카테고리별 5주"),
+        ("daily", "📆 일자별 비교"), ("dailycat", "🏷️ 카테고리별 일자비교"), ("monthly", "📈 월별 추이"),
+    ]
+    st.markdown(
+        """<style>
+        .wk-anchor{scroll-margin-top:14rem;height:0;}
+        [data-testid="stElementContainer"]:has(.wk-nav){position:sticky;top:8.1rem;z-index:50;}
+        .wk-nav{display:flex;flex-wrap:wrap;gap:6px;padding:8px 10px;background:rgba(255,255,255,0.96);
+                border:1px solid #e5e7eb;border-radius:10px;box-shadow:0 2px 6px rgba(0,0,0,0.05);}
+        .wk-nav a{font-size:0.82rem;padding:4px 11px;border-radius:999px;background:#f3f4f6;color:#374151 !important;
+                  text-decoration:none !important;white-space:nowrap;border:1px solid transparent;}
+        .wk-nav a:hover{background:#eef2ff;color:#4338ca !important;border-color:#c7d2fe;}
+        </style><div class='wk-nav'>"""
+        + "".join(f"<a href='#wk-sec-{_k}'>{_t}</a>" for _k, _t in _wk_nav_items)
+        + "</div>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("<div class='wk-anchor' id='wk-sec-summary'></div>", unsafe_allow_html=True)
+
     # 1~4번 섹션(BPU별 실적 / 최근 5주 일평균 / 카테고리별 최근 5주 / 일자별 비교) 공통 세그먼트.
     # 엑셀도 이 선택대로 나오고, 파일명 끝에 _신규가 붙는다(전체는 그대로).
     _wk_seg_c1, _wk_seg_c2 = st.columns([1, 3])
@@ -3811,6 +3833,7 @@ if side["page"].startswith("11."):
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
         # --- 최근 5주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
+        st.markdown("<div class='wk-anchor' id='wk-sec-w5'></div>", unsafe_allow_html=True)
         st.markdown("---")
         st.markdown(f"**최근 5주 일평균** ({_wk_seg})")
         _wk4_abs_last = df_traffic["날짜"].max()
@@ -4018,6 +4041,7 @@ if side["page"].startswith("11."):
         # --- 카테고리별 최근 5주 일평균 — BPU(Total/자사/정상/이월/입점) x 지표(거래액/
         # 트래픽/구매객수)로 세분화. 5x3=15개 조합이라 페이지가 너무 길어지지 않게
         # expander로 감싼다(기본 접힘). 부분주 보정 등 계산 원칙은 위 BPU별 표와 동일. ---
+        st.markdown("<div class='wk-anchor' id='wk-sec-w5cat'></div>", unsafe_allow_html=True)
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
         st.markdown(f"**카테고리별 최근 5주 일평균 (BPU·지표별 세분화)** ({_wk_seg})")
@@ -4275,6 +4299,7 @@ if side["page"].startswith("11."):
         # ------------------------------------------------------------
         # 일자별 비교 (기준일 포함 최근 2일) — Total/자사/정상/이월/입점
         # ------------------------------------------------------------
+        st.markdown("<div class='wk-anchor' id='wk-sec-daily'></div>", unsafe_allow_html=True)
         st.markdown("---")
         st.markdown("#### 📆 일자별 비교 (최근 2일)")
         if df_traffic.empty:
@@ -4296,6 +4321,7 @@ if side["page"].startswith("11."):
             render_daily_compare_html(_dc)
 
             if not df_category.empty:
+                st.markdown("<div class='wk-anchor' id='wk-sec-dailycat'></div>", unsafe_allow_html=True)
                 st.markdown("<div style='height:14px;'></div>", unsafe_allow_html=True)
                 st.markdown("**카테고리별 (정상 / 이월 / 입점)**")
                 _dcc = compute_daily_category_compare(df_category, _wk_cat_segment, _wk_ff_exclude, df_traffic=df_traffic)
@@ -4324,6 +4350,7 @@ if side["page"].startswith("11."):
         # ------------------------------------------------------------
         # 월별 실적 추이 (전체 vs EP) — 전체실적 원본(1_전체실적.xlsx) 기반
         # ------------------------------------------------------------
+        st.markdown("<div class='wk-anchor' id='wk-sec-monthly'></div>", unsafe_allow_html=True)
         st.markdown("---")
         st.markdown("#### 📈 월별 실적 추이 (전체 vs EP)")
         if df_total_daily.empty:
