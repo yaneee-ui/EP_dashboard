@@ -346,6 +346,21 @@ def load_total_daily() -> pd.DataFrame:
     return df.sort_values(["날짜", "채널"]).reset_index(drop=True)
 
 
+TOTAL_DAILY_SEG_PATH = "ep_total_daily_seg.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_total_daily_seg() -> pd.DataFrame:
+    """전체실적의 회원구분별(신규/기존/비회원/회원) 일자별 트래픽/거래액 (convert_total.py가 같이 만든다).
+    컬럼: 날짜, 회원구분, 채널, 트래픽, 거래액. '전체'는 load_total_daily() 쪽에 있다. 없으면 빈 DataFrame."""
+    import os
+    if not os.path.exists(TOTAL_DAILY_SEG_PATH):
+        return pd.DataFrame(columns=["날짜", "회원구분", "채널", "트래픽", "거래액"])
+    df = pd.read_csv(TOTAL_DAILY_SEG_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    return df.sort_values(["날짜", "회원구분", "채널"]).reset_index(drop=True)
+
+
 COUPON_DAILY_PATH = "ep_coupon_daily.csv"
 
 

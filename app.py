@@ -11,7 +11,7 @@ import io
 
 from data_loader import (
     load_data, load_traffic_data, load_category_data, load_product_data, load_brand_names,
-    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_luxury_channel, load_channel_all,
+    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_total_daily_seg, load_luxury_channel, load_channel_all,
 )
 from ai_insights import (
     render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
@@ -83,6 +83,7 @@ df_traffic = load_traffic_data()  # EP실적 데이터 (트래픽/거래액 등)
 df_category = load_category_data()  # 카테고리/브랜드별 실적 데이터
 df_product = load_product_data()  # 상품(SKU)별 거래액 데이터 (카테고리별 상위 상품 랭킹용)
 df_total_daily = load_total_daily()  # 전사 vs EP 일자별 트래픽/거래액 (월별 실적 추이용)
+df_total_daily_seg = load_total_daily_seg()  # 위와 같은 원본의 신규/기존/비회원/회원 구분 (주간보고용 월별 실적 추이 세그먼트용)
 df_chall = load_channel_all()  # 전체 채널 x 카테고리 x 정상/이월/입점 일자별 거래액 (14번 화면 전용)
 df_lux = load_luxury_channel()  # 명품 유입채널별 일자별 거래액 (13번 화면 전용)
 df_coupon_daily = load_coupon_daily()  # 쿠폰명별 일자별 상세 할인 데이터 (BPU: e-영업1~4)
@@ -3635,7 +3636,7 @@ if side["page"].startswith("11."):
     )
     st.markdown("<div class='wk-anchor' id='wk-sec-summary'></div>", unsafe_allow_html=True)
 
-    # 1~4번 섹션(BPU별 실적 / 최근 5주 일평균 / 카테고리별 최근 5주 / 일자별 비교) 공통 세그먼트.
+    # 이 페이지 전 섹션(BPU별 실적 / 최근 5주 / 카테고리별 5주 / 일자별 비교 / 월별 실적 추이) 공통 세그먼트.
     # 엑셀도 이 선택대로 나오고, 파일명 끝에 _신규가 붙는다(전체는 그대로).
     # 바로가기 줄 오른쪽에 같이 둔다(스크롤해도 같이 따라옴).
     with _wk_nav_c2:
@@ -4370,20 +4371,35 @@ if side["page"].startswith("11."):
         st.markdown("<div class='wk-anchor' id='wk-sec-monthly'></div>", unsafe_allow_html=True)
         st.markdown("---")
         _wk_h6_l, _wk_h6_r = st.columns([3, 2], vertical_alignment="center")
-        _wk_h6_l.markdown("#### 📈 월별 실적 추이 (전체 vs EP)")
+        _wk_h6_l.markdown(f"#### 📈 월별 실적 추이 (전체 vs EP){'' if _wk_seg == '전체' else f' · {_wk_seg}'}")
         _wk_dl_monthly_ph = _wk_h6_r.empty()
-        if df_total_daily.empty:
-            st.info("전체실적 데이터(ep_total_daily.csv)가 없어요. 1_전체실적.xlsx를 올린 뒤 convert_total.py를 실행해주세요.")
+        # 페이지 위 세그먼트(전체/신규)를 따른다. 신규는 전체실적 원본의 신규 블록(ep_total_daily_seg.csv)
+        # = '전사 신규 vs EP 신규'. 채널 보충(전체채널별실적)은 회원구분이 없어서 전체일 때만 쓴다.
+        if _wk_seg == "전체":
+            _tt_src = df_total_daily
+        else:
+            _tt_src = (
+                df_total_daily_seg[df_total_daily_seg["회원구분"] == _wk_seg].drop(columns="회원구분")
+                if not df_total_daily_seg.empty else df_total_daily_seg
+            )
+        if _tt_src.empty:
+            st.info(
+                "전체실적 데이터(ep_total_daily.csv)가 없어요. 1_전체실적.xlsx를 올린 뒤 convert_total.py를 실행해주세요."
+                if _wk_seg == "전체" else
+                f"전체실적 원본에 '{_wk_seg}' 구분 데이터가 없어요. 회원구분(신규 등) 블록이 있는 1_전체실적.xlsx를 올린 뒤 convert_total.py를 실행해주세요."
+            )
         else:
             _tt_all = st.radio(
                 "채널 보기", ["전체·EP", "전 채널"], horizontal=True, key="tt_channel_view",
                 help="'전 채널'을 고르면 직접·광고·제휴·PUSH 등 다른 유입채널의 일평균 거래액/트래픽/트래픽당 거래액/비중/전년비까지 봐요.",
             ) == "전 채널"
             _tt = compute_total_monthly_trend(
-                total_daily_with_channel_fallback(df_total_daily, df_chall) if _tt_all else df_total_daily
+                total_daily_with_channel_fallback(_tt_src, df_chall) if (_tt_all and _wk_seg == "전체") else _tt_src
             )
             st.caption(
-                f"기준일 {_tt['ref'].strftime('%Y-%m-%d')} · 거래액 단위 백만원(일평균) · 진행 중인 {_tt['cur_month']}월은 "
+                f"기준일 {_tt['ref'].strftime('%Y-%m-%d')} · 세그먼트: {_wk_seg}"
+                + (" (전사 신규 vs EP 신규)" if _wk_seg == "신규" else "")
+                + f" · 거래액 단위 백만원(일평균) · 진행 중인 {_tt['cur_month']}월은 "
                 "올해 1일~기준일 vs 작년 동요일(364일 전) 동일 일수, 그 외 달은 달력 월 전체 · "
                 "트래픽당 거래액은 거래액 합계/트래픽 합계"
             )
@@ -4397,7 +4413,7 @@ if side["page"].startswith("11."):
             _wk_dl_monthly_ph.download_button(
                 "⬇️ 월별 실적 추이 엑셀 다운로드",
                 data=build_total_monthly_trend_excel(_tt, all_channels=_tt_all),
-                file_name=f"월별실적추이{'_전채널' if _tt_all else ''}_{_tt['ref'].strftime('%Y%m%d')}.xlsx",
+                file_name=f"월별실적추이{'_전채널' if _tt_all else ''}_{_tt['ref'].strftime('%Y%m%d')}{_wk_seg_sfx}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 key="wkdl_monthly",
             )
