@@ -969,6 +969,26 @@ DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
 ]
 
+# 특정 지표 그래프에만 붙이는 이벤트 (DASHBOARD_EVENTS는 모든 일별 그래프에 공통으로 뜨고,
+# 이건 그 지표·매체를 볼 때만 뜬다 — 예: 상품수가 늘어난 원인처럼 한 지표에만 의미 있는 사건).
+# metrics: 이 지표 그래프에서만 / bpus: 이 매체 필터일 때만 (None이면 모든 매체)
+METRIC_EVENTS = [
+    {
+        "date": pd.Timestamp("2026-11-10"),
+        "label": "[명품] 트렌비 상품 추가 (전시 상품수 증가 원인)",
+        "metrics": ("평균 EP 전시 상품수",),
+        "bpus": ("Total", "e-영업3", "입점"),
+    },
+]
+
+
+def metric_events_for(metric, bpu):
+    """지금 보고 있는 지표/매체에 해당하는 지표별 이벤트를 (날짜, 라벨) 목록으로 돌려준다."""
+    return [
+        (e["date"], e["label"]) for e in METRIC_EVENTS
+        if metric in e["metrics"] and (not e.get("bpus") or bpu in e["bpus"])
+    ]
+
 
 # 일별 그래프에 '음영'으로 표시하고 그래프 아래에 설명을 붙이는 기간 메모.
 # bpus: 이 매체를 볼 때만 표시 / category: 이 카테고리를 볼 때만 표시 (None이면 전체)
@@ -1055,7 +1075,7 @@ def _is_pct_metric(name):
     return n == "CR" or "(%)" in n or n.endswith("율") or n.endswith("전환율")
 
 
-def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None, period_notes=None, yoy_legend_label=None):
+def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None, ref_date=None, ref_label=None, period_notes=None, yoy_legend_label=None, extra_events=None):
     """줌/팬이 비활성화된 라인 차트 (마커 + 호버 툴팁 포함).
     st.line_chart는 마우스 휠 확대/축소가 기본 활성화돼 스크롤 시 화면이 튀므로,
     Altair로 직접 그려 인터랙션을 끈다. (첫 컬럼=금년 진한 파랑, 둘째=전년 하늘색)
@@ -1181,7 +1201,8 @@ def render_line_chart(chart_df, height=350, unit="일별", yoy_actual_dates=None
 
         # 화면에 보이는 날짜 범위 안에 있는 이벤트만 세로 점선+라벨로 표시
         _event_rows = []
-        for ev_date, ev_label in DASHBOARD_EVENTS:
+        # extra_events: 이 그래프에만 붙일 (날짜, 라벨) 목록 — metric_events_for()가 만들어 준다
+        for ev_date, ev_label in list(DASHBOARD_EVENTS) + list(extra_events or []):
             if ev_date.normalize() in set(pd.DatetimeIndex(_uniq_dates).normalize()):
                 _event_rows.append({"_date_label": ev_date.strftime("%m/%d"), "이벤트": ev_label})
 

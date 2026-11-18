@@ -40,7 +40,7 @@ from dashboard_helpers import (
     LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
-    DASHBOARD_EVENTS, period_notes_for, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
+    DASHBOARD_EVENTS, metric_events_for, period_notes_for, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
     build_forecast_table, _DIGIT_HAS_BATCHIM, _has_batchim, _emphasize,
     _josa_ga, _josa_eun, generate_rule_based_insights, generate_category_page_insights, generate_forecast_report_insight,
     compute_next_month_target, render_next_month_target_table, build_next_month_target_excel,
@@ -1817,11 +1817,8 @@ if side["page"].startswith("1."):
                                            date_start=_ep_date_start,
                                            date_end=_ep_date_end)
 
-        ep_cols = list(ep_trend.columns)
-        if len(ep_cols) > 1:
-            render_line_chart(ep_trend, height=350, unit=unit)
-        else:
-            render_line_chart(ep_trend, height=350, unit=unit)
+        # 지표별 이벤트(예: 11/10 트렌비 상품 추가 → 전시 상품수 증가)는 해당 지표·매체를 볼 때만 표시
+        render_line_chart(ep_trend, height=350, unit=unit, extra_events=metric_events_for(ep_metric, bpu))
 
         st.markdown(
             f"<div class='chart-caption'>EP채널 데이터 · {bpu} / {match_status} / {lowest_status} 기준"
