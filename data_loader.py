@@ -8,6 +8,27 @@ from excel_converter import convert_excel_to_long
 DEFAULT_DATA_PATH = "ep_data_long.csv"
 DEFAULT_DATA_PATH_FIXED = "ep_data_long_2025.csv"
 
+# EP채널(Data.xlsx) 원본에서 '집계 누락'으로 확인된 날짜 -> 그날 0으로 들어온 항목들.
+# 실제 실적 0이 아니라 집계가 안 된 값이라, 불러올 때 결측(NaN)으로 바꿔서 그래프가 0으로
+# 꺼지거나 평균·전주비·전년비 계산에 0이 섞이지 않게 한다 (원본을 다시 변환해도 유지되도록 여기서 처리).
+EP_CHANNEL_MISSING = {
+    # 2026-11-06: 매출 쪽 항목만 집계 누락 (UV·전시상품수·원부매칭은 정상) — 사용자 확인 2026-11-19
+    "2026-11-06": [
+        "평균 EP 거래액(순결제)", "평균 EP 거래액(총결제)", "평균 EP 고객수(총결제)",
+        "평균 EP 첫구매 거래액(총결제)", "평균 EP 첫구매 고객수(총결제)",
+        "첫구매거래액(%)", "구매전환율(%)", "첫구매 전환율(%)",
+    ],
+}
+
+
+def _apply_known_missing(df: pd.DataFrame) -> pd.DataFrame:
+    dates = pd.to_datetime(df[COL_DATE])
+    for day, cols in EP_CHANNEL_MISSING.items():
+        mask = dates == pd.Timestamp(day)
+        if mask.any():
+            df.loc[mask, [c for c in cols if c in df.columns]] = float("nan")
+    return df
+
 
 def _finalize(df: pd.DataFrame) -> pd.DataFrame:
     df[COL_DATE] = pd.to_datetime(df[COL_DATE])
@@ -47,7 +68,7 @@ def load_data(uploaded_file=None, file_name=None) -> pd.DataFrame:
         dedup_keys = [c for c in [COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST] if c in df.columns]
         if dedup_keys:
             df = df.drop_duplicates(subset=dedup_keys, keep="last")
-        return _finalize(df)
+        return _finalize(_apply_known_missing(df))
 
     name = (file_name or getattr(uploaded_file, "name", "") or "").lower()
 

@@ -318,20 +318,26 @@ def aggregate_ep(df, bpus, match_status, lowest_status):
     # 합산 가능한 컬럼(수량) vs 재계산이 필요한 컬럼(비율) 분리
     sum_cols = [c for c in sub.columns if c not in [COL_DATE, COL_BPU, COL_MATCH, COL_LOWEST,
                 "원부매칭율(%)", "최저가율(%)", "구매전환율(%)", "첫구매거래액(%)", "신규가입율", "첫구매 전환율(%)"]]
-    agg = sub.groupby(COL_DATE)[sum_cols].sum().reset_index()
+    # min_count=1: 그날 값이 전부 결측(집계 누락일, data_loader.EP_CHANNEL_MISSING)이면 0이 아니라 결측으로 남긴다
+    agg = sub.groupby(COL_DATE)[sum_cols].sum(min_count=1).reset_index()
+
+    def _ratio(num, den):
+        # 분모 0 이하 -> 0 (기존과 동일). 분자·분모가 결측이면 결측 그대로(0으로 바꾸지 않음)
+        return (agg[num] / agg[den] * 100).mask(agg[den] <= 0, 0)
+
     # 비율 재계산
     if "평균 원부매칭 상품수" in agg.columns and "평균 EP 전시 상품수" in agg.columns:
-        agg["원부매칭율(%)"] = (agg["평균 원부매칭 상품수"] / agg["평균 EP 전시 상품수"] * 100).where(agg["평균 EP 전시 상품수"] > 0, 0)
+        agg["원부매칭율(%)"] = _ratio("평균 원부매칭 상품수", "평균 EP 전시 상품수")
     if "평균 최저가 상품수" in agg.columns and "평균 EP 전시 상품수" in agg.columns:
-        agg["최저가율(%)"] = (agg["평균 최저가 상품수"] / agg["평균 EP 전시 상품수"] * 100).where(agg["평균 EP 전시 상품수"] > 0, 0)
+        agg["최저가율(%)"] = _ratio("평균 최저가 상품수", "평균 EP 전시 상품수")
     if "평균 EP 고객수(총결제)" in agg.columns and "평균 EP UV" in agg.columns:
-        agg["구매전환율(%)"] = (agg["평균 EP 고객수(총결제)"] / agg["평균 EP UV"] * 100).where(agg["평균 EP UV"] > 0, 0)
+        agg["구매전환율(%)"] = _ratio("평균 EP 고객수(총결제)", "평균 EP UV")
     if "평균 EP 첫구매 거래액(총결제)" in agg.columns and "평균 EP 거래액(총결제)" in agg.columns:
-        agg["첫구매거래액(%)"] = (agg["평균 EP 첫구매 거래액(총결제)"] / agg["평균 EP 거래액(총결제)"] * 100).where(agg["평균 EP 거래액(총결제)"] > 0, 0)
+        agg["첫구매거래액(%)"] = _ratio("평균 EP 첫구매 거래액(총결제)", "평균 EP 거래액(총결제)")
     if "평균 EP 신규가입수" in agg.columns and "평균 EP UV" in agg.columns:
-        agg["신규가입율"] = (agg["평균 EP 신규가입수"] / agg["평균 EP UV"] * 100).where(agg["평균 EP UV"] > 0, 0)
+        agg["신규가입율"] = _ratio("평균 EP 신규가입수", "평균 EP UV")
     if "평균 EP 첫구매 고객수(총결제)" in agg.columns and "평균 EP UV" in agg.columns:
-        agg["첫구매 전환율(%)"] = (agg["평균 EP 첫구매 고객수(총결제)"] / agg["평균 EP UV"] * 100).where(agg["평균 EP UV"] > 0, 0)
+        agg["첫구매 전환율(%)"] = _ratio("평균 EP 첫구매 고객수(총결제)", "평균 EP UV")
     agg[COL_BPU] = "+".join(bpus)
     agg[COL_MATCH] = match_status
     agg[COL_LOWEST] = lowest_status

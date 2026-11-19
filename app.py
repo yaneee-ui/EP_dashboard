@@ -1709,7 +1709,7 @@ if side["page"].startswith("1."):
         df_ep_combo = df_ep_combo.copy()
         df_ep_combo["순결제비중(%)"] = (
             df_ep_combo["평균 EP 거래액(순결제)"] / df_ep_combo["평균 EP 거래액(총결제)"] * 100
-        ).where(df_ep_combo["평균 EP 거래액(총결제)"] > 0, 0)
+        ).mask(df_ep_combo["평균 EP 거래액(총결제)"] <= 0, 0)  # 결측(집계 누락일)은 0이 아니라 결측 그대로
 
     if df_ep_combo.empty:
         st.warning("선택한 조합에 데이터가 없습니다.")
