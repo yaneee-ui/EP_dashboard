@@ -1715,15 +1715,17 @@ if side["page"].startswith("1."):
         st.warning("선택한 조합에 데이터가 없습니다.")
     else:
         # EP 채널 지표 KPI
+        # 순서 = KPI 카드·추이 지표 버튼·요약 표 순서. 자주 보는 4개(전시상품수/총결제/순결제/순결제비중)를
+        # 앞에, 원부매칭·최저가 관련 4개를 뒤에 둔다.
         EP_CHANNEL_METRICS = [
+            ("평균 EP 전시 상품수", "전시상품수"),
+            ("평균 EP 거래액(총결제)", "거래액(총결제)"),
+            ("평균 EP 거래액(순결제)", "거래액(순결제)"),
+            ("순결제비중(%)", "순결제비중(%)"),
             ("원부매칭율(%)", "원부매칭율(%)"),
             ("최저가율(%)", "최저가율(%)"),
-            ("평균 EP 전시 상품수", "전시상품수"),
             ("평균 원부매칭 상품수", "원부매칭상품수"),
             ("평균 최저가 상품수", "최저가상품수"),
-            ("평균 EP 거래액(순결제)", "거래액(순결제)"),
-            ("평균 EP 거래액(총결제)", "거래액(총결제)"),
-            ("순결제비중(%)", "순결제비중(%)"),
         ]
 
         def _render_ep_kpi_card(metric_key, display_name):
@@ -1749,17 +1751,17 @@ if side["page"].startswith("1."):
                 unsafe_allow_html=True,
             )
 
-        # 카드가 8개로 늘어나 한 줄에 다 넣으면 너무 좁아져서, 기존 5개(원부매칭/최저가
-        # 관련)와 새로 추가한 3개(순결제/총결제/순결제비중)를 두 줄로 나눠 보여준다.
-        _EP_KPI_ROW1 = EP_CHANNEL_METRICS[:5]
-        _EP_KPI_ROW2 = EP_CHANNEL_METRICS[5:]
+        # 카드가 8개라 한 줄에 다 넣으면 너무 좁아서 두 줄로 나눈다:
+        # 윗줄 = 주요 4개(전시상품수/총결제/순결제/순결제비중), 아랫줄 = 원부매칭·최저가 관련 4개.
+        _EP_KPI_ROW1 = EP_CHANNEL_METRICS[:4]
+        _EP_KPI_ROW2 = EP_CHANNEL_METRICS[4:]
         ep_cols = st.columns(len(_EP_KPI_ROW1))
         for i, (metric_key, display_name) in enumerate(_EP_KPI_ROW1):
             with ep_cols[i]:
                 _render_ep_kpi_card(metric_key, display_name)
         if _EP_KPI_ROW2:
             st.markdown("<div style='height:8px;'></div>", unsafe_allow_html=True)
-            st.caption("💰 순결제 vs 총결제 (취소·반품 반영 전/후)")
+            st.caption("🔗 원부매칭 · 최저가")
             ep_cols2 = st.columns(len(_EP_KPI_ROW1))
             for i, (metric_key, display_name) in enumerate(_EP_KPI_ROW2):
                 with ep_cols2[i]:
@@ -1772,7 +1774,7 @@ if side["page"].startswith("1."):
         ep_metrics_list = [m for m, _ in EP_CHANNEL_METRICS]
         ep_metric = st.radio(
             "지표", ep_metrics_list,
-            index=ep_metrics_list.index("순결제비중(%)") if "순결제비중(%)" in ep_metrics_list else 0,
+            index=ep_metrics_list.index("평균 EP 거래액(총결제)") if "평균 EP 거래액(총결제)" in ep_metrics_list else 0,
             key="ep_metric",
             horizontal=True, label_visibility="collapsed",
         )
