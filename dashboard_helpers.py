@@ -4627,7 +4627,7 @@ LUXURY_KIND_OPTIONS = {
 
 
 LUXURY_CUST_OPTIONS = ["전체", "신규", "기존"]
-LUXURY_METRIC_OPTIONS = ["거래액", "주문고객수"]
+LUXURY_METRIC_OPTIONS = ["거래액", "주문고객수", "객단가"]
 
 
 def luxury_has_segments(df_lux):
@@ -4652,9 +4652,25 @@ def luxury_daily_by_channel(df_lux, kinds, cust="전체", value="거래액"):
     return pv
 
 
-def compute_luxury_channel_compare(daily, range_cur, range_prev, per_day=False):
+def compute_luxury_channel_compare(daily, range_cur, range_prev, per_day=False, den=None):
     """채널별 올해/전년 기간 합계, 증감, 전년비(%), 비중. daily = luxury_daily_by_channel() 결과.
-    합계 행은 마지막. 전년 값이 0 이하면 전년비는 None."""
+    합계 행은 마지막. 전년 값이 0 이하면 전년비는 None.
+    den(분모 일자표)을 주면 비율 지표(예: 객단가 = 거래액/주문고객수)로 계산한다: 기간 합계끼리 나눔
+    (일별 비율 평균 금지), 일평균/누적 구분 없음, 비중은 의미가 없어 None. 분모 0이면 값은 NaN."""
+    if den is not None:
+        _n = compute_luxury_channel_compare(daily, range_cur, range_prev, False)
+        _d = {r["채널"]: r for r in compute_luxury_channel_compare(den, range_cur, range_prev, False)}
+        out = []
+        for r in _n:
+            d = _d.get(r["채널"], {"올해": 0, "전년": 0})
+            c = r["올해"] / d["올해"] if d["올해"] > 0 else float("nan")
+            p = r["전년"] / d["전년"] if d["전년"] > 0 else float("nan")
+            out.append({
+                "채널": r["채널"], "올해": c, "전년": p, "증감": c - p,
+                "전년비": ((c / p - 1) * 100) if (p == p and p > 0 and c == c) else None,
+                "비중": None, "전년비중": None,
+            })
+        return out
     rows = []
     cur = daily.loc[range_cur[0]:range_cur[1]].sum()
     prev = daily.loc[range_prev[0]:range_prev[1]].sum()
@@ -4682,9 +4698,23 @@ def shift_prev_year(d, basis="동요일"):
     return d - pd.Timedelta(days=364) if basis == "동요일" else d - pd.DateOffset(years=1)
 
 
-def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False, basis="동요일"):
+def compute_luxury_monthly_yoy(daily, year, last_date, per_day=False, basis="동요일", den=None):
     """월별 전년비. 마감된 달은 작년 같은 달 전체와, 진행 중인 달은 1일~last_date를 전년 동요일
-    (364일 전)과 비교. 채널별 + 합계의 (올해, 전년, 전년비%) 반환: {월: {채널: (c, p, pct)}}"""
+    (364일 전)과 비교. 채널별 + 합계의 (올해, 전년, 전년비%) 반환: {월: {채널: (c, p, pct)}}
+    den(분모 일자표)을 주면 비율 지표(객단가 등): 월 합계끼리 나눈 값으로 비교 (분모 0이면 NaN)."""
+    if den is not None:
+        _n = compute_luxury_monthly_yoy(daily, year, last_date, False, basis)
+        _d = compute_luxury_monthly_yoy(den, year, last_date, False, basis)
+        out = {}
+        for m, v in _n.items():
+            out[m] = {"_partial": v["_partial"]}
+            for ch in [k for k in v if k != "_partial"]:
+                nc, npv, _ = v[ch]
+                dc, dpv, _ = _d[m].get(ch, (0, 0, None))
+                c = nc / dc if dc > 0 else float("nan")
+                p = npv / dpv if dpv > 0 else float("nan")
+                out[m][ch] = (c, p, ((c / p - 1) * 100) if (p == p and p > 0 and c == c) else None)
+        return out
     out = {}
     for m in range(1, 13):
         a = pd.Timestamp(year, m, 1)
