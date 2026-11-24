@@ -187,7 +187,7 @@ def test_bpu_weekly_report_aov_matches_gmv_over_count():
     np.random.seed(2)
     rows = []
     for bpu in ["e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
-        for seg in ["전체", "회원", "신규"]:  # 새로 추가한 지표(회원UV 등) 검증하려면 이 세그먼트들이 있어야 함
+        for seg in ["전체", "회원", "신규", "기존"]:  # 새로 추가한 지표(회원UV 등) 검증하려면 이 세그먼트들이 있어야 함
             for d in dates:
                 trf = np.random.randint(1000, 2000)
                 cnt = np.random.randint(50, 150)
@@ -221,9 +221,15 @@ def test_bpu_weekly_report_aov_matches_gmv_over_count():
     )
     check("객단가가 '객단가' 지표 행 자체로도 존재", "객단가" in left_df["지표"].values)
     check(
-        "새로 추가한 지표(회원UV/회원거래액/신규UV/신규거래액)가 다 있음",
-        {"회원UV", "회원거래액", "신규UV", "신규거래액"}.issubset(set(left_df["지표"].values)),
+        "주간보고 양식 지표(회원UV/기존UV/기존거래액/신규UV/신규거래액/신규구매객수)가 다 있음",
+        {"회원UV", "기존UV", "기존거래액", "신규UV", "신규거래액", "신규구매객수"}.issubset(set(left_df["지표"].values)),
         f"실제 지표들: {sorted(left_df['지표'].unique())}",
+    )
+    _wk_order = list(dict.fromkeys(left_df["지표"]))
+    check(
+        "주간보고 엑셀 지표 순서: ...객단가 → 회원UV → 기존UV → 기존거래액 → 신규UV → 신규거래액 → 신규구매객수 (회원거래액 없음)",
+        _wk_order[-6:] == ["회원UV", "기존UV", "기존거래액", "신규UV", "신규거래액", "신규구매객수"] and "회원거래액" not in _wk_order,
+        f"실제 순서: {_wk_order}",
     )
 
 

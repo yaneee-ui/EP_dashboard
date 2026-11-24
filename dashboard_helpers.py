@@ -374,6 +374,15 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
         _seg_traffic["회원구분"] = "전체"
     _bpu_rows, cfg, BPU_COLS = compute_bpu_comparison_rows(_seg_traffic, unit, selected_period_date)
     _bpu_keep = {"Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"}
+    # 엑셀 BPU별 시트 전용: 신규 구매객수 행 추가 (1번 페이지 표에는 없는 지표).
+    # 신규 세그먼트 선택 시엔 _seg_traffic에 회원구분 '신규' 행이 없어서 다른 회원 행들처럼 자동으로 빠진다.
+    if "회원구분" in _seg_traffic.columns:
+        for _b in ["Total", "e-영업1", "e-영업2", "e-영업3", "e-영업4"]:
+            _sub = _seg_traffic[(_seg_traffic["BPU"] == _b) & (_seg_traffic["회원구분"] == "신규")]
+            _bpu_rows.append({
+                "metric_label": "신규구매객수", "is_pct": False, "bpu": _b,
+                "stats": metric_kpi_stats(_sub, "구매객수", unit, selected_period_date) if not _sub.empty else None,
+            })
     _bpu_label = {"Total": "전체"}
     left_rows = []
     # 객단가는 거래액/구매객수 값이 나온 뒤에 그 두 값으로 다시 계산해야 해서(비율 지표는
@@ -418,6 +427,14 @@ def build_weekly_report_excel(unit, selected_period_date, df_traffic, df_categor
             col_cur: round(_cur_store, 3) if is_pct else (round(_cur_store) if _cur_store is not None else None),
             "전년비(%)": round(_yoy_delta, 1) if _yoy_delta is not None else None,
         })
+    # 주간보고 양식 순서: 전체 지표들 → 회원UV → 기존UV·기존거래액 → 신규UV·신규거래액·신규구매객수
+    # (회원거래액은 양식에 없어서 뺀다). 같은 지표 안에서는 BPU 순서(전체, e-영업1~4) 유지.
+    _WK_METRIC_ORDER = [
+        "EP UV", "거래액(순결제)", "구매객수", "구매전환율(%)", "객단가",
+        "회원UV", "기존UV", "기존거래액", "신규UV", "신규거래액", "신규구매객수",
+    ]
+    left_rows = [r for r in left_rows if r["지표"] in _WK_METRIC_ORDER]
+    left_rows.sort(key=lambda r: _WK_METRIC_ORDER.index(r["지표"]))  # stable sort
     left_df = pd.DataFrame(left_rows)
 
     # --- 시트2~4: 카테고리별 (거래액/트래픽/구매객수, e-영업1~4 각각) — 2번 페이지와
