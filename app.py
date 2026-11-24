@@ -37,6 +37,7 @@ from dashboard_helpers import (
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
+    KIND_BPU, KIND_ORDER, compute_kind_category_gap, decompose_gmv_yoy,
     LUXURY_KIND_OPTIONS, LUXURY_CUST_OPTIONS, LUXURY_METRIC_OPTIONS, luxury_has_segments, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
@@ -313,7 +314,7 @@ with _sticky:
             )
 
             # 기준 일자/시점 바로 옆에 단축 버튼(금일/전일 등) 두 칸을 붙여서 간격이 벌어지지 않게 한다
-            fc1, fc2, fc3, _cpq_col, _fc_spacer = st.columns([1, 1, 1, 1, 4], gap="small")
+            fc1, fc2, fc3, _cpq_col, _fc_spacer = st.columns([1, 1.5, 1, 1, 3.5], gap="small")
             with fc1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>매체</div>", unsafe_allow_html=True)
                 coupon_bpu = st.selectbox("매체", _cp_bpu_options_top, index=0, key="coupon_bpu", label_visibility="collapsed")
@@ -712,7 +713,7 @@ with _sticky:
             unsafe_allow_html=True,
         )
 
-        _sfc1, _sfc2, _sfc_spacer = st.columns([1.3, 1.3, 6])
+        _sfc1, _sfc2, _sfc_spacer = st.columns([1.3, 1.7, 5.6])
         with _sfc1:
             st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>기준시점</div>", unsafe_allow_html=True)
             if _sum_period_labels:
@@ -972,6 +973,23 @@ st.markdown(
     }
     .st-key-sticky_header div[data-testid="element-container"] {
         margin-bottom: 0 !important;
+    }
+    /* 고정 영역 안 가로 라디오는 한 줄로 (칸이 좁으면 마지막 항목이 아래 줄로 떨어져 겹쳐 보였음) */
+    .st-key-sticky_header [data-testid="stRadio"] [role="radiogroup"] {
+        flex-wrap: nowrap !important;
+    }
+    .st-key-sticky_header [data-testid="stRadio"] label {
+        white-space: nowrap !important;
+    }
+    /* 라디오가 든 칸은 내용 폭만큼 자리를 잡고(좁은 화면에서 옆 칸으로 넘쳐 겹치지 않게), 그 줄은 한 줄로 유지해서
+       나머지 칸(여백 칸 포함)이 비율대로 줄어들게 한다 — 안 그러면 여백 칸이 다음 줄로 밀려 영역이 높아짐 */
+    .st-key-sticky_header [data-testid="stColumn"]:has([data-testid="stRadio"]) {
+        flex: 0 0 auto !important;
+        width: auto !important;
+        min-width: fit-content !important;
+    }
+    .st-key-sticky_header [data-testid="stHorizontalBlock"]:has(> [data-testid="stColumn"] [data-testid="stRadio"]) {
+        flex-wrap: nowrap !important;
     }
     /* '전년 비교선 표시' 체크박스를 각자 컬럼의 오른쪽 끝에 붙임 (기본은 왼쪽 정렬이라
        [3,1,1] 비율의 마지막 칸에서 체크박스와 라벨 뒤로 빈 공간이 남는 문제 해결).
@@ -2790,6 +2808,105 @@ if side["page"].startswith("2."):
                 st.info("선택한 카테고리에 데이터가 없습니다.")
         else:
             st.caption("2개 이상 선택하면 비교 그래프가 표시돼요.")
+
+        # ── 정상·이월에 같이 있는 브랜드 비교 (예: HZ가 정상은 빠지고 이월은 느는지) ──
+        st.markdown("---")
+        st.markdown("#### 🔀 정상·이월·입점에 같이 있는 브랜드 비교")
+        _bb_cfg = UNIT_CONFIG[unit]
+        st.caption(
+            f"한 브랜드가 여러 BPU(정상 = e-영업1, 이월 = e-영업2, 입점 = e-영업3+4)에 걸쳐 있을 때 구분별 거래액과 "
+            f"{_bb_cfg['yoy_label']}를 나란히 봐요. 기준: {make_period_label(selected_period_date, unit)} · 위 조회 단위·기준 시점을 따르고, "
+            "세그먼트는 전체 기준(브랜드별 세그먼트 데이터가 없어서). 매체 필터와는 무관하게 전 BPU를 봐요."
+        )
+        _bb_src = df_category[(df_category["브랜드"] != "전체") & (df_category["브랜드"] != "입점") & (df_category["카테고리"] != "전체")]
+        if "회원구분" in _bb_src.columns:
+            _bb_src = _bb_src[_bb_src["회원구분"] == "전체"]
+        if _ff_exclude:
+            _bb_src = exclude_ff_brand(_bb_src)
+        _bb_kind_of = {b: k for k, bs in KIND_BPU.items() for b in bs}
+        _bb_src = _bb_src.assign(구분=_bb_src["BPU"].map(_bb_kind_of)).dropna(subset=["구분"])
+        # 실제 거래가 있는 구분만 센다(빈 행만 있는 구분은 제외 — 예: 히스헤지스가 이월에 0원 행만 있는 경우)
+        _bb_multi = _bb_src[_bb_src["거래액"] > 0].groupby("브랜드")["구분"].nunique()
+        _bb_brands = list(_bb_multi[_bb_multi >= 2].index)
+        _bb_rows = []
+        for _br in _bb_brands:
+            _row = {"브랜드": _br}
+            for _k in KIND_ORDER + ["합계"]:
+                _sub = _bb_src[_bb_src["브랜드"] == _br]
+                if _k != "합계":
+                    _sub = _sub[_sub["구분"] == _k]
+                if _sub.empty:
+                    continue
+                _d = _sub.groupby("날짜", as_index=False)[["거래액", "트래픽", "구매객수"]].sum()
+                _st = metric_kpi_stats(_d, "거래액", unit, selected_period_date)
+                if _st is None:
+                    continue
+                _row[f"{_k} 올해"] = _st["current"]
+                _row[f"{_k} 전년"] = _st.get("yoy_value")
+                _row[f"{_k} 전년비"] = _st.get("yoy_delta")
+            # 이번 기간(올해 또는 전년)에 실제 거래가 있는 구분이 2개 이상인 브랜드만
+            _active = sum(1 for _k in KIND_ORDER if (_row.get(f"{_k} 올해") or 0) > 0 or (_row.get(f"{_k} 전년") or 0) > 0)
+            if _active >= 2:
+                _bb_rows.append(_row)
+        if not _bb_rows:
+            st.info("여러 구분에 걸친 브랜드가 없어요.")
+        else:
+            _bb_df = pd.DataFrame(_bb_rows).sort_values("합계 올해", ascending=False)
+            _bb_kinds = [k for k in KIND_ORDER if f"{k} 올해" in _bb_df.columns]
+            _bb_amt = {"일별": "해당일", "월마감": "월합계"}.get(unit, "일평균")
+
+            def _bb_v(v):
+                return "-" if v is None or pd.isna(v) else f"{v / 1e6:,.1f}"
+
+            def _bb_d(v):
+                return "-" if v is None or pd.isna(v) else format_delta_html(v)
+
+            _bb_head = "<th>브랜드</th>" + "".join(
+                f"<th style='text-align:right;'>{k}<br><span style='font-weight:400;font-size:0.72rem;'>올해 · 전년비</span></th>"
+                for k in _bb_kinds + ["합계"]
+            )
+            _bb_body = "".join(
+                f"<tr><td class='m'>{brand_label(r['브랜드'])}</td>" + "".join(
+                    f"<td style='text-align:right;'>{_bb_v(r.get(f'{k} 올해'))} {_bb_d(r.get(f'{k} 전년비'))}</td>"
+                    for k in _bb_kinds + ["합계"]
+                ) + "</tr>"
+                for r in _bb_df.to_dict("records")
+            )
+            st.markdown(
+                f"<div style='overflow-x:auto;'><table class='summary-table'><thead><tr>{_bb_head}</tr></thead>"
+                f"<tbody>{_bb_body}</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
+            st.caption(f"단위: 백만원({_bb_amt}, 1·2번 페이지 KPI와 같은 기준).")
+            import altair as alt
+            _bb_long = pd.DataFrame([
+                {"브랜드": brand_label(r["브랜드"]), "구분": k, "올해": (r.get(f"{k} 올해") or 0) / 1e6,
+                 "전년": (r.get(f"{k} 전년") or 0) / 1e6, "전년비(%)": r.get(f"{k} 전년비")}
+                for r in _bb_df.to_dict("records") for k in _bb_kinds if pd.notna(r.get(f"{k} 올해"))
+            ])
+            if not _bb_long.empty:
+                _bb_sel = st.multiselect(
+                    "그래프에 볼 브랜드", list(_bb_long["브랜드"].unique()), default=list(_bb_long["브랜드"].unique())[:6], key="cat_bb_brands",
+                )
+                _bb_plot = _bb_long[_bb_long["브랜드"].isin(_bb_sel)].melt(
+                    id_vars=["브랜드", "구분", "전년비(%)"], value_vars=["전년", "올해"], var_name="연도", value_name="거래액(백만원)"
+                )
+                if not _bb_plot.empty:
+                    _bb_chart = alt.Chart(_bb_plot).mark_bar().encode(
+                        x=alt.X("구분:N", sort=KIND_ORDER, title=None),
+                        xOffset=alt.XOffset("연도:N", sort=["전년", "올해"]),
+                        y=alt.Y("거래액(백만원):Q", title=f"거래액(백만원, {_bb_amt})"),
+                        color=alt.Color("연도:N", sort=["전년", "올해"], scale=alt.Scale(domain=["전년", "올해"], range=["#cbd5e1", "#2563eb"]),
+                                        legend=alt.Legend(orient="top", title=None)),
+                        tooltip=["브랜드", "구분", "연도", alt.Tooltip("거래액(백만원):Q", format=",.1f"), alt.Tooltip("전년비(%):Q", format="+.1f")],
+                    ).properties(width=150, height=220).facet(
+                        facet=alt.Facet("브랜드:N", title=None, sort=_bb_sel), columns=3,
+                    )
+                    st.altair_chart(_bb_chart, use_container_width=False)
+            render_excel_download(
+                _bb_df.assign(브랜드=_bb_df["브랜드"].map(brand_label)),
+                f"브랜드_정상이월입점_{pd.Timestamp(selected_period_date):%Y%m%d}.xlsx", label="⬇️ 브랜드 비교 엑셀",
+            )
 
 
 
@@ -4805,6 +4922,83 @@ if side["page"].startswith("3."):
         st.markdown("<div style='height:16px;'></div>", unsafe_allow_html=True)
         st.markdown("---")
 
+        # ── 섹션 2b: 정상·이월·입점 증감 요인 분해 (유입 x 전환율 x 객단가) — 전체 / 신규 나란히 ──
+        st.markdown("#### 🔍 정상·이월·입점 증감 요인 (유입 × 전환율 × 객단가)")
+        st.caption(
+            f"거래액 전년비({_sum_cfg['yoy_label']})를 유입(UV)·전환율(CR)·객단가 기여(%p)로 나눴어요(로그 분해, 세 막대 합 = 거래액 전년비 ◆). "
+            "정상 = e-영업1, 이월 = e-영업2, 입점 = e-영업3+4. 위 기준시점을 따르고, 왼쪽은 전체 고객, 오른쪽은 신규 고객이에요."
+        )
+        import altair as alt
+        _dec_kinds = [("전체", "Total"), ("정상", "e-영업1"), ("이월", "e-영업2"), ("입점", "입점")]
+
+        def _dec_rows(seg):
+            if seg == "전체":
+                _src = df_traffic
+            else:
+                _src = df_traffic[df_traffic["회원구분"] == seg].copy()
+                _src["회원구분"] = "전체"
+            _rows, _, _ = compute_bpu_comparison_rows(_src, unit, _sum_ref)
+            _m = {(r["bpu"], r["metric_label"]): r["stats"] for r in _rows if r["stats"]}
+            out = []
+            for _lbl, _b in _dec_kinds:
+                _g = [_m.get((_b, k)) for k in ["EP UV", "구매전환율(%)", "객단가", "거래액(순결제)"]]
+                if any(x is None or not x.get("yoy_value") for x in _g):
+                    continue
+                _d = decompose_gmv_yoy(*[(x["current"], x["yoy_value"]) for x in _g])
+                if _d is None:
+                    continue
+                out.append({"구분": _lbl, **_d,
+                            "UV 전년비": (_g[0]["current"] / _g[0]["yoy_value"] - 1) * 100,
+                            "CR": _g[1]["current"], "CR 전년": _g[1]["yoy_value"],
+                            "객단가(원)": _g[2]["current"], "객단가 전년(원)": _g[2]["yoy_value"]})  # '객단가' 키는 기여(%p)라 이름을 달리 둔다
+            return out
+
+        _dec_cols = st.columns(2)
+        _dec_xl = []
+        for _ci, _seg in enumerate(["전체", "신규"]):
+            _dr = _dec_rows(_seg)
+            _dec_xl += [{"고객": _seg, **r} for r in _dr]
+            with _dec_cols[_ci]:
+                st.markdown(f"**{_seg} 고객**")
+                if not _dr:
+                    st.caption("데이터가 없어요.")
+                    continue
+                _ord = [r["구분"] for r in _dr]
+                _long = pd.DataFrame([
+                    {"구분": r["구분"], "요인": f, "기여(%p)": r[f]} for r in _dr for f in ["유입(UV)", "전환율(CR)", "객단가"]
+                ])
+                _bars = alt.Chart(_long).mark_bar(size=22).encode(
+                    y=alt.Y("구분:N", sort=_ord, title=None, axis=alt.Axis(labelFontSize=13, labelFontWeight="bold")),
+                    x=alt.X("기여(%p):Q", title="거래액 전년비 기여(%p)", stack="zero"),
+                    color=alt.Color("요인:N", sort=["유입(UV)", "전환율(CR)", "객단가"],
+                                    scale=alt.Scale(domain=["유입(UV)", "전환율(CR)", "객단가"], range=["#60a5fa", "#f97316", "#a78bfa"]),
+                                    legend=alt.Legend(orient="top", title=None)),
+                    tooltip=["구분", "요인", alt.Tooltip("기여(%p):Q", format="+.1f")],
+                )
+                _pts = alt.Chart(pd.DataFrame(_dr)).mark_point(shape="diamond", size=140, filled=True, color="#111827").encode(
+                    y=alt.Y("구분:N", sort=_ord), x="거래액 전년비:Q",
+                    tooltip=["구분", alt.Tooltip("거래액 전년비:Q", format="+.1f")],
+                )
+                _zero = alt.Chart(pd.DataFrame({"x": [0]})).mark_rule(color="#6b7280").encode(x="x:Q")
+                st.altair_chart((_bars + _zero + _pts).properties(height=60 * len(_dr) + 40), use_container_width=True)
+                _tb = "".join(
+                    f"<tr><td class='m'>{r['구분']}</td><td style='text-align:right;'>{format_delta_html(r['거래액 전년비'])}</td>"
+                    f"<td style='text-align:right;'>{format_delta_html(r['UV 전년비'])}</td>"
+                    f"<td style='text-align:right;'>{r['CR 전년']:.1f}% → {r['CR']:.1f}%</td>"
+                    f"<td style='text-align:right;'>{r['객단가 전년(원)'] / 1000:,.0f} → {r['객단가(원)'] / 1000:,.0f}</td></tr>"
+                    for r in _dr
+                )
+                st.markdown(
+                    "<table class='summary-table'><thead><tr><th>구분</th><th style='text-align:right;'>거래액</th>"
+                    "<th style='text-align:right;'>UV</th><th style='text-align:right;'>CR 전년→올해</th>"
+                    "<th style='text-align:right;'>객단가(천원) 전년→올해</th></tr></thead>"
+                    f"<tbody>{_tb}</tbody></table>",
+                    unsafe_allow_html=True,
+                )
+        if _dec_xl:
+            render_excel_download(pd.DataFrame(_dec_xl), f"정상이월입점_요인분해_{pd.Timestamp(_sum_ref):%Y%m%d}.xlsx", label="⬇️ 요인 분해 엑셀")
+        st.markdown("<div style='height:10px;'></div>", unsafe_allow_html=True)
+
         # ── 섹션 3: 카테고리 하이라이트 (거래액 전년비 최대상승/하락, BPU별로 구분) ──
         st.markdown(f"#### 📈 카테고리 하이라이트 (거래액 전년비, BPU별 · {_sum_segment})")
         _sum_category_movers = []
@@ -6101,3 +6295,70 @@ if side["page"].startswith("14."):
             _xl14b = _xl14b.rename(columns={lbl: f"{lbl} EP대비(%p)" for lbl, _ in _periods})
             _xl_all = _xl14.merge(_xl14b, on="채널")
             render_excel_download(_xl_all, f"전체채널별_전년비_{_ch_kind}_{_ch_cat}_{_ch_unit}.xlsx", label="⬇️ 엑셀 다운로드")
+
+            # --- ③ 정상·이월·입점 x 카테고리 히트맵: EP만 유독 빠지는/느는 칸 찾기 ---
+            if isinstance(_ch_in, tuple) and len(_ch_in) == 2:
+                st.markdown("---")
+                st.markdown("#### 🧩 정상·이월·입점 × 카테고리 · EP vs 전사 전년비")
+                st.caption(
+                    f"정상 = e-영업1, 이월 = e-영업2, 입점 = e-영업3+4 · 위 조회 기간({_rc2[0]:%m/%d}~{_rc2[1]:%m/%d}) · "
+                    f"비교 기준({_ch_basis}) 적용, 위 구분·카테고리 선택과는 무관하게 전부 보여줘요. "
+                    "색 = EP 전년비 − 전사(전 채널) 전년비(%p): **빨강일수록 EP만 더 빠지는 칸**, 파랑은 EP가 더 잘 가는 칸. "
+                    "칸 글자 = EP 전년비 / 전사 전년비, 아래 줄 = EP 증감(백만원). EP 전년 1백만원 미만 칸은 전년비를 비워요."
+                )
+                _hm = compute_kind_category_gap(df_chall, _rc2, _rp2)
+                if _hm.empty:
+                    st.info("선택한 기간에 데이터가 없어요.")
+                else:
+                    _hm_kinds = KIND_ORDER + ["합계"]
+                    # 카테고리 순서: 합계 맨 위, 나머지는 EP 증감(합계 구분 기준)이 큰 감소부터
+                    _cat_delta = _hm[_hm["구분"] == "합계"].set_index("카테고리")["EP 증감"]
+                    _hm_cats = ["합계"] + [c for c in _cat_delta.drop("합계", errors="ignore").sort_values().index]
+                    _hm = _hm.assign(
+                        라벨=lambda d: [
+                            ("-" if e is None or pd.isna(e) else f"{e:+.0f}%") + " / " + ("-" if a is None or pd.isna(a) else f"{a:+.0f}%")
+                            for e, a in zip(d["EP 전년비"], d["전사 전년비"])
+                        ],
+                        증감라벨=lambda d: [f"{v / 1e6:+,.0f}" for v in d["EP 증감"]],
+                        격차값=lambda d: d["격차"].astype(float).clip(-50, 50),
+                        EP올해=lambda d: d["EP 올해"] / 1e6, EP전년=lambda d: d["EP 전년"] / 1e6,
+                    )
+                    _hm_base = alt.Chart(_hm).encode(
+                        x=alt.X("구분:N", sort=_hm_kinds, title=None, axis=alt.Axis(orient="top", labelAngle=0, labelFontSize=13, labelFontWeight="bold")),
+                        y=alt.Y("카테고리:N", sort=_hm_cats, title=None, axis=alt.Axis(labelFontSize=12)),
+                    )
+                    _hm_tip = [
+                        "구분", "카테고리",
+                        alt.Tooltip("EP올해:Q", title="EP 올해(백만원)", format=",.1f"),
+                        alt.Tooltip("EP전년:Q", title="EP 전년(백만원)", format=",.1f"),
+                        alt.Tooltip("EP 전년비:Q", format="+.1f"), alt.Tooltip("전사 전년비:Q", format="+.1f"),
+                        alt.Tooltip("격차:Q", title="격차(%p)", format="+.1f"),
+                        alt.Tooltip("EP 점유율:Q", title="EP 점유율(%)", format=".1f"),
+                        alt.Tooltip("EP 점유율 전년:Q", title="EP 점유율 전년(%)", format=".1f"),
+                    ]
+                    _hm_rect = _hm_base.mark_rect(stroke="#ffffff", strokeWidth=2).encode(
+                        color=alt.Color("격차값:Q", title="EP−전사(%p)",
+                                        scale=alt.Scale(scheme="redblue", domain=[-50, 50], domainMid=0, clamp=True),
+                                        legend=alt.Legend(orient="right", gradientLength=180)),
+                        tooltip=_hm_tip,
+                    )
+                    # 진한 칸(격차 ±30%p 넘음)은 흰 글자로
+                    _hm_dark = "abs(datum['격차값']) > 30"
+                    _hm_t1 = _hm_base.mark_text(dy=-7, fontSize=12, fontWeight="bold").encode(
+                        text="라벨:N", tooltip=_hm_tip, color=alt.condition(_hm_dark, alt.value("#ffffff"), alt.value("#111827")))
+                    _hm_t2 = _hm_base.mark_text(dy=9, fontSize=10).encode(
+                        text="증감라벨:N", tooltip=_hm_tip, color=alt.condition(_hm_dark, alt.value("#f3f4f6"), alt.value("#4b5563")))
+                    st.altair_chart(
+                        (_hm_rect + _hm_t1 + _hm_t2).properties(height=max(260, 42 * len(_hm_cats))),
+                        use_container_width=True,
+                    )
+                    # 점유율 요약(구분 합계 행)
+                    _sh = _hm[_hm["카테고리"] == "합계"].set_index("구분").reindex(_hm_kinds)
+                    st.caption("EP 점유율(EP ÷ 전사) 전년 → 올해: " + " · ".join(
+                        f"**{k}** {r['EP 점유율 전년']:.1f}% → {r['EP 점유율']:.1f}%"
+                        for k, r in _sh.iterrows() if pd.notna(r.get("EP 점유율")) and pd.notna(r.get("EP 점유율 전년"))
+                    ))
+                    _hm_xl = _hm[["구분", "카테고리", "EP 올해", "EP 전년", "EP 증감", "EP 전년비", "전사 전년비", "격차", "EP 점유율", "EP 점유율 전년"]].rename(
+                        columns={"격차": "격차(%p)", "EP 전년비": "EP 전년비(%)", "전사 전년비": "전사 전년비(%)", "EP 점유율": "EP 점유율(%)", "EP 점유율 전년": "EP 점유율 전년(%)"}
+                    )
+                    render_excel_download(_hm_xl, f"정상이월입점_카테고리_EP_vs_전사_{_rc2[0]:%Y%m%d}_{_rc2[1]:%Y%m%d}.xlsx", label="⬇️ 히트맵 엑셀")

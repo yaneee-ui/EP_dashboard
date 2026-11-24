@@ -4871,3 +4871,58 @@ def stable_range(state_key, picked, default):
         st.session_state[marker] = (picked[0], picked[1])
         return (picked[0], picked[1])
     return st.session_state.get(marker, default)
+
+
+# ============================================================
+# 정상/이월/입점 (= e-영업1 / e-영업2 / e-영업3+4) 분석용
+# ============================================================
+KIND_BPU = {"정상": ["e-영업1"], "이월": ["e-영업2"], "입점": ["e-영업3", "e-영업4"]}
+KIND_ORDER = ["정상", "이월", "입점"]
+
+
+def compute_kind_category_gap(df_ch, range_cur, range_prev, min_base=1e6):
+    """전체채널별실적(ep_channel_all) -> 구분(정상/이월/입점 + 합계) x 카테고리(+ 합계)별
+    EP 전년비, 전사(전 채널) 전년비, 격차(EP - 전사, %p), EP 증감액.
+    EP 전년 값이 min_base(원) 미만인 칸은 전년비를 비운다(작은 칸의 ±수백%가 색을 다 잡아먹지 않게)."""
+    def _sum(df, r):
+        return df[(df["날짜"] >= r[0]) & (df["날짜"] <= r[1])]
+
+    cur, prev = _sum(df_ch, range_cur), _sum(df_ch, range_prev)
+    rows = []
+    kinds = KIND_ORDER + ["합계"]
+    cats = sorted(set(cur["카테고리"]) | set(prev["카테고리"])) + ["합계"]
+    for k in kinds:
+        ck = cur if k == "합계" else cur[cur["구분"] == k]
+        pk = prev if k == "합계" else prev[prev["구분"] == k]
+        for cat in cats:
+            cc = ck if cat == "합계" else ck[ck["카테고리"] == cat]
+            pc = pk if cat == "합계" else pk[pk["카테고리"] == cat]
+            ep_c, ep_p = float(cc.loc[cc["채널"] == "EP", "거래액"].sum()), float(pc.loc[pc["채널"] == "EP", "거래액"].sum())
+            al_c, al_p = float(cc["거래액"].sum()), float(pc["거래액"].sum())
+            if max(ep_c, ep_p) < min_base:
+                continue
+            ep_y = (ep_c / ep_p - 1) * 100 if ep_p >= min_base else None
+            al_y = (al_c / al_p - 1) * 100 if al_p >= min_base else None
+            rows.append({
+                "구분": k, "카테고리": cat, "EP 올해": ep_c, "EP 전년": ep_p, "EP 증감": ep_c - ep_p,
+                "EP 전년비": ep_y, "전사 전년비": al_y,
+                "격차": (ep_y - al_y) if (ep_y is not None and al_y is not None) else None,
+                "EP 점유율": ep_c / al_c * 100 if al_c > 0 else None,
+                "EP 점유율 전년": ep_p / al_p * 100 if al_p > 0 else None,
+            })
+    return pd.DataFrame(rows)
+
+
+def decompose_gmv_yoy(uv, cr, aov, gmv):
+    """거래액 = 유입(UV) x 전환율(CR) x 객단가 의 전년비를 요인별 기여(%p)로 나눈다(로그 분해).
+    각 인자는 (올해, 전년). 세 요인 기여의 합 = 거래액 전년비(%). 값이 없거나 0 이하면 None."""
+    import math
+    try:
+        lx = {k: math.log(v[0] / v[1]) for k, v in (("유입(UV)", uv), ("전환율(CR)", cr), ("객단가", aov))}
+        g = (gmv[0] / gmv[1] - 1) * 100
+    except (TypeError, ValueError, ZeroDivisionError):
+        return None
+    tot = sum(lx.values())
+    if tot == 0:
+        return {"거래액 전년비": g, **{k: 0.0 for k in lx}}
+    return {"거래액 전년비": g, **{k: v / tot * g for k, v in lx.items()}}
