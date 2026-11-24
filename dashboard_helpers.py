@@ -4626,12 +4626,25 @@ LUXURY_KIND_OPTIONS = {
 }
 
 
-def luxury_daily_by_channel(df_lux, kinds):
-    """날짜 x 채널 거래액 표 (kinds에 든 구분들을 합산, 없는 날은 0)."""
+LUXURY_CUST_OPTIONS = ["전체", "신규", "기존"]
+LUXURY_METRIC_OPTIONS = ["거래액", "주문고객수"]
+
+
+def luxury_has_segments(df_lux):
+    """명품 raw에 신규/기존(당년신규여부)·주문고객수가 들어 있는지 (예전 형식 파일이면 False)."""
+    return "고객구분" in df_lux.columns and df_lux["고객구분"].isin(["신규", "기존"]).any()
+
+
+def luxury_daily_by_channel(df_lux, kinds, cust="전체", value="거래액"):
+    """날짜 x 채널 표 (kinds에 든 구분들을 합산, 없는 날은 0).
+    cust: 전체(신규+기존) / 신규 / 기존, value: 거래액 / 주문고객수.
+    주문고객수 '합계' 열은 채널별 값을 더한 것이라 여러 채널로 산 고객은 중복될 수 있다."""
     sub = df_lux[df_lux["구분"].isin(kinds)]
-    if sub.empty:
+    if cust != "전체" and "고객구분" in sub.columns:
+        sub = sub[sub["고객구분"] == cust]
+    if sub.empty or value not in sub.columns or sub[value].isna().all():
         return pd.DataFrame()
-    pv = sub.pivot_table(index="날짜", columns="채널", values="거래액", aggfunc="sum").fillna(0)
+    pv = sub.pivot_table(index="날짜", columns="채널", values=value, aggfunc="sum").fillna(0)
     pv = pv.reindex(pd.date_range(pv.index.min(), pv.index.max()), fill_value=0)
     cols = [c for c in LUXURY_CHANNEL_ORDER if c in pv.columns] + [c for c in pv.columns if c not in LUXURY_CHANNEL_ORDER]
     pv = pv[cols]

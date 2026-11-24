@@ -406,14 +406,18 @@ LUXURY_CHANNEL_PATH = "ep_luxury_channel.csv"
 
 @st.cache_data(ttl=3600, show_spinner=False)
 def load_luxury_channel() -> pd.DataFrame:
-    """명품 유입채널별 일자별 거래액 (convert_luxury.py 결과: 날짜/구분/채널/거래액).
-    구분 = '순금제외'(25년 명품 기준) / '순금+실버'(쥬얼리). 없으면 빈 DF."""
+    """명품 유입채널별 일자별 실적 (convert_luxury.py 결과: 날짜/구분/채널/고객구분/거래액/주문고객수).
+    구분 = '순금제외'(25년 명품 기준) / '순금+실버'(쥬얼리). 고객구분 = 신규/기존(당년신규여부 Y/N),
+    예전 형식 파일이면 '전체'(주문고객수 없음). 없으면 빈 DF."""
     import os
     if not os.path.exists(LUXURY_CHANNEL_PATH):
-        return pd.DataFrame(columns=["날짜", "구분", "채널", "거래액"])
+        return pd.DataFrame(columns=["날짜", "구분", "채널", "고객구분", "거래액", "주문고객수"])
     df = pd.read_csv(LUXURY_CHANNEL_PATH)
     df["날짜"] = pd.to_datetime(df["날짜"])
     df["거래액"] = pd.to_numeric(df["거래액"], errors="coerce").fillna(0)
+    if "고객구분" not in df.columns:
+        df["고객구분"] = "전체"
+    df["주문고객수"] = pd.to_numeric(df["주문고객수"], errors="coerce") if "주문고객수" in df.columns else float("nan")
     return df.sort_values("날짜").reset_index(drop=True)
 
 

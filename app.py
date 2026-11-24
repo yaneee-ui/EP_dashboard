@@ -37,7 +37,7 @@ from dashboard_helpers import (
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
-    LUXURY_KIND_OPTIONS, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
+    LUXURY_KIND_OPTIONS, LUXURY_CUST_OPTIONS, LUXURY_METRIC_OPTIONS, luxury_has_segments, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
     DASHBOARD_EVENTS, metric_events_for, period_notes_for, render_line_chart, render_category_compare_chart, FORECAST_BPU_ROWS, compute_monthly_forecast_series,
@@ -626,13 +626,28 @@ with _sticky:
             unsafe_allow_html=True,
         )
         _lux_view, _lux_agg, _lux_unit, _lux_sort, _lux_in, _lux_basis = list(LUXURY_KIND_OPTIONS)[0], "일평균", "일자별", "최신순", None, "동요일"
+        _lux_cust, _lux_metric = "전체", "거래액"
         if not df_lux.empty:
             _lux_last_top = df_lux["날짜"].max().normalize()
             _lux_first_top = df_lux["날짜"].min().normalize()
-            _u1, _u2, _u3, _u4, _u4b, _u5, _u_sp = st.columns([1.6, 1, 1, 1, 1, 2, 1])
+            _lux_seg_ok = luxury_has_segments(df_lux)
+            _u1, _u1b, _u1c, _u2, _u3, _u4, _u4b, _u5 = st.columns([1.5, 0.9, 1, 0.9, 0.9, 0.9, 0.9, 1.9])
             with _u1:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>구분</div>", unsafe_allow_html=True)
                 _lux_view = st.selectbox("구분", list(LUXURY_KIND_OPTIONS), label_visibility="collapsed", key="lux_kind")
+            # 고객(전체/신규/기존 = 당년신규여부 Y/N)·지표(거래액/주문고객수)는 원본에 신규여부가 들어온 뒤(26-11-24~)부터
+            with _u1b:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>고객</div>", unsafe_allow_html=True)
+                _lux_cust = st.selectbox(
+                    "고객", LUXURY_CUST_OPTIONS if _lux_seg_ok else ["전체"], label_visibility="collapsed", key="lux_cust",
+                    help="신규 = 당년 신규 고객(원본 당년신규여부 Y), 기존 = N. 전체 = 신규 + 기존",
+                )
+            with _u1c:
+                st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>지표</div>", unsafe_allow_html=True)
+                _lux_metric = st.selectbox(
+                    "지표", LUXURY_METRIC_OPTIONS if _lux_seg_ok else ["거래액"], label_visibility="collapsed", key="lux_metric",
+                    help="주문고객수의 '합계'는 채널별 고객수를 더한 값이라, 여러 채널로 산 고객은 중복돼요.",
+                )
             with _u2:
                 st.markdown("<div style='font-size:0.78rem;color:#6b7280;margin-bottom:1px;'>집계 방식</div>", unsafe_allow_html=True)
                 _lux_agg = st.selectbox("집계 방식", ["일평균", "누적"], label_visibility="collapsed", key="lux_agg")
@@ -5625,7 +5640,7 @@ if side["page"].startswith("13."):
     st.markdown("### 💎 명품 채널별 실적")
     st.caption(
         "26년 9월부로 쥬얼리(순금+실버)가 잡화 > 명품 카테고리로 바뀌었어요. 여기 데이터는 25년 명품 기준으로 집계한 raw라 "
-        "카테고리 실적과 조금 다를 수 있어요(단위: 백만원, 전년비는 위 '비교 기준'을 따라요: 동요일 = 364일 전 같은 요일, 동일 = 작년 같은 월·일)."
+        "카테고리 실적과 조금 다를 수 있어요(단위: 거래액 백만원 · 주문고객수 명, 전년비는 위 '비교 기준'을 따라요: 동요일 = 364일 전 같은 요일, 동일 = 작년 같은 월·일)."
     )
     if df_lux.empty:
         st.info("명품 채널 데이터가 없어요. 명품실적 CSV 2개를 올리고 convert_luxury.py를 실행하면 나와요.")
@@ -5641,12 +5656,26 @@ if side["page"].startswith("13."):
             _rp = (shift_prev_year(_rc[0], _lux_basis), shift_prev_year(_rc[1], _lux_basis))
             st.caption(f"📅 올해 {_rc[0]:%Y-%m-%d} – {_rc[1]:%Y-%m-%d} vs 전년 {_lux_basis} {_rp[0]:%Y-%m-%d} – {_rp[1]:%Y-%m-%d} ({"364일 전, 같은 요일끼리 비교" if _lux_basis == "동요일" else "작년 같은 월·일 비교"})")
 
-            _d_all = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["전체 (순금+실버 포함)"])
-            _d_ex = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["순금+실버 제외"])
-            _d_sel = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS[_lux_view])
+            _d_all = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["전체 (순금+실버 포함)"], _lux_cust, _lux_metric)
+            _d_ex = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS["순금+실버 제외"], _lux_cust, _lux_metric)
+            _d_sel = luxury_daily_by_channel(df_lux, LUXURY_KIND_OPTIONS[_lux_view], _lux_cust, _lux_metric)
+            # 거래액은 백만원, 주문고객수는 명 단위로 보여준다
+            _lux_div = 1e6 if _lux_metric == "거래액" else 1.0
+            _lux_ul = "백만원" if _lux_metric == "거래액" else "명"
+            _lux_vf, _lux_pf = f"{_lux_metric}({_lux_ul})", f"전년({_lux_ul})"
+            # 제목에 붙는 선택 표시 (예: "순금+실버 제외 · 신규 · 주문고객수")
+            _lux_tag = _lux_view + ("" if _lux_cust == "전체" else f" · {_lux_cust}") + f" · {_lux_metric}"
+            _lux_fsfx = ("" if _lux_cust == "전체" else f"_{_lux_cust}") + ("" if _lux_metric == "거래액" else f"_{_lux_metric}")
+            if _lux_cust != "전체" or _lux_metric != "거래액":
+                st.caption(
+                    f"👥 고객: **{_lux_cust}**"
+                    + (" (당년 신규 고객 = 원본 당년신규여부 Y)" if _lux_cust == "신규" else " (원본 당년신규여부 N)" if _lux_cust == "기존" else "")
+                    + f" · 지표: **{_lux_metric}**"
+                    + (" — 채널 '합계'는 채널별 주문고객수를 더한 값이라 여러 채널로 산 고객은 중복돼요." if _lux_metric == "주문고객수" else "")
+                )
 
             def _lux_m(v):
-                return f"{v / 1e6:,.1f}" if _lux_pd else f"{v / 1e6:,.0f}"
+                return f"{v / _lux_div:,.1f}" if _lux_pd else f"{v / _lux_div:,.0f}"
 
             def _lux_delta(v):
                 return format_delta_html(v) if v is not None else "-"
@@ -5675,13 +5704,13 @@ if side["page"].startswith("13."):
                 st.markdown(_lux_card("② 순금+실버 제외", _d_ex), unsafe_allow_html=True)
 
             # 채널별 비교표 (선택한 구분)
-            st.markdown(f"#### 채널별 비교 · {_lux_view} · {_lux_agg}")
+            st.markdown(f"#### 채널별 비교 · {_lux_tag} · {_lux_agg}")
             _ch_rows = compute_luxury_channel_compare(_d_sel, _rc, _rp, _lux_pd)
             _hdr = "".join(f"<th style='text-align:right;'>{h}</th>" for h in ["올해", "전년", "증감", "전년비", "올해 비중", "전년 비중"])
 
             def _lux_diff(v):
                 # 증감 금액: 감소(-)는 빨강, 증가(+)는 초록 — 전년비와 같은 색 규칙
-                m = v / 1e6
+                m = v / _lux_div
                 txt = f"{m:+,.1f}" if _lux_pd else f"{m:+,.0f}"
                 if float(txt.replace(",", "")) == 0:
                     return "0"
@@ -5706,7 +5735,7 @@ if side["page"].startswith("13."):
             )
 
             # 기간별 채널 거래액 (일자별/주차별/월별, 누적·일평균, 정렬) — 누적 데이터 화면과 같은 방식
-            st.markdown(f"#### 기간별 채널 거래액 · {_lux_view} · {_lux_agg}")
+            st.markdown(f"#### 기간별 채널 {_lux_metric} · {_lux_tag} · {_lux_agg}")
             _rule = {"일자별": "D", "주차별": "W-SUN", "월별": "ME"}[_lux_unit]
             _per = _d_sel.loc[_rc[0]:_rc[1]]
             _per_res = _per.resample(_rule).agg("mean" if _lux_pd else "sum")
@@ -5731,7 +5760,7 @@ if side["page"].startswith("13."):
                 + f"</tr></thead><tbody>{_tot_html}{''.join(_per_rows)}</tbody></table></div>",
                 unsafe_allow_html=True,
             )
-            render_excel_download(pd.DataFrame(_per_export), f"명품채널_기간별_{_lux_view.split(' ')[0]}_{_lux_unit}_{_lux_agg}.xlsx", label="⬇️ 기간별 엑셀")
+            render_excel_download(pd.DataFrame(_per_export), f"명품채널_기간별_{_lux_view.split(' ')[0]}{_lux_fsfx}_{_lux_unit}_{_lux_agg}.xlsx", label="⬇️ 기간별 엑셀")
 
             import altair as alt
             _LUX_COLORS = {"EP": "#2563eb", "직접": "#9ca3af", "광고": "#f59e0b", "제휴": "#10b981", "PUSH": "#a78bfa"}
@@ -5747,14 +5776,14 @@ if side["page"].startswith("13."):
 
             _bar_df = pd.DataFrame([
                 {
-                    "기간": _lab_chrono[_k], "채널": c, "거래액(백만원)": float(_per_res.iloc[_k][c]) / 1e6,
-                    "전년(백만원)": (float(_prev_res.iloc[_k][c]) / 1e6) if pd.notna(_prev_res.iloc[_k][c]) else None,
+                    "기간": _lab_chrono[_k], "채널": c, _lux_vf: float(_per_res.iloc[_k][c]) / _lux_div,
+                    _lux_pf: (float(_prev_res.iloc[_k][c]) / _lux_div) if pd.notna(_prev_res.iloc[_k][c]) else None,
                     "전년비(%)": _yoy_pct(float(_per_res.iloc[_k][c]), _prev_res.iloc[_k][c]),
                 }
                 for _k in range(len(_per_res)) for c in _ch_only
             ])
             if not _bar_df.empty:
-                st.markdown(f"**채널별 거래액 추이 · {_lux_unit} · {_lux_agg} (백만원)**")
+                st.markdown(f"**채널별 {_lux_metric} 추이 · {_lux_tag} · {_lux_unit} · {_lux_agg} ({_lux_ul})**")
                 _bc1, _bc2 = st.columns([1, 3])
                 with _bc1:
                     _bar_kind = st.radio("차트 형태", ["선", "묶음 막대", "누적 막대"], horizontal=True, key="lux_bar_kind", label_visibility="collapsed")
@@ -5764,29 +5793,29 @@ if side["page"].startswith("13."):
                 _ccolor = alt.Color("채널:N", sort=_ch_only, scale=alt.Scale(domain=_ch_only, range=[_LUX_COLORS.get(c, "#6b7280") for c in _ch_only]),
                                     legend=alt.Legend(orient="top", title=None))
                 _xax = alt.X("기간:N", sort=_lab_chrono, title=None, axis=alt.Axis(labelAngle=-45, labelOverlap=True))
-                _tip = ["기간", "채널", alt.Tooltip("거래액(백만원):Q", format=",.1f"),
-                        alt.Tooltip("전년(백만원):Q", format=",.1f"), alt.Tooltip("전년비(%):Q", format="+.1f")]
+                _tip = ["기간", "채널", alt.Tooltip(f"{_lux_vf}:Q", format=",.1f"),
+                        alt.Tooltip(f"{_lux_pf}:Q", format=",.1f"), alt.Tooltip("전년비(%):Q", format="+.1f")]
                 _zero_b = alt.Chart(pd.DataFrame({"y": [0]})).mark_rule(color="#9ca3af").encode(y="y:Q")
                 if _bar_kind == "선":
                     _big = alt.Chart(_bdf).mark_line(point=alt.OverlayMarkDef(size=60)).encode(
-                        x=_xax, y=alt.Y("거래액(백만원):Q", title="거래액(백만원)"), color=_ccolor,
+                        x=_xax, y=alt.Y(f"{_lux_vf}:Q", title=_lux_vf), color=_ccolor,
                         strokeWidth=alt.condition(alt.datum.채널 == "EP", alt.value(4.5), alt.value(2)), tooltip=_tip,
                     )
                     _fig = _zero_b + _big
                 elif _bar_kind == "묶음 막대":
                     _fig = alt.Chart(_bdf).mark_bar().encode(
-                        x=_xax, xOffset=alt.XOffset("채널:N", sort=_ch_only), y=alt.Y("거래액(백만원):Q", title="거래액(백만원)"),
+                        x=_xax, xOffset=alt.XOffset("채널:N", sort=_ch_only), y=alt.Y(f"{_lux_vf}:Q", title=_lux_vf),
                         color=_ccolor, tooltip=_tip,
                     )
                 else:
                     _fig = alt.Chart(_bdf).mark_bar().encode(
-                        x=_xax, y=alt.Y("거래액(백만원):Q", stack=True, title="거래액(백만원)"), color=_ccolor, tooltip=_tip,
+                        x=_xax, y=alt.Y(f"{_lux_vf}:Q", stack=True, title=_lux_vf), color=_ccolor, tooltip=_tip,
                     )
                 st.altair_chart(_fig.properties(height=340), use_container_width=True)
                 st.caption("EP를 굵은 선으로 강조했어요. 막대로 볼 때는 '묶음 막대'가 채널끼리 비교하기 좋아요. 취소가 먼저 잡힌 날은 값이 마이너스로 내려가요.")
 
             # 월별 전년비 (마감된 달은 전년 같은 달, 진행 중인 달은 전년 동요일)
-            st.markdown(f"#### 월별 전년비 · {_lux_view} · {_lux_agg}")
+            st.markdown(f"#### 월별 전년비 · {_lux_tag} · {_lux_agg}")
             _mon = compute_luxury_monthly_yoy(_d_sel, _lux_last.year, _lux_last, _lux_pd, _lux_basis)
             _cols = list(_d_sel.columns)
             _partial_note = f"<br><span style='font-weight:400;color:#9ca3af;font-size:0.72rem;'>(~{_lux_last.day}일 누계)</span>"
@@ -5809,7 +5838,7 @@ if side["page"].startswith("13."):
             ]
             if _mon_rows:
                 _mon_order = [f"{m}월" for m in _mon]
-                st.markdown(f"**채널별 월별 전년비 · {_lux_view}** (EP 굵은 선)")
+                st.markdown(f"**채널별 월별 전년비 · {_lux_tag}** (EP 굵은 선)")
                 _ln = alt.Chart(pd.DataFrame(_mon_rows)).mark_line(point=True).encode(
                     x=alt.X("월:N", sort=_mon_order, title=None, axis=alt.Axis(labelAngle=0)),
                     y=alt.Y("전년비(%):Q", title="전년비(%)"),
@@ -5831,7 +5860,7 @@ if side["page"].startswith("13."):
                     if _v is not None and _v[2] is not None:
                         _cmp_rows.append({"월": f"{_m}월", "구분": _lbl, "전년비(%)": _v[2]})
             if _cmp_rows:
-                st.markdown("**전체 vs 순금+실버 제외 · 월별 전년비 (합계 / EP)**")
+                st.markdown(f"**전체 vs 순금+실버 제외 · 월별 전년비 (합계 / EP){'' if _lux_cust == '전체' else ' · ' + _lux_cust} · {_lux_metric}**")
                 _cmp_dom = ["전체 합계", "순금+실버 제외 합계", "전체 EP", "순금+실버 제외 EP"]
                 _cmp = alt.Chart(pd.DataFrame(_cmp_rows)).mark_line(point=True).encode(
                     x=alt.X("월:N", sort=[f"{m}월" for m in _mon_all], title=None, axis=alt.Axis(labelAngle=0)),
@@ -5843,7 +5872,7 @@ if side["page"].startswith("13."):
                 )
                 st.altair_chart((_z + _cmp).properties(height=300), use_container_width=True)
 
-            with st.expander(f"월별 거래액 · {_lux_agg} (올해 / 전년, 단위: 백만원)"):
+            with st.expander(f"월별 {_lux_metric} · {_lux_tag} · {_lux_agg} (올해 / 전년, 단위: {_lux_ul})"):
                 _mv = "".join(
                     f"<tr><td class='m'>{ch}</td>" + "".join(
                         f"<td style='text-align:right;'>{_lux_m(v[ch][0])}<br>"
@@ -5866,7 +5895,7 @@ if side["page"].startswith("13."):
                 {"월": f"{m}월", **{f"{ch} 올해": v[ch][0] for ch in _cols}, **{f"{ch} 전년": v[ch][1] for ch in _cols},
                  **{f"{ch} 전년비(%)": v[ch][2] for ch in _cols}} for m, v in _mon.items()
             ])
-            _kind_name = _lux_view.split(" ")[0] + ("_일평균" if _lux_pd else "_누적")
+            _kind_name = _lux_view.split(" ")[0] + _lux_fsfx + ("_일평균" if _lux_pd else "_누적")
             _xc1, _xc2, _ = st.columns([1, 1, 4])
             with _xc1:
                 render_excel_download(_xl_ch, f"명품채널_{_kind_name}_{_rc[0]:%Y%m%d}_{_rc[1]:%Y%m%d}.xlsx", label="⬇️ 채널별 엑셀")
