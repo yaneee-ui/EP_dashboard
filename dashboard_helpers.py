@@ -4926,3 +4926,229 @@ def decompose_gmv_yoy(uv, cr, aov, gmv):
     if tot == 0:
         return {"거래액 전년비": g, **{k: 0.0 for k in lx}}
     return {"거래액 전년비": g, **{k: v / tot * g for k, v in lx.items()}}
+
+
+# ---------------------------------------------------------------------------
+# 주간 모니터링 지표 (11. 주간보고용) — 12월 액션 점검용 고정 지표
+#   ① 구분별 EP 점유율 (EP 거래액 / 전 채널 거래액, 전체채널별실적)
+#   ② 회원·비회원 유입 분해 (EP실적: 비회원 = 전체 - 회원, 2025 원본엔 비회원 행이 없어서)
+#   ③ 전시 상품당 유입 (EP채널 Data.xlsx: UV / 전시상품수)
+#   ④ 신규 전환율 (EP실적: 신규 구매객수 / 신규 UV)
+# 주별 값은 sum/sum(일평균 지표는 합계 / 일수), 전년비는 그 주에 실제 있는 날짜의 364일 전(동요일)과 비교.
+# ---------------------------------------------------------------------------
+MONITOR_KINDS = ["전체"] + KIND_ORDER
+MONITOR_PCT_METRICS = ("EP 점유율", "비회원 비중", "신규 전환율")
+MONITOR_METRICS = [
+    # (지표, 단위, 비율지표 여부(전년비를 %p 차이로), 설명)
+    ("EP 점유율", "%", True, "EP 거래액 ÷ 전 채널 거래액"),
+    ("회원 UV", "명/일", False, "일평균"),
+    ("비회원 UV", "명/일", False, "일평균 · 전체 UV − 회원 UV"),
+    ("비회원 비중", "%", True, "비회원 UV ÷ 전체 UV · 오르면 유입 질 하락 신호"),
+    ("전시 상품당 유입", "UV/상품", False, "EP UV ÷ 전시상품수 · EP채널 데이터"),
+    ("전시상품수", "개/일", False, "일평균 · EP채널 데이터"),
+    ("신규 전환율", "%", True, "신규 구매객수 ÷ 신규 UV"),
+]
+
+
+def _monitor_daily_parts(df_traffic, df_ep, df_ch):
+    """지표 -> 구분 -> 날짜 인덱스 DataFrame(n, d). 주별 값 = n 합계 / d 합계."""
+    out = {m[0]: {} for m in MONITOR_METRICS}
+    kind_bpu = {"전체": ["Total"], **KIND_BPU}
+
+    if df_traffic is not None and not df_traffic.empty:
+        t = df_traffic.pivot_table(index=["날짜", "BPU"], columns="회원구분",
+                                   values=["트래픽", "구매객수"], aggfunc="sum", observed=True)
+        for k, bpus in kind_bpu.items():
+            sub = t[t.index.get_level_values("BPU").isin(bpus)].groupby(level="날짜").sum(min_count=1)
+            if sub.empty or ("트래픽", "전체") not in sub.columns:
+                continue
+            uv_all = sub[("트래픽", "전체")]
+            one = pd.Series(1.0, index=sub.index)
+            if ("트래픽", "회원") in sub.columns:
+                uv_mem = sub[("트래픽", "회원")]
+                out["회원 UV"][k] = pd.DataFrame({"n": uv_mem, "d": one})
+                out["비회원 UV"][k] = pd.DataFrame({"n": uv_all - uv_mem, "d": one})
+                out["비회원 비중"][k] = pd.DataFrame({"n": (uv_all - uv_mem) * 100, "d": uv_all})
+            if ("트래픽", "신규") in sub.columns and ("구매객수", "신규") in sub.columns:
+                out["신규 전환율"][k] = pd.DataFrame({"n": sub[("구매객수", "신규")] * 100, "d": sub[("트래픽", "신규")]})
+
+    if df_ep is not None and not df_ep.empty and "평균 EP 전시 상품수" in df_ep.columns:
+        e = df_ep[(df_ep["원부매칭여부"] == "Total") & (df_ep["최저가여부"] == "Total")]
+        for k, bpus in kind_bpu.items():
+            sub = e[e["BPU"].isin(bpus)].groupby("날짜", observed=True)[["평균 EP UV", "평균 EP 전시 상품수"]].sum(min_count=1)
+            if sub.empty:
+                continue
+            out["전시 상품당 유입"][k] = pd.DataFrame({"n": sub["평균 EP UV"], "d": sub["평균 EP 전시 상품수"]})
+            out["전시상품수"][k] = pd.DataFrame({"n": sub["평균 EP 전시 상품수"], "d": 1.0}, index=sub.index)
+
+    if df_ch is not None and not df_ch.empty:
+        for k in MONITOR_KINDS:
+            sub = df_ch if k == "전체" else df_ch[df_ch["구분"] == k]
+            al = sub.groupby("날짜")["거래액"].sum()
+            ep = sub[sub["채널"] == "EP"].groupby("날짜")["거래액"].sum().reindex(al.index).fillna(0)
+            out["EP 점유율"][k] = pd.DataFrame({"n": ep * 100, "d": al})
+
+    for m in out:
+        for k in out[m]:
+            out[m][k] = out[m][k].dropna().sort_index()
+    return out
+
+
+def compute_weekly_monitor(df_traffic, df_ep, df_ch, last_date=None, n_weeks=5):
+    """최근 n_weeks주(월~일) 주별 값 + 주별 전년(동요일) 값 + 전년비.
+    반환: {"weeks": [(월요일, 표시끝날짜)], "rows": [...], "last": {출처: 마지막 날짜}}
+    rows 항목: 지표, 구분, 단위, 설명, is_ratio, 값[], 전년[], 전년비[] (비율지표는 %p 차이, 나머지는 %)"""
+    parts = _monitor_daily_parts(df_traffic, df_ep, df_ch)
+    if last_date is None:
+        last_date = df_traffic["날짜"].max()
+    last_date = pd.Timestamp(last_date)
+    ref_mon = last_date - pd.Timedelta(days=last_date.weekday())
+    starts = [ref_mon - pd.Timedelta(weeks=w) for w in range(n_weeks - 1, -1, -1)]
+    weeks = [(s, min(s + pd.Timedelta(days=6), last_date)) for s in starts]
+    sh = pd.Timedelta(days=364)
+
+    def _val(df, days):
+        x = df.reindex(days).dropna()
+        return (x["n"].sum() / x["d"].sum()) if (not x.empty and x["d"].sum()) else None
+
+    rows = []
+    for name, unit, is_ratio, desc in MONITOR_METRICS:
+        for k in MONITOR_KINDS:
+            df = parts[name].get(k)
+            if df is None or df.empty:
+                continue
+            vals, prevs, yoys = [], [], []
+            for s, e in weeks:
+                # 그 주에 '실제로 있는 날짜'만 — 부분주/출처별 마지막 날짜가 달라도 전년과 같은 일수로 비교
+                days = df.index[(df.index >= s) & (df.index <= e)]
+                cur = _val(df, days)
+                prv = _val(df, days - sh) if len(days) else None
+                vals.append(cur)
+                prevs.append(prv)
+                if cur is None or prv is None:
+                    yoys.append(None)
+                elif is_ratio:
+                    yoys.append(cur - prv)
+                else:
+                    yoys.append(pct_delta_safe(cur, prv))
+            rows.append({"지표": name, "구분": k, "단위": unit, "설명": desc, "is_ratio": is_ratio,
+                         "값": vals, "전년": prevs, "전년비": yoys})
+    last = {}
+    if df_traffic is not None and not df_traffic.empty:
+        last["EP실적"] = df_traffic["날짜"].max()
+    if df_ch is not None and not df_ch.empty:
+        last["전체채널별실적"] = df_ch["날짜"].max()
+    if df_ep is not None and not df_ep.empty:
+        last["EP채널(Data.xlsx)"] = df_ep["날짜"].max()
+    return {"weeks": weeks, "rows": rows, "last": last}
+
+
+def _monitor_fmt(v, name):
+    if v is None or pd.isna(v):
+        return "-"
+    if name == "전시 상품당 유입":
+        return f"{v:.4f}"
+    if name in MONITOR_PCT_METRICS:
+        return f"{v:.1f}%"
+    return f"{v:,.0f}"
+
+
+def _monitor_delta_html(v, is_ratio):
+    if v is None or pd.isna(v):
+        return "<span class='delta neutral'>-</span>"
+    u = "%p" if is_ratio else "%"
+    if v > 0:
+        return f"<span class='delta up'>{v:.1f}{u}</span>"
+    if v < 0:
+        return f"<span class='delta down'>△ {abs(v):.1f}{u}</span>"
+    return f"<span class='delta neutral'>0.0{u}</span>"
+
+
+def render_weekly_monitor_html(result):
+    weeks = result["weeks"]
+    head = "".join(
+        f"<th>{week_start_label(s)}<br><span style='font-weight:400;font-size:0.72rem;color:#9ca3af;'>"
+        f"{s.month}/{s.day}~{e.month}/{e.day}</span></th>" for s, e in weeks)
+    body, cur = "", None
+    ncol = 1 + len(weeks)
+    for r in result["rows"]:
+        if r["지표"] != cur:
+            cur = r["지표"]
+            body += (f"<tr><td colspan='{ncol}' style='background:#eef2ff;font-weight:700;text-align:left;'>{cur}"
+                     f" <span style='font-weight:400;font-size:0.75rem;color:#6b7280;'>({r['단위']} · {r['설명']})</span></td></tr>")
+        cells = "".join(
+            f"<td style='text-align:right;'>{_monitor_fmt(v, cur)}<br>"
+            f"<span style='font-size:0.75rem;'>{_monitor_delta_html(y, r['is_ratio'])}</span>"
+            f"<span style='font-size:0.72rem;color:#9ca3af;'> ({_monitor_fmt(p, cur)})</span></td>"
+            for v, p, y in zip(r["값"], r["전년"], r["전년비"]))
+        body += f"<tr><td class='m'>{r['구분']}</td>{cells}</tr>"
+    return ("<div style='overflow-x:auto;'><table class='summary-table'>"
+            f"<thead><tr><th>구분</th>{head}</tr></thead><tbody>{body}</tbody></table></div>")
+
+
+def build_weekly_monitor_excel(result):
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from openpyxl.utils import get_column_letter
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "주간모니터링"
+    weeks = result["weeks"]
+    h1 = ["지표", "구분"]
+    for s, e in weeks:
+        h1 += [f"{week_start_label(s)} ({s.month}/{s.day}~{e.month}/{e.day})", "", ""]
+    h2 = ["", ""] + ["올해", "전년(동요일)", "전년비"] * len(weeks)
+    ws.append(h1)
+    ws.append(h2)
+    fill = PatternFill("solid", fgColor="D9D9D9")
+    for rr in (1, 2):
+        for c in range(1, len(h1) + 1):
+            ws.cell(row=rr, column=c).fill = fill
+            ws.cell(row=rr, column=c).font = Font(bold=True)
+            ws.cell(row=rr, column=c).alignment = Alignment(horizontal="center")
+    for i in range(len(weeks)):
+        ws.merge_cells(start_row=1, start_column=3 + i * 3, end_row=1, end_column=5 + i * 3)
+    up, down = Font(color="16A34A"), Font(color="DC2626")
+
+    def _conv(x, pct):
+        if x is None or pd.isna(x):
+            return None
+        return x / 100 if pct else x
+
+    for r in result["rows"]:
+        name = r["지표"]
+        pct = name in MONITOR_PCT_METRICS
+        line = [f"{name} ({r['단위']})", r["구분"]]
+        for v, p, y in zip(r["값"], r["전년"], r["전년비"]):
+            # 비율지표 전년비는 %p 숫자 그대로, 나머지는 % 서식용 소수
+            yv = None if y is None else (round(y, 2) if r["is_ratio"] else y / 100)
+            line += [_conv(v, pct), _conv(p, pct), yv]
+        ws.append(line)
+        rr = ws.max_row
+        vfmt = "0.0%" if pct else ("0.0000" if name == "전시 상품당 유입" else "#,##0")
+        for i in range(len(weeks)):
+            c0 = 3 + i * 3
+            ws.cell(row=rr, column=c0).number_format = vfmt
+            ws.cell(row=rr, column=c0 + 1).number_format = vfmt
+            dc = ws.cell(row=rr, column=c0 + 2)
+            dc.number_format = '+0.0"%p";-0.0"%p"' if r["is_ratio"] else "+0.0%;-0.0%"
+            y = r["전년비"][i]
+            if y is not None:
+                dc.font = up if y >= 0 else down
+    ws.column_dimensions["A"].width = 24
+    ws.column_dimensions["B"].width = 8
+    for c in range(3, len(h1) + 1):
+        ws.column_dimensions[get_column_letter(c)].width = 12
+    ws.freeze_panes = "C3"
+    ws2 = wb.create_sheet("데이터 기준")
+    ws2.append(["출처", "마지막 날짜"])
+    for k, v in result["last"].items():
+        ws2.append([k, pd.Timestamp(v).strftime("%Y-%m-%d")])
+    ws2.append([])
+    ws2.append(["※ 전년비: 그 주에 실제 데이터가 있는 날짜의 364일 전(동요일)과 비교. 비율 지표(점유율·비중·전환율)는 %p 차이."])
+    ws2.append(["※ 비회원 UV = 전체 UV − 회원 UV (2025 원본엔 비회원 행이 없어서). 점유율은 전체채널별실적의 정상/이월/입점 구분 기준."])
+    ws2.column_dimensions["A"].width = 22
+    ws2.column_dimensions["B"].width = 14
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()

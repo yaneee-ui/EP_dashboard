@@ -37,7 +37,7 @@ from dashboard_helpers import (
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
-    KIND_BPU, KIND_ORDER, compute_kind_category_gap, decompose_gmv_yoy,
+    KIND_BPU, KIND_ORDER, compute_weekly_monitor, render_weekly_monitor_html, build_weekly_monitor_excel, compute_kind_category_gap, decompose_gmv_yoy,
     LUXURY_KIND_OPTIONS, LUXURY_CUST_OPTIONS, LUXURY_METRIC_OPTIONS, luxury_has_segments, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
@@ -3746,7 +3746,7 @@ if side["page"].startswith("11."):
     # 섹션 바로가기 — 항목이 많은 페이지라 맨 위에서 눌러 해당 영역으로 바로 이동한다.
     # (각 섹션 앞에 id가 달린 빈 div(.wk-anchor)를 두고 #링크로 스크롤. 스크롤해도 따라오게 sticky)
     _wk_nav_items = [
-        ("summary", "📋 요약표·엑셀"), ("w5", "📊 최근 5주 일평균"), ("w5cat", "🗂️ 카테고리별 5주"),
+        ("summary", "📋 요약표·엑셀"), ("monitor", "🎯 모니터링 지표"), ("w5", "📊 최근 5주 일평균"), ("w5cat", "🗂️ 카테고리별 5주"),
         ("daily", "📆 일자별 비교"), ("dailycat", "🏷️ 카테고리별 일자비교"), ("monthly", "📈 월별 추이"),
     ]
     _wk_nav_c1, _wk_nav_c2 = st.columns([4, 1.3])
@@ -3976,6 +3976,30 @@ if side["page"].startswith("11."):
             st.error(f"요약 엑셀 생성 중 문제가 발생했어요: {_e}")
 
         # --- 최근 5주 일평균 표 (Total/자사/정상/이월/입점, 전주비/전년비) ---
+        # --- 주간 모니터링 지표 (12월 액션 점검용 고정 지표) — 세그먼트 선택과 무관하게 항상 같은 기준 ---
+        st.markdown("<div class='wk-anchor' id='wk-sec-monitor'></div>", unsafe_allow_html=True)
+        st.markdown("---")
+        _mon_l, _mon_r = st.columns([3, 2], vertical_alignment="center")
+        _mon_l.markdown("**🎯 주간 모니터링 지표** (최근 5주 · 위 세그먼트 선택과 무관)")
+        _mon = compute_weekly_monitor(df_traffic, df_ep, df_chall, last_date=df_traffic["날짜"].max())
+        if _mon["rows"]:
+            with _mon_r:
+                st.download_button(
+                    "📥 엑셀 다운로드", data=build_weekly_monitor_excel(_mon),
+                    file_name=f"주간모니터링_{df_traffic['날짜'].max():%Y%m%d}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="wkdl_monitor",
+                )
+            _mon_last = " · ".join(f"{k} {pd.Timestamp(v).month}/{pd.Timestamp(v).day}" for k, v in _mon["last"].items())
+            st.caption(
+                "칸마다 위: 올해 주간 값, 아래: 전년비 (전년 동요일 값). 비율 지표(점유율·비중·전환율)는 %p 차이. "
+                "비회원 UV = 전체 − 회원. 비회원 비중은 오르면 유입 질이 떨어지는 신호. "
+                f"최신 주는 출처별로 데이터가 있는 날짜까지만 비교해요 (마지막 날짜: {_mon_last})."
+            )
+            st.markdown(render_weekly_monitor_html(_mon), unsafe_allow_html=True)
+        else:
+            st.info("모니터링 지표를 계산할 데이터가 없어요.")
+
         st.markdown("<div class='wk-anchor' id='wk-sec-w5'></div>", unsafe_allow_html=True)
         st.markdown("---")
         _wk_h2_l, _wk_h2_r = st.columns([3, 2], vertical_alignment="center")
