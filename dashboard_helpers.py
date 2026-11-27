@@ -1006,15 +1006,71 @@ DATA_BASIS_NOTES = [
 ]
 
 
-def render_data_basis_notes(last_date=None):
-    """집계 기준 변경 안내(한 줄 박스). last_date가 변경 시점보다 앞이면 표시하지 않는다."""
+# ---- EP + 쇼핑검색광고 APP 합산 보기 ----
+# 11/19부터 EP APP 실적 일부가 쇼핑검색광고(광고 채널) APP로 분리 집계돼서, 이 날짜 이후
+# 광고 APP 거래액을 EP에 더해 주면 전년 EP와 같은 기준이 된다. 합산 원본(★일자별실적_A_M_P_전채널)은
+# BPU·회원구분·카테고리 구분이 없어서 'BPU Total · 회원구분 전체' 행에만 더한다.
+EP_AD_APP_START = pd.Timestamp("2026-11-19")
+
+
+def ad_app_daily_add(df_ad):
+    """합산할 일자별 광고 APP 거래액·주문고객수 (EP_AD_APP_START 이후만). index=날짜."""
+    if df_ad is None or df_ad.empty:
+        return pd.DataFrame(columns=["거래액", "주문고객수"])
+    a = df_ad[(df_ad["채널"] == "광고") & (df_ad["디바이스"] == "A") & (df_ad["날짜"] >= EP_AD_APP_START)]
+    return a.groupby("날짜")[["거래액", "주문고객수"]].sum()
+
+
+def apply_ep_ad_app(df_traffic, df_total_daily, df_ad):
+    """EP 실적에 광고 APP 실적을 더한 복사본을 돌려준다 (원본 DataFrame은 건드리지 않음).
+    - df_traffic: BPU=Total & 회원구분=전체 행의 거래액·구매객수에 더하고 CR/객단가는 합계로 재계산
+      (트래픽은 그대로 — 광고 APP 유입은 원본에 없음)
+    - df_total_daily: 채널 EP에 더하고 광고에서 같은 금액을 뺀다 (전체는 그대로 → EP 점유율 비교 가능)"""
+    add = ad_app_daily_add(df_ad)
+    if add.empty:
+        return df_traffic, df_total_daily
+    tr = df_traffic.copy()
+    m = (tr["BPU"] == "Total") & (tr["회원구분"] == "전체") & tr["날짜"].isin(add.index)
+    if m.any():
+        d = tr.loc[m, "날짜"]
+        tr.loc[m, "거래액"] = (tr.loc[m, "거래액"].astype(float) + d.map(add["거래액"]).values).astype("float32")
+        tr.loc[m, "구매객수"] = (tr.loc[m, "구매객수"].astype(float) + d.map(add["주문고객수"]).values).astype("float32")
+        g, c, t = tr.loc[m, "거래액"].astype(float), tr.loc[m, "구매객수"].astype(float), tr.loc[m, "트래픽"].astype(float)
+        tr.loc[m, "CR"] = (c / t * 100).where(t > 0, 0).astype("float32")
+        tr.loc[m, "객단가"] = (g / c).where(c > 0, 0).astype("float32")
+    td = df_total_daily
+    if td is not None and not td.empty:
+        td = td.copy()
+        for ch, sign in (("EP", 1), ("광고", -1)):
+            mm = (td["채널"] == ch) & td["날짜"].isin(add.index)
+            td.loc[mm, "거래액"] = td.loc[mm, "거래액"].astype(float) + sign * td.loc[mm, "날짜"].map(add["거래액"]).values
+    return tr, td
+
+
+def render_data_basis_notes(last_date=None, ad_app_on=None, ad_app_last=None):
+    """집계 기준 변경 안내(한 줄 박스). last_date가 변경 시점보다 앞이면 표시하지 않는다.
+    ad_app_on: 'EP + 쇼검 APP 합산' 버튼 상태(True/False). None이면 버튼 안내 없이 기존 문구만."""
+    if ad_app_on and (last_date is None or pd.Timestamp(last_date) >= EP_AD_APP_START):
+        _upto = f" (쇼검 APP 원본 ~{pd.Timestamp(ad_app_last):%m/%d})" if ad_app_last is not None else ""
+        st.markdown(
+            "<div style='background:#ecfdf5;border:1px solid #a7f3d0;border-left:4px solid #10b981;border-radius:8px;"
+            "padding:7px 12px;margin:2px 0 8px;font-size:0.82rem;color:#065f46;line-height:1.55;'>"
+            "✅ <b>EP + 쇼검 APP 합산 보기 중</b> · 11/19 이후 EP 거래액·구매객수에 쇼핑검색광고 APP 실적을 더했어요"
+            f"{_upto}. 전년은 EP 그대로라 기존과 같은 기준으로 비교돼요. "
+            "<b>BPU 전체 · 회원구분 전체</b> 실적에만 반영돼요(BPU별·회원/신규별·카테고리·상품·채널별 화면은 원본 그대로). "
+            "트래픽은 그대로라 CR은 조금 높게 보일 수 있어요. 사이드바 '보기 기준'에서 끌 수 있어요.</div>",
+            unsafe_allow_html=True,
+        )
+        return
     for n in DATA_BASIS_NOTES:
         if last_date is not None and pd.Timestamp(last_date) < n["start"]:
             continue
+        _hint = (" 사이드바 <b>보기 기준 → EP + 쇼검 APP 합산</b>을 켜면 전년과 같은 기준으로 볼 수 있어요."
+                 if ad_app_on is False and n["start"] == EP_AD_APP_START else "")
         st.markdown(
             "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:8px;"
             "padding:7px 12px;margin:2px 0 8px;font-size:0.82rem;color:#1e3a8a;line-height:1.55;'>"
-            f"📌 <b>{n['label']}</b> · {n['detail']}</div>",
+            f"📌 <b>{n['label']}</b> · {n['detail']}{_hint}</div>",
             unsafe_allow_html=True,
         )
 

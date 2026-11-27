@@ -11,7 +11,7 @@ import io
 
 from data_loader import (
     load_data, load_traffic_data, load_category_data, load_product_data, load_brand_names,
-    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_total_daily_seg, load_luxury_channel, load_channel_all,
+    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_total_daily_seg, load_luxury_channel, load_channel_all, load_ad_app_daily,
 )
 from ai_insights import (
     render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
@@ -37,7 +37,7 @@ from dashboard_helpers import (
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
-    KIND_BPU, KIND_ORDER, render_data_basis_notes, compute_weekly_monitor, render_weekly_monitor_html, build_weekly_monitor_excel, compute_kind_category_gap, decompose_gmv_yoy,
+    KIND_BPU, KIND_ORDER, render_data_basis_notes, apply_ep_ad_app, compute_weekly_monitor, render_weekly_monitor_html, build_weekly_monitor_excel, compute_kind_category_gap, decompose_gmv_yoy,
     LUXURY_KIND_OPTIONS, LUXURY_CUST_OPTIONS, LUXURY_METRIC_OPTIONS, luxury_has_segments, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
@@ -77,6 +77,7 @@ if side["refresh"]:
     load_coupon_daily.clear()
     load_luxury_channel.clear()
     load_channel_all.clear()
+    load_ad_app_daily.clear()
 
 # --- 데이터 로드 ---
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
@@ -140,6 +141,16 @@ if side["ep_coupon_daily_file"] is not None:
     df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)
     st.sidebar.success(f"쿠폰 데이터 업로드 완료 ({df_coupon_daily['날짜'].min().strftime('%Y-%m-%d')} ~ {df_coupon_daily['날짜'].max().strftime('%Y-%m-%d')})")
 
+# --- EP + 쇼핑검색광고 APP 합산 보기 (사이드바 '보기 기준' 버튼) ---
+# 업로드 반영까지 끝난 뒤에 적용해야 업로드한 EP실적에도 똑같이 더해진다.
+df_ad_app = load_ad_app_daily()
+_ad_app_last = df_ad_app["날짜"].max() if not df_ad_app.empty else None
+if side["ep_ad_app"]:
+    if df_ad_app.empty:
+        st.sidebar.warning("쇼검 APP 원본(ep_ad_app_daily.csv)이 없어서 합산하지 못했어요.")
+    else:
+        df_traffic, df_total_daily = apply_ep_ad_app(df_traffic, df_total_daily, df_ad_app)
+
 # --- 사이드바 하단: 데이터셋별 반영 현황(기간/일수) ---
 
 _status_items = [
@@ -148,6 +159,7 @@ _status_items = [
     ("카테고리", *_status_entry(df_category, "날짜")),
     ("상품", *_status_entry(df_product, "날짜")),
     ("쿠폰(일자별)", *_status_entry(df_coupon_daily, "날짜")),
+    ("쇼검 APP", *_status_entry(df_ad_app, "날짜")),
 ]
 render_sidebar_data_status(_status_items)
 
@@ -1019,7 +1031,7 @@ elif _page_num in ("1", "2", "4", "3", "10"):
 else:
     _spacer_height = 65
 st.markdown(
-    f"<div style='height:{_spacer_height}px;'></div>"
+    f"<div id='sticky-spacer' data-min='{_spacer_height}' style='height:{_spacer_height}px;'></div>"
     "<div id='content-align-marker' style='height:0;'></div>",
     unsafe_allow_html=True,
 )
@@ -1044,13 +1056,34 @@ components.html(
             }
         } catch (e) {}
     }
+    // 고정 필터 영역 높이가 화면마다/필터 줄바꿈마다 달라서, 고정 여백(_spacer_height)만으로는 바로 아래
+    // 첫 요소(예: 집계 기준 안내 박스)가 가려질 수 있음 — 실제 고정 영역 아래쪽 + 8px까지 여백을 늘린다.
+    function adjustStickySpacer() {
+        try {
+            const doc = window.parent.document;
+            const sp = doc.querySelector('#sticky-spacer');
+            const marker = doc.querySelector('#content-align-marker');
+            const st = doc.querySelector('.st-key-sticky_header');
+            if (!sp || !marker || !st) return;
+            let sc = marker.parentElement;
+            while (sc && sc !== doc.body && !(sc.scrollHeight > sc.clientHeight && /(auto|scroll)/.test(getComputedStyle(sc).overflowY))) sc = sc.parentElement;
+            const scrollTop = (sc && sc !== doc.body) ? sc.scrollTop : (window.parent.scrollY || 0);
+            const cur = sp.getBoundingClientRect().height;
+            const markerTopAt0 = marker.getBoundingClientRect().top + scrollTop;
+            const need = cur + (st.getBoundingClientRect().bottom + 8 - markerTopAt0);
+            const minH = parseFloat(sp.dataset.min || '0');
+            const h = Math.max(minH, Math.round(need));
+            if (Math.abs(h - cur) > 2) sp.style.height = h + 'px';
+        } catch (e) {}
+    }
     adjustStickyPosition();
+    adjustStickySpacer();
     try {
         const obs = new MutationObserver(adjustStickyPosition);
         obs.observe(window.parent.document.body, {attributes: true, subtree: true, attributeFilter: ['style', 'class']});
         window.parent.addEventListener('resize', adjustStickyPosition);
     } catch (e) {}
-    setInterval(adjustStickyPosition, 400); // 안전망: 주기적 재계산
+    setInterval(function() { adjustStickyPosition(); adjustStickySpacer(); }, 400); // 안전망: 주기적 재계산
     </script>
     """,
     height=0,
@@ -1059,7 +1092,8 @@ components.html(
 
 
 # 집계 기준 변경 안내 — 모든 화면 맨 위 공통 (DATA_BASIS_NOTES에 항목 추가)
-render_data_basis_notes(df_traffic["날짜"].max() if not df_traffic.empty else None)
+render_data_basis_notes(df_traffic["날짜"].max() if not df_traffic.empty else None,
+                        ad_app_on=bool(side["ep_ad_app"]), ad_app_last=_ad_app_last)
 
 if side["page"].startswith("0."):
     render_home(

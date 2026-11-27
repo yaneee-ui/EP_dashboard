@@ -421,6 +421,23 @@ def load_luxury_channel() -> pd.DataFrame:
     return df.sort_values("날짜").reset_index(drop=True)
 
 
+AD_APP_PATH = "ep_ad_app_daily.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_ad_app_daily() -> pd.DataFrame:
+    """광고(쇼핑검색광고)/EP x 디바이스(A/M/P/총계) 일자별 거래액·주문고객수 (convert_ad_app.py 결과).
+    'EP + 쇼핑검색광고 APP 합산' 보기용. 없으면 빈 DataFrame."""
+    import os
+    if not os.path.exists(AD_APP_PATH):
+        return pd.DataFrame(columns=["날짜", "채널", "디바이스", "거래액", "주문고객수"])
+    df = pd.read_csv(AD_APP_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    for c in ("거래액", "주문고객수"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return df.sort_values("날짜").reset_index(drop=True)
+
+
 CHANNEL_ALL_PATH = "ep_channel_all.csv.gz"
 
 

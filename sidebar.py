@@ -46,6 +46,16 @@ def render_sidebar():
         help="월별: 진행 중인 달 포함(전년 동요일 비교) / 월마감: 완료된 달만(전년 동월 비교)",
     )
 
+    # --- EP + 쇼핑검색광고 APP 합산 보기 (11/19부터 EP APP 실적 일부가 쇼검 APP로 분리 집계) ---
+    st.sidebar.markdown("**보기 기준**")
+    ep_ad_app = st.sidebar.toggle(
+        "EP + 쇼검 APP 합산 (11/19~)", key="ep_ad_app_on", value=False,
+        help="11/19부터 EP APP 실적 일부가 쇼핑검색광고(APP)로 나뉘어 집계되고 있어요. "
+             "켜면 11/19 이후 EP 거래액·구매객수에 쇼핑검색광고 APP 거래액·주문고객수를 더해서 "
+             "전년 EP와 같은 기준으로 비교해요(전년은 EP 그대로). "
+             "BPU·회원구분·카테고리 구분이 없는 데이터라 'BPU 전체 · 회원구분 전체' 실적에만 반영돼요.",
+    )
+
     st.sidebar.divider()
 
     # --- 메뉴 (페이지 선택) ---
@@ -142,6 +152,7 @@ def render_sidebar():
     return {
         "view_unit": view_unit,
         "page": page,
+        "ep_ad_app": ep_ad_app,
         "ep_channel_file": ep_channel_file,
         "ep_traffic_file": ep_traffic_file,
         "ep_category_file": ep_category_file,
