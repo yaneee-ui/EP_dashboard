@@ -1,4 +1,4 @@
-"""좌측 사이드바: 조회 단위(콤팩트) + 데이터 업로드."""
+"""좌측 사이드바: 데이터 반영 현황(맨 위) + 조회 단위(콤팩트) + 보기 기준 + 메뉴."""
 import streamlit as st
 
 # 화면에 보이는 그룹 순서: 홈/실적 요약 -> 쿠폰/마감예상/주간보고 등 -> 주차별 실적 -> 누적 데이터
@@ -21,6 +21,8 @@ def goto_page(page):
 
 def render_sidebar():
     st.sidebar.markdown("### 📊 EP 실적 대시보드")
+    # 데이터 반영 현황은 데이터를 다 읽은 뒤(app.py)에 채우지만, 화면에선 맨 위에 보이도록 자리만 먼저 잡아둔다.
+    status_slot = st.sidebar.container()
     st.sidebar.divider()
 
     # --- 조회 단위 (콤팩트 한 줄) ---
@@ -109,39 +111,6 @@ def render_sidebar():
     page = st.session_state["menu_page"]
 
     st.sidebar.divider()
-
-    # --- 데이터 업로드 ---
-    st.sidebar.markdown("**📁 데이터 업로드**")
-    st.sidebar.caption("변환기에서 만든 CSV를 올리면 바로 반영됩니다.")
-    ep_channel_file = st.sidebar.file_uploader(
-        "EP채널 (ep_data_long.csv)", type=["csv", "xlsx", "xls"],
-        key="ep_channel_upload",
-    )
-    ep_traffic_file = st.sidebar.file_uploader(
-        "EP실적 (ep_traffic.csv)", type=["csv"],
-        key="ep_traffic_upload",
-    )
-    ep_category_file = st.sidebar.file_uploader(
-        "카테고리별 (ep_category.csv)", type=["csv"],
-        key="ep_category_upload",
-    )
-    ep_product_file = st.sidebar.file_uploader(
-        "상품별 (ep_product.csv)", type=["csv"],
-        key="ep_product_upload",
-        help="날짜/BPU/카테고리/브랜드/상품코드/상품명/거래액 컬럼의 상품 단위 데이터예요. "
-             "'카테고리별 실적' 탭에서 카테고리별 상위 상품 랭킹에 쓰여요.",
-    )
-    ep_coupon_daily_file = st.sidebar.file_uploader(
-        "쿠폰 데이터 (ep_coupon_daily.csv)", type=["csv"],
-        key="ep_coupon_daily_upload",
-        help="일자별 쿠폰 원본 하나로 월별/일별/주별 조회가 모두 계산돼요.",
-    )
-
-    st.sidebar.markdown("**🔄 새로고침**")
-    st.sidebar.caption("업로드가 반영 안 될 때 눌러주세요.")
-    refresh = st.sidebar.button("다시 읽기", use_container_width=True)
-
-    st.sidebar.divider()
     st.sidebar.markdown("**🤖 AI 인사이트**")
     st.sidebar.caption(
         "실적 요약 화면의 'AI 인사이트' 버튼으로 자동 요약을 볼 수 있어요. "
@@ -153,36 +122,38 @@ def render_sidebar():
         "view_unit": view_unit,
         "page": page,
         "ep_ad_app": ep_ad_app,
-        "ep_channel_file": ep_channel_file,
-        "ep_traffic_file": ep_traffic_file,
-        "ep_category_file": ep_category_file,
-        "ep_product_file": ep_product_file,
-        "ep_coupon_daily_file": ep_coupon_daily_file,
-        "refresh": refresh,
+        "status_slot": status_slot,
     }
 
 
-def render_sidebar_data_status(items):
-    """사이드바 맨 아래에 데이터셋별 반영 현황(기간·일수)을 표시한다.
-    items: (라벨, 시작일str 또는 None, 종료일str 또는 None, 일수 또는 None) 튜플 리스트.
-    시작일이 None이면 '데이터 없음'으로 표시한다.
-    """
-    st.sidebar.divider()
-    st.sidebar.markdown("**📅 데이터 반영 현황**")
-    rows_html = ""
-    for label, d_min, d_max, n_days in items:
-        if d_min is None:
-            rows_html += (
-                f"<div style='font-size:0.74rem;color:#9ca3af;margin-bottom:3px;'>"
-                f"{label}: 데이터 없음</div>"
-            )
+def render_sidebar_data_status(items, slot=None):
+    """사이드바 맨 위에 데이터셋별 '며칠까지 반영됐는지'를 표시한다.
+    items: (라벨, 마지막 날짜 Timestamp 또는 None) 리스트. 가장 최신 날짜보다 늦은 데이터는 주황색으로.
+    slot: render_sidebar()가 맨 위에 잡아둔 컨테이너 (없으면 사이드바 현재 위치)."""
+    import pandas as pd
+    box = slot if slot is not None else st.sidebar
+    wk = ["월", "화", "수", "목", "금", "토", "일"]
+    dates = [pd.Timestamp(d) for _, d in items if d is not None and not pd.isna(d)]
+    latest = max(dates) if dates else None
+    rows = ""
+    for label, d in items:
+        if d is None or pd.isna(d):
+            val, color = "데이터 없음", "#9ca3af"
         else:
-            day_txt = f" · {n_days:,}일" if n_days is not None else ""
-            rows_html += (
-                f"<div style='font-size:0.74rem;color:#374151;margin-bottom:3px;'>"
-                f"{label}: {d_min} ~ {d_max}{day_txt}</div>"
-            )
-    st.sidebar.markdown(rows_html, unsafe_allow_html=True)
+            d = pd.Timestamp(d)
+            lag = (latest - d).days if latest is not None else 0
+            val = f"~{d:%m/%d}({wk[d.weekday()]})" + (f" · {lag}일 늦음" if lag > 0 else "")
+            color = "#c2410c" if lag > 0 else "#111827"
+        rows += (
+            "<div style='display:flex;justify-content:space-between;gap:8px;font-size:0.74rem;line-height:1.5;'>"
+            f"<span style='color:#6b7280;'>{label}</span><span style='color:{color};font-weight:600;'>{val}</span></div>"
+        )
+    box.markdown(
+        "<div style='background:#f3f4f6;border:1px solid #e5e7eb;border-radius:8px;padding:7px 10px;margin-top:2px;'>"
+        "<div style='font-size:0.76rem;font-weight:700;color:#374151;margin-bottom:3px;'>🗓️ 데이터 반영 현황</div>"
+        f"{rows}</div>",
+        unsafe_allow_html=True,
+    )
 
 
 def render_combo_filter(df, bpu, key_prefix=""):

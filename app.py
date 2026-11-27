@@ -70,14 +70,6 @@ st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # --- 사이드바 ---
 side = render_sidebar()
-if side["refresh"]:
-    load_data.clear()
-    load_traffic_data.clear()
-    load_category_data.clear()
-    load_coupon_daily.clear()
-    load_luxury_channel.clear()
-    load_channel_all.clear()
-    load_ad_app_daily.clear()
 
 # --- 데이터 로드 ---
 df_ep = load_data()           # 기존 EP 데이터 (원부매칭율 등)
@@ -103,46 +95,7 @@ def brand_label(code):
 
 BRAND_LABELS = {code: brand_label(code) for code in BRAND_NAMES}  # 랭킹 차트용 "코드 (이름)" 매핑
 
-# EP채널 업로드
-if side["ep_channel_file"] is not None:
-    _uf = side["ep_channel_file"]
-    df_ep = load_data(uploaded_file=_uf, file_name=getattr(_uf, "name", None))
-    st.sidebar.success("EP채널 데이터 업로드 완료")
-
-# EP실적 업로드
-if side["ep_traffic_file"] is not None:
-    _tf = side["ep_traffic_file"]
-    df_traffic = pd.read_csv(_tf)
-    df_traffic["날짜"] = pd.to_datetime(df_traffic["날짜"])
-    _tr_min = df_traffic["날짜"].min().strftime("%Y-%m-%d")
-    _tr_max = df_traffic["날짜"].max().strftime("%Y-%m-%d")
-    st.sidebar.success(f"EP실적 데이터 업로드 완료: {_tr_min} ~ {_tr_max}")
-
-# 카테고리 업로드
-if side["ep_category_file"] is not None:
-    _cf = side["ep_category_file"]
-    df_category = pd.read_csv(_cf)
-    df_category["날짜"] = pd.to_datetime(df_category["날짜"])
-    st.sidebar.success(f"카테고리 데이터 업로드 완료 ({df_category['카테고리'].nunique()}개 카테고리)")
-
-# 상품 데이터 업로드
-if side["ep_product_file"] is not None:
-    _pf = side["ep_product_file"]
-    df_product = pd.read_csv(_pf)
-    df_product["날짜"] = pd.to_datetime(df_product["날짜"])
-    st.sidebar.success(f"상품 데이터 업로드 완료 ({df_product['상품코드'].nunique()}개 상품)")
-
-# 쿠폰 데이터 업로드 (일자별 원본 하나로 통합 - 월별 집계/상세는 여기서 자동 파생)
-if side["ep_coupon_daily_file"] is not None:
-    _cpddf = side["ep_coupon_daily_file"]
-    df_coupon_daily = pd.read_csv(_cpddf)
-    df_coupon_daily["날짜"] = pd.to_datetime(df_coupon_daily["날짜"])
-    df_coupon = build_coupon_monthly(df_coupon_daily)
-    df_coupon_detail = build_coupon_monthly_detail(df_coupon_daily)
-    st.sidebar.success(f"쿠폰 데이터 업로드 완료 ({df_coupon_daily['날짜'].min().strftime('%Y-%m-%d')} ~ {df_coupon_daily['날짜'].max().strftime('%Y-%m-%d')})")
-
 # --- EP + 쇼핑검색광고 APP 합산 보기 (사이드바 '보기 기준' 버튼) ---
-# 업로드 반영까지 끝난 뒤에 적용해야 업로드한 EP실적에도 똑같이 더해진다.
 df_ad_app = load_ad_app_daily()
 _ad_app_last = df_ad_app["날짜"].max() if not df_ad_app.empty else None
 if side["ep_ad_app"]:
@@ -151,17 +104,22 @@ if side["ep_ad_app"]:
     else:
         df_traffic, df_total_daily = apply_ep_ad_app(df_traffic, df_total_daily, df_ad_app)
 
-# --- 사이드바 하단: 데이터셋별 반영 현황(기간/일수) ---
+# --- 사이드바 맨 위: 데이터셋별 반영 현황(며칠까지) ---
+def _last(df, col="날짜"):
+    return df[col].max() if df is not None and not df.empty and col in df.columns else None
 
-_status_items = [
-    ("EP채널", *_status_entry(df_ep, COL_DATE)),
-    ("EP실적", *_status_entry(df_traffic, "날짜")),
-    ("카테고리", *_status_entry(df_category, "날짜")),
-    ("상품", *_status_entry(df_product, "날짜")),
-    ("쿠폰(일자별)", *_status_entry(df_coupon_daily, "날짜")),
-    ("쇼검 APP", *_status_entry(df_ad_app, "날짜")),
-]
-render_sidebar_data_status(_status_items)
+
+render_sidebar_data_status([
+    ("EP실적", _last(df_traffic)),
+    ("EP채널", _last(df_ep, COL_DATE)),
+    ("전체실적", _last(df_total_daily)),
+    ("카테고리", _last(df_category)),
+    ("상품", _last(df_product)),
+    ("쿠폰", _last(df_coupon_daily)),
+    ("명품 채널", _last(df_lux)),
+    ("전체 채널", _last(df_chall)),
+    ("쇼검 APP", _ad_app_last),
+], side["status_slot"])
 
 
 unit = side["view_unit"]
@@ -241,10 +199,6 @@ unit = side["view_unit"]
 last_date_ep = df_ep[COL_DATE].max()
 last_date_tr = df_traffic["날짜"].max()
 _weekday_kr = ["월", "화", "수", "목", "금", "토", "일"]
-st.sidebar.info(
-    f"🗓️ EP실적: ~{last_date_tr.strftime('%m/%d')}({_weekday_kr[last_date_tr.weekday()]})\n\n"
-    f"EP채널: ~{last_date_ep.strftime('%m/%d')}({_weekday_kr[last_date_ep.weekday()]})"
-)
 
 # --- 페이지 헤더 + 매체 필터 + 기준 시점 (스크롤 시 상단 고정) ---
 _sticky = st.container(key="sticky_header")
