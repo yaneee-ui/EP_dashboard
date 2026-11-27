@@ -990,7 +990,33 @@ def compute_category_yoy_rows(df_category, bpu_value, cat_segment, ff_exclude, u
 DASHBOARD_EVENTS = [
     (pd.Timestamp("2026-08-04"), "최저가쿠폰 초기화(18시)"),
     (pd.Timestamp("2026-08-05"), "다나와 기준 쿠폰 배치"),
+    (pd.Timestamp("2026-11-19"), "EP APP 실적 분리 집계 시작(쇼핑검색광고)"),
 ]
+
+# 집계 기준이 바뀐 시점 — 모든 화면 맨 위에 한 줄 안내로 띄운다(데이터가 그 날짜 이후까지 있을 때만).
+# 새 항목은 여기에 추가하면 된다.
+DATA_BASIS_NOTES = [
+    {
+        "start": pd.Timestamp("2026-11-19"),
+        "label": "EP APP 실적 분리 집계",
+        "detail": "11/19(목)부터 EP APP 실적이 쇼핑검색광고와 나누어져 집계되고 있어요. "
+                  "그래서 11/19 이후 EP 거래액이 실제보다 줄어든 것처럼 보일 수 있어요. "
+                  "전년비·전주비를 볼 때 감안해주세요.",
+    },
+]
+
+
+def render_data_basis_notes(last_date=None):
+    """집계 기준 변경 안내(한 줄 박스). last_date가 변경 시점보다 앞이면 표시하지 않는다."""
+    for n in DATA_BASIS_NOTES:
+        if last_date is not None and pd.Timestamp(last_date) < n["start"]:
+            continue
+        st.markdown(
+            "<div style='background:#eff6ff;border:1px solid #bfdbfe;border-left:4px solid #3b82f6;border-radius:8px;"
+            "padding:7px 12px;margin:2px 0 8px;font-size:0.82rem;color:#1e3a8a;line-height:1.55;'>"
+            f"📌 <b>{n['label']}</b> · {n['detail']}</div>",
+            unsafe_allow_html=True,
+        )
 
 # 특정 지표 그래프에만 붙이는 이벤트 (DASHBOARD_EVENTS는 모든 일별 그래프에 공통으로 뜨고,
 # 이건 그 지표·매체를 볼 때만 뜬다 — 예: 상품수가 늘어난 원인처럼 한 지표에만 의미 있는 사건).

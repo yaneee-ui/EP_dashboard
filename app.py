@@ -37,7 +37,7 @@ from dashboard_helpers import (
     render_week_range_filter, aggregate_traffic, FF_BRAND_CODE, exclude_ff_brand,
     exclude_ff_from_traffic, _weekly_of_year, _week_labels_for_year, _correct_partial_week_yoy,
     aggregate_ep, build_weekly_report_excel, build_forecast_excel, render_excel_download,
-    KIND_BPU, KIND_ORDER, compute_weekly_monitor, render_weekly_monitor_html, build_weekly_monitor_excel, compute_kind_category_gap, decompose_gmv_yoy,
+    KIND_BPU, KIND_ORDER, render_data_basis_notes, compute_weekly_monitor, render_weekly_monitor_html, build_weekly_monitor_excel, compute_kind_category_gap, decompose_gmv_yoy,
     LUXURY_KIND_OPTIONS, LUXURY_CUST_OPTIONS, LUXURY_METRIC_OPTIONS, luxury_has_segments, luxury_daily_by_channel, compute_luxury_channel_compare, compute_luxury_monthly_yoy,
     channel_all_daily, compute_channel_weekly_yoy, generate_channel_page_insights, stable_range, shift_prev_year,
     _truncate_by_range, compute_bpu_comparison_rows, render_bpu_comparison_table, compute_category_yoy_rows,
@@ -1057,6 +1057,9 @@ components.html(
 )
 
 
+
+# 집계 기준 변경 안내 — 모든 화면 맨 위 공통 (DATA_BASIS_NOTES에 항목 추가)
+render_data_basis_notes(df_traffic["날짜"].max() if not df_traffic.empty else None)
 
 if side["page"].startswith("0."):
     render_home(
