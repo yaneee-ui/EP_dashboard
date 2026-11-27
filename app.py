@@ -11,7 +11,7 @@ import io
 
 from data_loader import (
     load_data, load_traffic_data, load_category_data, load_product_data, load_brand_names,
-    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_total_daily_seg, load_luxury_channel, load_channel_all, load_ad_app_daily,
+    load_coupon_daily, build_coupon_monthly, build_coupon_monthly_detail, load_total_daily, load_total_daily_seg, load_luxury_channel, load_channel_all, load_ad_app_daily, load_ad_app_cat,
 )
 from ai_insights import (
     render_metric_insight, generate_ranking_insights, render_ranking_insight_box,
@@ -97,12 +97,16 @@ BRAND_LABELS = {code: brand_label(code) for code in BRAND_NAMES}  # 랭킹 차�
 
 # --- EP + 쇼핑검색광고 APP 합산 보기 (사이드바 '보기 기준' 버튼) ---
 df_ad_app = load_ad_app_daily()
+df_ad_cat = load_ad_app_cat()
 _ad_app_last = df_ad_app["날짜"].max() if not df_ad_app.empty else None
+_ad_app_cat_last = None
 if side["ep_ad_app"]:
     if df_ad_app.empty:
         st.sidebar.warning("쇼검 APP 원본(ep_ad_app_daily.csv)이 없어서 합산하지 못했어요.")
     else:
-        df_traffic, df_total_daily = apply_ep_ad_app(df_traffic, df_total_daily, df_ad_app)
+        df_traffic, df_total_daily, df_category, _ad_info = apply_ep_ad_app(
+            df_traffic, df_total_daily, df_ad_app, df_ad_cat, df_category)
+        _ad_app_cat_last = _ad_info["cat_last"]
 
 # --- 사이드바 맨 아래: 데이터셋별 반영 현황(며칠까지) ---
 def _last(df, col="날짜"):
@@ -1047,7 +1051,8 @@ components.html(
 
 # 집계 기준 변경 안내 — 모든 화면 맨 위 공통 (DATA_BASIS_NOTES에 항목 추가)
 render_data_basis_notes(df_traffic["날짜"].max() if not df_traffic.empty else None,
-                        ad_app_on=bool(side["ep_ad_app"]), ad_app_last=_ad_app_last)
+                        ad_app_on=bool(side["ep_ad_app"]), ad_app_last=_ad_app_last,
+                        ad_app_cat_last=_ad_app_cat_last)
 
 if side["page"].startswith("0."):
     render_home(

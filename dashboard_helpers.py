@@ -7,6 +7,7 @@ app.py가 너무 커져서(5600줄+) 페이지 스크립트와 안 섞이는 순
 """
 import streamlit as st
 import streamlit.components.v1 as components
+import numpy as np
 import pandas as pd
 import io
 import unicodedata
@@ -1021,33 +1022,85 @@ def ad_app_daily_add(df_ad):
     return a.groupby("날짜")[["거래액", "주문고객수"]].sum()
 
 
-def apply_ep_ad_app(df_traffic, df_total_daily, df_ad):
-    """EP 실적에 광고 APP 실적을 더한 복사본을 돌려준다 (원본 DataFrame은 건드리지 않음).
-    - df_traffic: BPU=Total & 회원구분=전체 행의 거래액·구매객수에 더하고 CR/객단가는 합계로 재계산
-      (트래픽은 그대로 — 광고 APP 유입은 원본에 없음)
-    - df_total_daily: 채널 EP에 더하고 광고에서 같은 금액을 뺀다 (전체는 그대로 → EP 점유율 비교 가능)"""
+def _add_ad_metrics(df, add, keys, base_mask):
+    """df에서 base_mask & keys가 add와 일치하는 행의 거래액·구매객수에 add(거래액·주문고객수)를 더하고
+    CR(%)·객단가를 합계로 재계산한다. df는 복사본이어야 함(제자리 수정). 반환: 못 붙인 거래액 합(행이 없던 몫)."""
+    if add is None or add.empty or not base_mask.any():
+        return float(add["거래액"].sum()) if add is not None and not add.empty else 0.0
+    sub = df.loc[base_mask, keys].copy()
+    for k in keys:
+        if k != "날짜":
+            sub[k] = sub[k].astype(str)
+    sub["_i"] = sub.index
+    a = add.copy()
+    for k in keys:
+        if k != "날짜":
+            a[k] = a[k].astype(str)
+    m = sub.merge(a, on=keys, how="right", indicator=True)
+    missing = float(m.loc[m["_merge"] == "right_only", "거래액"].sum())
+    m = m[m["_merge"] == "both"]
+    if m.empty:
+        return missing
+    ii = m["_i"].astype(int).values
+    g = df.loc[ii, "거래액"].astype(float).values + m["거래액"].values
+    c = df.loc[ii, "구매객수"].astype(float).values + m["주문고객수"].values
+    t = df.loc[ii, "트래픽"].astype(float).values
+    with np.errstate(divide="ignore", invalid="ignore"):
+        vals = {"거래액": g, "구매객수": c, "CR": np.where(t > 0, c / t * 100, 0), "객단가": np.where(c > 0, g / c, 0)}
+    for col, v in vals.items():
+        # 로더가 float32로 줄여둔 컬럼은 같은 dtype으로 맞춰 넣고, 정수 컬럼(업로드 등)은 float로 올린다
+        if not pd.api.types.is_float_dtype(df[col].dtype):
+            df[col] = df[col].astype("float64")
+        df.loc[ii, col] = np.asarray(v, dtype=df[col].dtype)
+    return missing
+
+
+def apply_ep_ad_app(df_traffic, df_total_daily, df_ad, df_ad_cat=None, df_category=None):
+    """EP 실적에 쇼핑검색광고 APP 실적을 더한 복사본을 돌려준다 (원본 DataFrame은 건드리지 않음).
+    반환: (df_traffic, df_total_daily, df_category, info)
+    - df_traffic BPU Total·회원구분 전체: 일자별 원본(df_ad) 광고 A 합계
+    - df_traffic e-영업1~4 전체/신규, Total 신규: 카테고리 원본(df_ad_cat) 광고 A를 BPU별로 합산
+      (신규 = 당년신규여부 Y — EP 신규 실적과 같은 기준인 것 확인함)
+    - df_category 브랜드=전체 행(카테고리별 + 카테고리=전체), 회원구분 전체/신규: 카테고리 원본 광고 A
+    - df_total_daily: 채널 EP에 더하고 광고에서 같은 금액을 뺀다 (전체는 그대로)
+    회원/기존/비회원, 브랜드·상품 단위, 트래픽은 원본에 구분이 없어서 그대로 둔다.
+    info: {"cat_last": 카테고리 원본 마지막 날짜 또는 None, "missing": 붙일 행이 없던 거래액}"""
+    info = {"cat_last": None, "missing": 0.0}
     add = ad_app_daily_add(df_ad)
     if add.empty:
-        return df_traffic, df_total_daily
-    tr = df_traffic.copy()
-    m = (tr["BPU"] == "Total") & (tr["회원구분"] == "전체") & tr["날짜"].isin(add.index)
-    if m.any():
-        d = tr.loc[m, "날짜"]
-        tr.loc[m, "거래액"] = (tr.loc[m, "거래액"].astype(float) + d.map(add["거래액"]).values).astype("float32")
-        tr.loc[m, "구매객수"] = (tr.loc[m, "구매객수"].astype(float) + d.map(add["주문고객수"]).values).astype("float32")
-        g, c, t = tr.loc[m, "거래액"].astype(float), tr.loc[m, "구매객수"].astype(float), tr.loc[m, "트래픽"].astype(float)
-        tr.loc[m, "CR"] = (c / t * 100).where(t > 0, 0).astype("float32")
-        tr.loc[m, "객단가"] = (g / c).where(c > 0, 0).astype("float32")
+        return df_traffic, df_total_daily, df_category, info
+    tr = df_traffic.copy().reset_index(drop=True)
+    _cols = ["거래액", "주문고객수"]
+    tr_add = [add.reset_index().assign(BPU="Total", 회원구분="전체")]
+    cat_add = None
+    if df_ad_cat is not None and not df_ad_cat.empty:
+        ac = df_ad_cat[(df_ad_cat["디바이스"] == "A") & (df_ad_cat["날짜"] >= EP_AD_APP_START)]
+        if not ac.empty:
+            info["cat_last"] = ac["날짜"].max()
+            seg = pd.concat([ac.assign(회원구분="전체"), ac[ac["신규"] == "Y"].assign(회원구분="신규")])
+            by_bpu = seg.groupby(["날짜", "BPU", "회원구분"], as_index=False)[_cols].sum()
+            tr_add.append(by_bpu)
+            tr_add.append(by_bpu[by_bpu["회원구분"] == "신규"].groupby(["날짜", "회원구분"], as_index=False)[_cols].sum().assign(BPU="Total"))
+            by_cat = seg.groupby(["날짜", "BPU", "카테고리", "회원구분"], as_index=False)[_cols].sum()
+            cat_add = pd.concat([by_cat, by_bpu.assign(카테고리="전체")], ignore_index=True)
+    keys = ["날짜", "BPU", "회원구분"]
+    info["missing"] += _add_ad_metrics(tr, pd.concat(tr_add, ignore_index=True)[keys + _cols], keys, tr["BPU"].notna())
+
+    cat = df_category
+    if cat_add is not None and cat is not None and not cat.empty and "브랜드" in cat.columns:
+        cat = cat.copy().reset_index(drop=True)
+        info["missing"] += _add_ad_metrics(cat, cat_add, ["날짜", "BPU", "카테고리", "회원구분"], cat["브랜드"] == "전체")
+
     td = df_total_daily
     if td is not None and not td.empty:
         td = td.copy()
         for ch, sign in (("EP", 1), ("광고", -1)):
             mm = (td["채널"] == ch) & td["날짜"].isin(add.index)
             td.loc[mm, "거래액"] = td.loc[mm, "거래액"].astype(float) + sign * td.loc[mm, "날짜"].map(add["거래액"]).values
-    return tr, td
+    return tr, td, cat, info
 
 
-def render_data_basis_notes(last_date=None, ad_app_on=None, ad_app_last=None):
+def render_data_basis_notes(last_date=None, ad_app_on=None, ad_app_last=None, ad_app_cat_last=None):
     """집계 기준 변경 안내(한 줄 박스). last_date가 변경 시점보다 앞이면 표시하지 않는다.
     ad_app_on: 'EP + 쇼검 APP 합산' 버튼 상태(True/False). None이면 버튼 안내 없이 기존 문구만."""
     if ad_app_on and (last_date is None or pd.Timestamp(last_date) >= EP_AD_APP_START):
@@ -1057,7 +1110,12 @@ def render_data_basis_notes(last_date=None, ad_app_on=None, ad_app_last=None):
             "padding:7px 12px;margin:2px 0 8px;font-size:0.82rem;color:#065f46;line-height:1.55;'>"
             "✅ <b>EP + 쇼검 APP 합산 보기 중</b> · 11/19 이후 EP 거래액·구매객수에 쇼핑검색광고 APP 실적을 더했어요"
             f"{_upto}. 전년은 EP 그대로라 기존과 같은 기준으로 비교돼요. "
-            "<b>BPU 전체 · 회원구분 전체</b> 실적에만 반영돼요(BPU별·회원/신규별·카테고리·상품·채널별 화면은 원본 그대로). "
+            + (
+                f"<b>전체 · BPU별 · 카테고리별 · 신규</b>까지 반영돼요(카테고리 원본 ~{pd.Timestamp(ad_app_cat_last):%m/%d}). "
+                "회원/기존/비회원·브랜드·상품·채널별 화면은 원본 그대로예요. "
+                if ad_app_cat_last is not None else
+                "<b>BPU 전체 · 회원구분 전체</b> 실적에만 반영돼요(BPU별·회원/신규별·카테고리·상품·채널별 화면은 원본 그대로). "
+            ) +
             "트래픽은 그대로라 CR은 조금 높게 보일 수 있어요. 사이드바 '보기 기준'에서 끌 수 있어요.</div>",
             unsafe_allow_html=True,
         )

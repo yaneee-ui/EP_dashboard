@@ -438,6 +438,23 @@ def load_ad_app_daily() -> pd.DataFrame:
     return df.sort_values("날짜").reset_index(drop=True)
 
 
+AD_APP_CAT_PATH = "ep_ad_app_cat.csv"
+
+
+@st.cache_data(ttl=3600, show_spinner=False)
+def load_ad_app_cat() -> pd.DataFrame:
+    """쇼핑검색광고 x 디바이스(A/M/P) x BPU x 카테고리 x 신규여부(N/Y) 일자별 거래액·주문고객수
+    (convert_ad_app.py 결과). 'EP + 쇼검 APP 합산' 보기에서 BPU·카테고리·신규 실적에 더할 때 쓴다."""
+    import os
+    if not os.path.exists(AD_APP_CAT_PATH):
+        return pd.DataFrame(columns=["날짜", "BPU", "카테고리", "디바이스", "신규", "거래액", "주문고객수"])
+    df = pd.read_csv(AD_APP_CAT_PATH)
+    df["날짜"] = pd.to_datetime(df["날짜"])
+    for c in ("거래액", "주문고객수"):
+        df[c] = pd.to_numeric(df[c], errors="coerce").fillna(0)
+    return df.sort_values("날짜").reset_index(drop=True)
+
+
 CHANNEL_ALL_PATH = "ep_channel_all.csv.gz"
 
 
