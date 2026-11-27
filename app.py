@@ -65,7 +65,7 @@ from dashboard_helpers import (
 # 인사이트 카드: 좌측 자동요약(API 미사용) + 우측 AI·메모(GitHub 저장)
 # ============================================================
 
-st.set_page_config(page_title="마케팅 실적 현황 대시보드", layout="wide", page_icon="📊")
+st.set_page_config(page_title="EP 실적 현황 대시보드", layout="wide", page_icon="🗂")
 st.markdown(CUSTOM_CSS, unsafe_allow_html=True)
 
 # --- 사이드바 ---
