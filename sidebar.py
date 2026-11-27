@@ -1,4 +1,4 @@
-"""좌측 사이드바: 데이터 반영 현황(맨 위) + 조회 단위(콤팩트) + 보기 기준 + 메뉴."""
+"""좌측 사이드바: 조회 단위(콤팩트) + 보기 기준 + 메뉴 + 데이터 반영 현황(맨 아래)."""
 import streamlit as st
 
 # 화면에 보이는 그룹 순서: 홈/실적 요약 -> 쿠폰/마감예상/주간보고 등 -> 주차별 실적 -> 누적 데이터
@@ -21,8 +21,6 @@ def goto_page(page):
 
 def render_sidebar():
     st.sidebar.markdown("### 📊 EP 실적 대시보드")
-    # 데이터 반영 현황은 데이터를 다 읽은 뒤(app.py)에 채우지만, 화면에선 맨 위에 보이도록 자리만 먼저 잡아둔다.
-    status_slot = st.sidebar.container()
     st.sidebar.divider()
 
     # --- 조회 단위 (콤팩트 한 줄) ---
@@ -118,6 +116,10 @@ def render_sidebar():
         "(aistudio.google.com에서 무료 발급)."
     )
 
+    # 데이터 반영 현황(사이드바 맨 아래) — 내용은 데이터를 다 읽은 뒤 app.py에서 채운다.
+    st.sidebar.divider()
+    status_slot = st.sidebar.container()
+
     return {
         "view_unit": view_unit,
         "page": page,
@@ -127,9 +129,9 @@ def render_sidebar():
 
 
 def render_sidebar_data_status(items, slot=None):
-    """사이드바 맨 위에 데이터셋별 '며칠까지 반영됐는지'를 표시한다.
+    """사이드바 맨 아래에 데이터셋별 '며칠까지 반영됐는지'를 표시한다.
     items: (라벨, 마지막 날짜 Timestamp 또는 None) 리스트. 가장 최신 날짜보다 늦은 데이터는 주황색으로.
-    slot: render_sidebar()가 맨 위에 잡아둔 컨테이너 (없으면 사이드바 현재 위치)."""
+    slot: render_sidebar()가 맨 아래에 잡아둔 컨테이너 (없으면 사이드바 현재 위치)."""
     import pandas as pd
     box = slot if slot is not None else st.sidebar
     wk = ["월", "화", "수", "목", "금", "토", "일"]

@@ -104,7 +104,7 @@ if side["ep_ad_app"]:
     else:
         df_traffic, df_total_daily = apply_ep_ad_app(df_traffic, df_total_daily, df_ad_app)
 
-# --- 사이드바 맨 위: 데이터셋별 반영 현황(며칠까지) ---
+# --- 사이드바 맨 아래: 데이터셋별 반영 현황(며칠까지) ---
 def _last(df, col="날짜"):
     return df[col].max() if df is not None and not df.empty and col in df.columns else None
 
